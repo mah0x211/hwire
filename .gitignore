@@ -1,0 +1,8 @@
+*.o
+*.txt
+*.profraw
+*.profdata
+*.info
+obj/
+tmp/
+bench/deps/
