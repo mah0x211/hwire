@@ -1,0 +1,39 @@
+name: test
+
+on:
+  push:
+    paths-ignore:
+      - '**.md'
+      - 'LICENSE'
+
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Install Test Tools (Ubuntu)
+      if: runner.os == 'Linux'
+      run: sudo apt-get install -y llvm
+
+    - name: Setup LLVM Tools (macOS)
+      if: runner.os == 'macOS'
+      run: |
+        TOOLCHAIN_BIN="$(xcrun --find llvm-profdata | xargs dirname)"
+        echo "$TOOLCHAIN_BIN" >> "$GITHUB_PATH"
+        echo "SDKROOT=$(xcrun --show-sdk-path)" >> "$GITHUB_ENV"
+
+    - name: Run Test with Coverage
+      run: make coverage
+
+    - name: Upload Coverage to Codecov
+      uses: codecov/codecov-action@v4
+      with:
+        token: ${{ secrets.CODECOV_TOKEN }}
+        flags: unittests
+        disable_search: true
+        files: ./coverage/coverage.info
