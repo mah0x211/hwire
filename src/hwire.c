@@ -813,6 +813,11 @@ static int parse_parameter(char *str, size_t len, size_t *pos, size_t maxpos,
     CHECK_POSITON();
     param.key.ptr = str + head;
     param.key.len = cur - head;
+    // parameter-name must not be empty
+    if (param.key.len == 0) {
+        *pos = cur;
+        return HWIRE_EILSEQ;
+    }
 
     // check for '='
     if (ustr[cur] != '=') {
