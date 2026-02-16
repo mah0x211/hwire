@@ -636,6 +636,8 @@ int hwire_is_vchar(unsigned char c)
  * @param pos Input: start offset, Output: end offset (must not be NULL)
  * @return Number of consecutive tchar characters matched (0 if first char is
  * not tchar)
+ * @see RFC 7230 Section 3.2.6 Field Value Components
+ * @see RFC 9110 Section 5.6.2 Tokens
  */
 size_t hwire_parse_tchar(const char *str, size_t len, size_t *pos)
 {
@@ -660,6 +662,8 @@ size_t hwire_parse_tchar(const char *str, size_t len, size_t *pos)
  * @param pos Input: start offset, Output: end offset (must not be NULL)
  * @return Number of consecutive vchar characters matched (0 if first char is
  * not vchar)
+ * @see RFC 7230 Section 3.2.6 Field Value Components
+ * @see RFC 9110 Section 5.5 Field Values
  */
 size_t hwire_parse_vchar(const char *str, size_t len, size_t *pos)
 {
@@ -672,6 +676,10 @@ size_t hwire_parse_vchar(const char *str, size_t len, size_t *pos)
     return n;
 }
 
+/**
+ * @see RFC 7230 Section 3.2.6 Field Value Components
+ * @see RFC 9110 Section 5.6.4 Quoted Strings
+ */
 int hwire_parse_quoted_string(const char *str, size_t len, size_t *pos,
                               size_t maxlen)
 {
@@ -1048,6 +1056,8 @@ int hwire_parse_chunksize(char *str, size_t len, size_t *pos, size_t maxlen,
     }
 
     // parse chunk-size
+    // chunk-size = 1*HEXDIG
+    // RFC 7230 4.1 / RFC 9112 7.1: Chunk Size
     size = hex2size(ustr, len, &cur, HWIRE_MAX_CHUNKSIZE);
     if (size < 0) {
         // chunk size exceeds maximum allowed size or invalid
@@ -1062,11 +1072,12 @@ int hwire_parse_chunksize(char *str, size_t len, size_t *pos, size_t maxlen,
         return HWIRE_ECALLBACK;
     }
 
-    // 4.1.1.  Chunk Extensions
+    // 4.1.1. Chunk Extensions
     //
     // chunk-ext    = *( BWS ";" BWS ext-name [ BWS "=" BWS ext-val ] )
     // ext-name     = token
     // ext-val      = token / quoted-string
+    // RFC 7230 4.1.1 / RFC 9112 7.1.1: Chunk Extensions
     //
     // trailer-part = *( header-field CRLF )
     //
@@ -1376,6 +1387,9 @@ RETRY:
     klen           = maxlen;
     cb->key_lc.len = 0;
     // parse key and store lowercase in key_lc
+    // header-field = field-name ":" OWS field-value OWS
+    // field-name = token
+    // RFC 7230 3.2 / RFC 9112 5.1: Field Names
     rv             = parse_hkey(ustr, len, &cur, &klen, cb);
     if (rv != HWIRE_OK) {
         return rv;
