@@ -765,6 +765,8 @@ int hwire_parse_quoted_string(const char *str, size_t len, size_t *pos,
  * @return HWIRE_ELEN if length exceeds maxlen
  * @return HWIRE_EKEYLEN if key length exceeds cb->key_lc.size
  * @return HWIRE_ECALLBACK if callback returned non-zero
+ * @see RFC 7231 Section 3.1.1.1 Parameter
+ * @see RFC 9110 Section 5.6.6 Parameters
  */
 static int parse_parameter(char *str, size_t len, size_t *pos, size_t maxpos,
                            hwire_callbacks_t *cb)
@@ -927,6 +929,8 @@ CHECK_NEXT_PARAM:
         // E.g., for CRLF or end of string (NULL-terminator).
         return HWIRE_OK;
     }
+
+SKIP_SEMICOLON:
     // skip ';'
     cur++;
 
@@ -955,6 +959,20 @@ CHECK_PARAM:
     cb->key_lc.len = 0;
 
     // parse one parameter
+    // RFC 9110 5.6.6: parameters = *( OWS ";" OWS [ parameter ] )
+    if (ustr[cur] == SEMICOLON) {
+        // empty parameter, skip
+        goto SKIP_SEMICOLON;
+    }
+
+    // Checking for end of string is required because we might have
+    // consumed a semicolon (empty parameter) and reached EOS.
+    // In this case, we have a valid empty parameter at the end, so return OK.
+    if (cur == len) {
+        *pos = cur;
+        return HWIRE_OK;
+    }
+
     rv = parse_parameter(str, len, &cur, maxpos, cb);
     if (rv == HWIRE_OK) {
         // parsed one parameter, continue to next
