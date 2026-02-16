@@ -695,6 +695,9 @@ int hwire_parse_quoted_string(const char *str, size_t len, size_t *pos,
     cur++;
 
     // parse quoted-string
+    // RFC 9110 5.6.4: quoted-string = DQUOTE *( qdtext / quoted-pair ) DQUOTE
+    // qdtext = HTAB / SP / %x21 / %x23-5B / %x5D-7E / obs-text
+    // obs-text = %x80-FF
     for (; cur < tail; cur++) {
         unsigned char c = ustr[cur];
         if (!QDTEXT[c]) {
