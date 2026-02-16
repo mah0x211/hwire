@@ -238,6 +238,39 @@ void test_parse_headers_ows_maxlen(void) {
     TEST_END();
 }
 
+static int check_empty_value_cb(hwire_callbacks_t *cb, hwire_header_t *header) {
+    (void)cb;
+    if (header->value.len == 0) {
+        return 0;
+    }
+    return 1; // Fail if not empty
+}
+
+void test_parse_headers_allows_empty_value(void) {
+    TEST_START("test_parse_headers_allows_empty_value");
+
+    char buf[TEST_BUF_SIZE];
+    size_t pos = 0;
+    char key_storage[TEST_KEY_SIZE];
+    hwire_callbacks_t cb = {
+        .key_lc = { .buf = key_storage, .size = sizeof(key_storage), .len = 0 },
+        .header_cb = check_empty_value_cb
+    };
+
+    /* Empty header value */
+    strcpy(buf, "Empty-Val:\r\n\r\n");
+    int rv = hwire_parse_headers(buf, strlen(buf), &pos, 1024, 10, &cb);
+    ASSERT_OK(rv);
+
+    /* OWS then empty */
+    strcpy(buf, "Empty-Val:   \r\n\r\n");
+    pos = 0;
+    rv = hwire_parse_headers(buf, strlen(buf), &pos, 1024, 10, &cb);
+    ASSERT_OK(rv);
+
+    TEST_END();
+}
+
 int main(void) {
     test_parse_headers_valid();
     test_parse_headers_fail();
@@ -247,6 +280,7 @@ int main(void) {
     test_parse_headers_key_parsing();
     test_parse_headers_empty_and_eol();
     test_parse_headers_ows_maxlen();
+    test_parse_headers_allows_empty_value();
     print_test_summary();
     return g_tests_failed;
 }

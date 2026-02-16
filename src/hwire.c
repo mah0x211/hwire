@@ -1369,19 +1369,15 @@ RETRY:
 
     header.value.ptr = (const char *)ustr;
     vlen             = maxlen - (size_t)(ustr - head);
+    // field-value = *field-content
+    // RFC 7230 3.2 / RFC 9112 5.5: Field Values
+    // Note: Empty field-value is allowed.
     rv               = parse_hval(ustr, len, &cur, &vlen);
     if (rv != HWIRE_OK) {
         return rv;
     }
     ustr += cur;
     len -= cur;
-
-    // check empty header value
-    if (!vlen) {
-        // avoid header with empty value
-        nhdr--;
-        goto RETRY;
-    }
 
     // set header key and value
     header.key.ptr   = (const char *)head;
