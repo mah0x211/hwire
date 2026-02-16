@@ -191,24 +191,36 @@ function formatTimeShort(ns) {
 }
 
 // Parse variant name to display name
-function getVariantDisplayName(variant) {
+function getVariantDisplayName(variant, isLowercase = false) {
+  let name;
   switch (variant) {
-    case 'nosimd': return 'No-SIMD';
-    case 'sse2': return 'SSE2';
-    case 'sse42': return 'SSE4.2';
-    case 'avx2': return 'AVX2';
-    case 'neon': return 'NEON';
-    default: return variant.toUpperCase();
+    case 'nosimd': name = 'No-SIMD'; break;
+    case 'sse2': name = 'SSE2'; break;
+    case 'sse42': name = 'SSE4.2'; break;
+    case 'avx2': name = 'AVX2'; break;
+    case 'neon': name = 'NEON'; break;
+    default: name = variant.toUpperCase();
   }
+  return isLowercase ? name + '-LC' : name;
 }
 
 // Get category key from test name
 function getCategoryKey(testName) {
+  // Map lc_* tests to their original categories
+  if (testName.startsWith('lc_')) {
+    const baseName = testName.substring(3); // Remove 'lc_' prefix
+    if (baseName.startsWith('hdr_')) return 'hdr';
+    if (baseName.startsWith('val_')) return 'val';
+    if (baseName.startsWith('case_')) return 'case';
+    if (baseName.startsWith('real_')) return 'real';
+    if (baseName === 'minimal' || baseName === 'minimal_host') return 'minimal';
+    return 'other';
+  }
   if (testName.startsWith('hdr_')) return 'hdr';
   if (testName.startsWith('val_')) return 'val';
   if (testName.startsWith('case_')) return 'case';
   if (testName.startsWith('real_')) return 'real';
-  if (testName === 'minimal') return 'minimal';
+  if (testName === 'minimal' || testName === 'minimal_host') return 'minimal';
   return 'other';
 }
 
@@ -280,13 +292,16 @@ function parseResults(content) {
               }
             }
 
+            // Detect lowercase conversion test
+            const isLowercase = testName.startsWith('lc_');
+
             results.push({
               test: testName,
               testLabel: getTestLabel(testName),
               category: getCategoryKey(testName),
               parser: currentParser,
-              variant: currentVariant,
-              variantDisplay: getVariantDisplayName(currentVariant),
+              variant: isLowercase ? currentVariant + '_lc' : currentVariant,
+              variantDisplay: getVariantDisplayName(currentVariant, isLowercase),
               samples,
               iterations,
               meanNs,
@@ -304,18 +319,29 @@ function parseResults(content) {
   return results;
 }
 
+// Get base test name (removes lc_ prefix for grouping)
+function getBaseTestName(testName) {
+  if (testName.startsWith('lc_')) {
+    return testName.substring(3); // Remove 'lc_' prefix
+  }
+  return testName;
+}
+
 // Group results by category
 function groupByCategory(results) {
   const groups = {};
   for (const result of results) {
     const cat = result.category;
+    // Use base test name for grouping (lc_hdr_8 -> hdr_8)
+    const baseTest = getBaseTestName(result.test);
+
     if (!groups[cat]) {
       groups[cat] = {};
     }
-    if (!groups[cat][result.test]) {
-      groups[cat][result.test] = [];
+    if (!groups[cat][baseTest]) {
+      groups[cat][baseTest] = [];
     }
-    groups[cat][result.test].push(result);
+    groups[cat][baseTest].push(result);
   }
   return groups;
 }
