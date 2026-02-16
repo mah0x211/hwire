@@ -30,7 +30,7 @@ jobs:
         run: make -C bench run
 
       - name: Generate Report
-        run: bash bench/generate_report.sh bench/results.txt >> $GITHUB_STEP_SUMMARY
+        run: node bench/generate_report.js bench/results.txt >> $GITHUB_STEP_SUMMARY
 
       - name: Upload Results
         uses: actions/upload-artifact@v4
