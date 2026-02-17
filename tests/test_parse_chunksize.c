@@ -73,6 +73,14 @@ void test_parse_chunksize_valid(void) {
     rv = hwire_parse_chunksize(buf, strlen(buf), &pos, 100, 10, &cb);
     ASSERT_EQ(rv, HWIRE_ERANGE);
 
+    /* Excessive whitespace in extension -> ELEN */
+    /* "1A;      " where maxlen=5 */
+    strcpy(buf, "1A;      \r\n");
+    pos = 0;
+    /* maxlen=5 passed to skip_ws, but we have 6 spaces */
+    rv = hwire_parse_chunksize(buf, strlen(buf), &pos, 5, 10, &cb);
+    ASSERT_EQ(rv, HWIRE_ELEN);
+
     /* Extensions */
     /* "1A; ext\r\n" (empty value) */
     strcpy(buf, "1A; ext\r\n");
