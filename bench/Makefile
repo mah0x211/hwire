@@ -24,7 +24,9 @@ LDFLAGS = -L$(CATCH2_LIB) -lCatch2Main -lCatch2
 # Architecture detection
 UNAME_M := $(shell uname -m)
 
-.PHONY: all clean run report bench deps patch unpatch
+.PHONY: all clean run report bench deps patch unpatch \
+        run-hwire run-pico run-llhttp \
+        bench-hwire bench-pico bench-llhttp
 
 # Fetch external dependencies
 deps:
@@ -60,15 +62,17 @@ unpatch:
 # Benchmark targets (architecture-specific)
 ifeq ($(UNAME_M),x86_64)
     # x86_64: hwire has SSE2 and AVX2, pico/llhttp have SSE4.2
-    BENCH_TARGETS = bench_hwire_avx2 bench_hwire_sse2 bench_hwire_nosimd \
-                    bench_pico_sse42 bench_pico_nosimd \
-                    bench_llhttp_sse42 bench_llhttp_nosimd
+    HWIRE_TARGETS = bench_hwire_avx2 bench_hwire_sse2 bench_hwire_nosimd
+    PICO_TARGETS = bench_pico_sse42 bench_pico_nosimd
+    LLHTTP_TARGETS = bench_llhttp_sse42 bench_llhttp_nosimd
 else
     # ARM: hwire has NEON, pico has no SIMD, llhttp has NEON
-    BENCH_TARGETS = bench_hwire_neon bench_hwire_nosimd \
-                    bench_pico_nosimd \
-                    bench_llhttp_neon bench_llhttp_nosimd
+    HWIRE_TARGETS = bench_hwire_neon bench_hwire_nosimd
+    PICO_TARGETS = bench_pico_nosimd
+    LLHTTP_TARGETS = bench_llhttp_neon bench_llhttp_nosimd
 endif
+
+BENCH_TARGETS = $(HWIRE_TARGETS) $(PICO_TARGETS) $(LLHTTP_TARGETS)
 
 # Build all targets
 all:
@@ -169,4 +173,50 @@ report: results.txt
 # Run full benchmark (build + run + report)
 bench:
 	$(MAKE) run
+	$(MAKE) report
+
+# =============================================================================
+# Individual parser benchmarks
+# =============================================================================
+
+run-hwire:
+	$(MAKE) deps
+	$(MAKE) patch
+	$(MAKE) $(HWIRE_TARGETS)
+	@rm -f results.txt
+	@for target in $(HWIRE_TARGETS); do \
+		echo "Running $$target..."; \
+		./$$target 2>&1 | tee -a results.txt; \
+	done
+
+run-pico:
+	$(MAKE) deps
+	$(MAKE) patch
+	$(MAKE) $(PICO_TARGETS)
+	@rm -f results.txt
+	@for target in $(PICO_TARGETS); do \
+		echo "Running $$target..."; \
+		./$$target 2>&1 | tee -a results.txt; \
+	done
+
+run-llhttp:
+	$(MAKE) deps
+	$(MAKE) patch
+	$(MAKE) $(LLHTTP_TARGETS)
+	@rm -f results.txt
+	@for target in $(LLHTTP_TARGETS); do \
+		echo "Running $$target..."; \
+		./$$target 2>&1 | tee -a results.txt; \
+	done
+
+bench-hwire:
+	$(MAKE) run-hwire
+	$(MAKE) report
+
+bench-pico:
+	$(MAKE) run-pico
+	$(MAKE) report
+
+bench-llhttp:
+	$(MAKE) run-llhttp
 	$(MAKE) report
