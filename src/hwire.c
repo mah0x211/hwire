@@ -1173,7 +1173,6 @@ CHECK_EOL:
         // return and number of bytes consumed
         *pos = cur + 1;
         return HWIRE_OK;
-        break;
 
     case SEMICOLON:
         // has chunk-extensions
