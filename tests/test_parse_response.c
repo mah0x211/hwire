@@ -90,6 +90,12 @@ void test_parse_response_reason_phrase(void) {
     int rv = hwire_parse_response(buf, strlen(buf), &pos, 1024, 10, &cb);
     ASSERT_OK(rv);
 
+    // OWS with HT in reason phrase
+    strcpy(buf, "HTTP/1.1 200 OK\tText\r\n\r\n");
+    pos = 0;
+    rv = hwire_parse_response(buf, strlen(buf), &pos, 1024, 10, &cb);
+    ASSERT_OK(rv);
+
     // Line 1624: CR followed by null in reason
     strcpy(buf, "HTTP/1.1 200 OK\r");
     pos = 0;
