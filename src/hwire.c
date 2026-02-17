@@ -421,14 +421,21 @@ static inline int skip_ws(unsigned char *str, size_t len, size_t *pos,
     return HWIRE_OK;
 }
 
-// strvchar_lut: LUT-based implementation (fallback)
-static inline size_t strvchar_lut(const unsigned char *str, size_t len)
+// strvchar_cmp: Compare characters in str against VCHAR set, with optional
+// field-vchar support. Returns the number of valid characters from the start of
+// str.
+// is_field_vchar: 1 to allow field-vchar, 0 otherwise
+static inline size_t strvchar_cmp(const unsigned char *str, size_t len,
+                                  int is_field_vchar)
 {
-    size_t pos = 0;
+    size_t pos           = 0;
+    // SP for field-vchar, else '!' for VCHAR
+    unsigned char firstc = is_field_vchar ? 0x20 : 0x21;
+    int disallow_ht = !is_field_vchar; // disallow HT if is_field_vchar is false
 
 #define CHECK_VCHAR()                                                          \
     do {                                                                       \
-        if (!is_vchar(str[pos])) {                                             \
+        if (str[pos] < firstc && (disallow_ht || str[pos] != '\t')) {          \
             return pos;                                                        \
         }                                                                      \
         pos++;                                                                 \
@@ -445,11 +452,11 @@ static inline size_t strvchar_lut(const unsigned char *str, size_t len)
         CHECK_VCHAR();
         CHECK_VCHAR();
     }
-
 #undef CHECK_VCHAR
 
     // Handle remaining bytes (< 8)
-    while (pos < len && is_vchar(str[pos])) {
+    while (pos < len && str[pos] >= firstc &&
+           (disallow_ht || str[pos] != '\t')) {
         pos++;
     }
     return pos;
@@ -472,52 +479,60 @@ static inline size_t strvchar_lut(const unsigned char *str, size_t len)
 // - mask is 64 bits (8 bytes), so __builtin_ctzll(mask) max value is 63
 // - 63 >> 3 = 7, which is within the 8-byte range (0-7)
 // - Combined with pos, the result is always within the 16-byte chunk
-static inline size_t strvchar_neon(const unsigned char *str, size_t len)
+// strvchar_neon: NEON-optimized implementation (16 bytes)
+static inline size_t strvchar_neon(const unsigned char *str, size_t len,
+                                   int is_field_vchar)
 {
     size_t pos = 0;
 
-    // Pre-compute constants (compile-time)
-    const uint8x16_t threshold = vdupq_n_u8(0x21);
-    const uint8x16_t del_byte  = vdupq_n_u8(0x7F);
+    // Pre-compute constants (compile-time inlined)
+    // 0x20 for field-vchar, else 0x21 (exclamation mark) for VCHAR
+    const uint8x16_t first_cmp = vdupq_n_u8(is_field_vchar ? 0x20 : 0x21);
+    const uint8x16_t del_char  = vdupq_n_u8(0x7F);
+    const uint8x16_t ht_char   = vdupq_n_u8(0x09);
 
     while (pos + 16 <= len) {
         // Load 16 bytes
         uint8x16_t data = vld1q_u8(str + pos);
 
-        // Detect invalid characters using blacklist approach:
-        // - lt_21:  bytes where data < 0x21 (invalid: 0x00-0x20)
-        // - eq_7f:  bytes where data == 0x7F (invalid: DEL)
-        // - invalid: OR of both conditions (0x00=valid, 0xFF=invalid)
-        uint8x16_t lt_21   = vcltq_u8(data, threshold);
-        uint8x16_t eq_7f   = vceqq_u8(data, del_byte);
-        uint8x16_t invalid = vorrq_u8(lt_21, eq_7f);
+        // Check1: is_before_first: bytes where data < firstc
+        uint8x16_t is_before_first = vcltq_u8(data, first_cmp);
 
-        // Interpret the 16-byte vector as two 64-bit integers
-        uint64x2_t qdata = vreinterpretq_u64_u8(invalid);
+        // Check2: SP/HT exception logic - if is_field_vchar, then SP/HT
+        // (0x09) is valid even if < firstc
+        if (is_field_vchar) {
+            // If is_field_vchar is true, we will mark SP/HT bytes as valid
+            // (0x00) in the is_before_first mask. We do this by creating
+            // a mask of SP/HT bytes and then using vbicq_u8 to clear those bits
+            // in is_before_first.
+            uint8x16_t is_spht = vceqq_u8(data, ht_char);
+            is_before_first    = vbicq_u8(is_before_first, is_spht);
+        }
 
-        // Check first 8 bytes (lower 64 bits)
+        // Check3: is_del: bytes where data == 0x7F (DEL)
+        uint8x16_t is_del = vceqq_u8(data, del_char);
+
+        // Combine: invalid if is_before_first OR is_del
+        uint8x16_t is_invalid = vorrq_u8(is_before_first, is_del);
+
+        // Interpret as 64-bit integers
+        uint64x2_t qdata = vreinterpretq_u64_u8(is_invalid);
+
         uint64_t mask1 = vgetq_lane_u64(qdata, 0);
         if (mask1) {
-            // Find first set bit and convert to byte position
-            // Each byte in mask1 is 0x00 or 0xFF, so ctzll gives the bit
-            // position of the first invalid byte. Dividing by 8 (>> 3) converts
-            // to byte position. Max value is 63 >> 3 = 7, which is safe.
             return pos + (size_t)(__builtin_ctzll(mask1) >> 3);
         }
 
-        // Check second 8 bytes (upper 64 bits)
         uint64_t mask2 = vgetq_lane_u64(qdata, 1);
         if (mask2) {
-            // Same logic as mask1, but add 8 to account for offset
             return pos + 8 + (size_t)(__builtin_ctzll(mask2) >> 3);
         }
 
-        // All 16 bytes are valid, continue to next chunk
         pos += 16;
     }
 
     // Fall back to LUT for remaining bytes (< 16 bytes)
-    return pos + strvchar_lut(str + pos, len - pos);
+    return pos + strvchar_cmp(str + pos, len - pos, is_field_vchar);
 }
 
 #endif
@@ -529,8 +544,7 @@ static inline size_t strvchar_neon(const unsigned char *str, size_t len)
 // Used by SSE2/AVX2 implementations to detect invalid characters using
 // sign-flip technique: (data ^ 0x80) < (0x21 ^ 0x80) is equivalent to data <
 // 0x21 Defined in SSE2 block since AVX2 implies SSE2 (superset)
-# define SIMD_SIGN_FLIP         ((int8_t)0x80) // XOR mask to toggle sign bit
-# define SIMD_THRESHOLD_SHIFTED ((int8_t)(0x21 ^ 0x80)) // = -95 (0xA1)
+# define SIMD_SIGN_FLIP ((int8_t)0x80) // XOR mask to toggle sign bit
 
 // strvchar_sse2: SSE2 optimized implementation (16 bytes)
 //
@@ -546,14 +560,22 @@ static inline size_t strvchar_neon(const unsigned char *str, size_t len)
 //
 // _mm_movemask_epi8 creates a 16-bit mask where each bit represents
 // whether the corresponding byte is invalid (1) or valid (0).
-static inline size_t strvchar_sse2(const unsigned char *str, size_t len)
+// strvchar_sse2: SSE2 optimized implementation (16 bytes)
+//
+// Parameters:
+// - is_field_vchar: non-zero if field-vchar is allowed, 0x00 otherwise
+static inline size_t strvchar_sse2(const unsigned char *str, size_t len,
+                                   int8_t is_field_vchar)
 {
-    size_t pos = 0;
-
+    size_t pos              = 0;
     // Pre-compute constants (compile-time)
     const __m128i sign_flip = _mm_set1_epi8(SIMD_SIGN_FLIP);
-    const __m128i threshold = _mm_set1_epi8(SIMD_THRESHOLD_SHIFTED);
-    const __m128i del_byte  = _mm_set1_epi8(0x7F);
+    // 0x20 (space) for field-vchar, else 0x21 (exclamation mark) for VCHAR
+    const __m128i first_cmp =
+        _mm_set1_epi8((is_field_vchar ? 0x20 : 0x21) ^ SIMD_SIGN_FLIP);
+    const __m128i del_char = _mm_set1_epi8(0x7F);
+    const __m128i ht_char  = _mm_set1_epi8(0x09);
+    const __m128i allow_ht = _mm_set1_epi8(-(is_field_vchar != 0));
 
     while (pos + 16 <= len) {
         // Load 16 bytes (unaligned load)
@@ -565,17 +587,24 @@ static inline size_t strvchar_sse2(const unsigned char *str, size_t len)
         // into a signed one
         __m128i data_shifted = _mm_xor_si128(data, sign_flip);
 
-        // Detect invalid characters:
-        // - lt_21: bytes where (data ^ 0x80) < (0x21 ^ 0x80), i.e., data < 0x21
-        // - eq_7f: bytes where data == 0x7F (DEL)
-        __m128i lt_21 = _mm_cmpgt_epi8(threshold, data_shifted);
-        __m128i eq_7f = _mm_cmpeq_epi8(data, del_byte);
+        // Check1: Detect bytes where (data ^ 0x80) < (firstc ^ 0x80) which is
+        // equivalent
+        __m128i is_before_first = _mm_cmpgt_epi8(first_cmp, data_shifted);
 
-        // Combine: invalid if lt_21 OR eq_7f
-        __m128i invalid = _mm_or_si128(lt_21, eq_7f);
+        // Check2: SP/HT exception logic
+        // if is_field_vchar is true, then HT (0x09) is valid even if < firstc.
+        __m128i is_ht         = _mm_cmpeq_epi8(data, ht_char);
+        __m128i is_allowed_ht = _mm_and_si128(is_ht, allow_ht);
+        is_before_first = _mm_andnot_si128(is_allowed_ht, is_before_first);
+
+        // Check3: DEL (0x7F) is always invalid
+        __m128i is_del = _mm_cmpeq_epi8(data, del_char);
+
+        // Combine: invalid if is_before_first OR is_del
+        __m128i is_invalid = _mm_or_si128(is_before_first, is_del);
 
         // Create 16-bit mask: bit i is 1 if byte i is invalid
-        int mask = _mm_movemask_epi8(invalid);
+        int mask = _mm_movemask_epi8(is_invalid);
         if (mask) {
             // __builtin_ctz(mask) returns the position of the first set bit
             // which corresponds to the first invalid byte position (0-15)
@@ -586,8 +615,7 @@ static inline size_t strvchar_sse2(const unsigned char *str, size_t len)
         pos += 16;
     }
 
-    // Fall back to LUT for remaining bytes (< 16 bytes)
-    return pos + strvchar_lut(str + pos, len - pos);
+    return pos + strvchar_cmp(str + pos, len - pos, is_field_vchar);
 }
 
 #endif
@@ -598,26 +626,46 @@ static inline size_t strvchar_sse2(const unsigned char *str, size_t len)
 // strvchar_avx2: AVX2 optimized implementation (32 bytes)
 //
 // Algorithm: Blacklist approach using 256-bit SIMD
-// - Invalid: 0x00-0x20 (control chars + SP) or 0x7F (DEL)
-// - Valid:   0x21-0x7E (VCHAR) or 0x80-0xFF (obs-text)
-static inline size_t strvchar_avx2(const unsigned char *str, size_t len)
+// - Invalid: characters < threshold (except HT if allowed) or character == 0x7F
+// (DEL)
+//
+// Parameters:
+// - is_field_vchar: non-zero if field-vchar is allowed, 0x00 otherwise
+static inline size_t strvchar_avx2(const unsigned char *str, size_t len,
+                                   int8_t is_field_vchar)
 {
-    size_t pos = 0;
-
-    // Pre-compute constants (compile-time)
+    size_t pos              = 0;
+    // Pre-compute constants (compile-time if arguments are constant)
     const __m256i sign_flip = _mm256_set1_epi8(SIMD_SIGN_FLIP);
-    const __m256i threshold = _mm256_set1_epi8(SIMD_THRESHOLD_SHIFTED);
-    const __m256i del_byte  = _mm256_set1_epi8(0x7F);
+    const __m256i first_cmp =
+        _mm256_set1_epi8((is_field_vchar ? 0x20 : 0x21) ^ SIMD_SIGN_FLIP);
+    const __m256i del_char = _mm256_set1_epi8(0x7F);
+    const __m256i ht_char  = _mm256_set1_epi8(0x09);
+    const __m256i allow_ht = _mm256_set1_epi8(-(is_field_vchar != 0));
 
     // Process 32 bytes at a time
     while (pos + 32 <= len) {
         __m256i data =
             _mm256_loadu_si256((const __m256i *)(const void *)(str + pos));
         __m256i data_shifted = _mm256_xor_si256(data, sign_flip);
-        __m256i lt_21        = _mm256_cmpgt_epi8(threshold, data_shifted);
-        __m256i eq_7f        = _mm256_cmpeq_epi8(data, del_byte);
-        __m256i invalid      = _mm256_or_si256(lt_21, eq_7f);
-        int mask             = _mm256_movemask_epi8(invalid);
+
+        // Check 1: Characters less than firstc (after sign flip) are invalid
+        // (data ^ 0x80) < (firstc ^ 0x80)
+        __m256i is_before_first = _mm256_cmpgt_epi8(first_cmp, data_shifted);
+
+        // Check2: HT exception logic - if allow_ht, then HT (0x09) is valid
+        // even if < firstc
+        __m256i is_ht         = _mm256_cmpeq_epi8(data, ht_char);
+        __m256i is_allowed_ht = _mm256_and_si256(is_ht, allow_ht);
+        is_before_first = _mm256_andnot_si256(is_allowed_ht, is_before_first);
+
+        // Check3: DEL (0x7F) is always invalid
+        __m256i is_del = _mm256_cmpeq_epi8(data, del_char);
+
+        // Combine invalid conditions
+        __m256i is_invalid = _mm256_or_si256(is_before_first, is_del);
+
+        int mask = _mm256_movemask_epi8(is_invalid);
         if (mask) {
             return pos + (size_t)__builtin_ctz((unsigned int)mask);
         }
@@ -625,7 +673,10 @@ static inline size_t strvchar_avx2(const unsigned char *str, size_t len)
     }
 
     // Fall back to SSE2 for remaining bytes (< 32 bytes)
-    return pos + strvchar_sse2(str + pos, len - pos);
+    // Note: SSE2 implementation is currently NOT parameterized, so it only
+    // supports standard VCHAR. This is acceptable for now as we are strictly
+    // refactoring strvchar integration.
+    return pos + strvchar_sse2(str + pos, len - pos, is_field_vchar);
 }
 
 #endif
@@ -633,18 +684,34 @@ static inline size_t strvchar_avx2(const unsigned char *str, size_t len)
 // strvchar: count consecutive field-content characters (VCHAR or obs-text)
 // Returns the number of consecutive characters from the beginning of str
 // that are field-content (VCHAR or obs-text)
-static inline size_t strvchar(const unsigned char *str, size_t len)
-{
+
+// strfcchar: count consecutive field-content characters (VCHAR, obs-text,
+// SP, HT) Returns the number of consecutive characters from the beginning
+// of str that are field-content (VCHAR, obs-text, SP, HT)
+
 #if defined(__AVX2__)
-    return strvchar_avx2(str, len);
+# define strvchar(str, len)                                                    \
+     strvchar_avx2((const unsigned char *)(str), (len), 0)
+# define strfcchar(str, len)                                                   \
+     strvchar_avx2((const unsigned char *)(str), (len), 1)
+
 #elif defined(__SSE2__)
-    return strvchar_sse2(str, len);
+# define strvchar(str, len)                                                    \
+     strvchar_sse2((const unsigned char *)(str), (len), 0)
+# define strfcchar(str, len)                                                   \
+     strvchar_sse2((const unsigned char *)(str), (len), 1)
+
 #elif defined(__aarch64__) || (defined(__arm__) && defined(__ARM_NEON))
-    return strvchar_neon(str, len);
+# define strvchar(str, len)                                                    \
+     strvchar_neon((const unsigned char *)(str), (len), 0)
+# define strfcchar(str, len)                                                   \
+     strvchar_neon((const unsigned char *)(str), (len), 1)
+
 #else
-    return strvchar_lut(str, len);
+# define strvchar(str, len) strvchar_cmp((const unsigned char *)(str), (len), 0)
+# define strfcchar(str, len)                                                   \
+     strvchar_cmp((const unsigned char *)(str), (len), 1)
 #endif
-}
 
 /** @} */ /* end of Internal Character Validation Functions */
 
@@ -1260,33 +1327,20 @@ CHECK_EOL:
 static int parse_hval(unsigned char *str, size_t len, size_t *cur,
                       size_t *maxlen)
 {
-    size_t pos       = 0;
-    size_t ows_start = SIZE_MAX;
-    size_t max       = (len > *maxlen) ? *maxlen : len;
+    size_t max = (len > *maxlen) ? *maxlen : len;
 
-CHECK_NEXT:
-    pos += strvchar(str + pos, max - pos);
+    // Use strfcchar to scan VCHAR + SP + HT + obs-text in one go
+    // This stops at CR, LF, or any invalid character (e.g. CTLs)
+    size_t pos = strfcchar(str, max);
     if (pos < max) {
-        // stop at first non VCHAR/obs-text
-        unsigned char c = str[pos];
-        switch (c) {
-        case HT:
-        case SP:
-            // skip OWS
-            ows_start = pos;
-            pos++;
-            while (pos < max && (str[pos] == HT || str[pos] == SP)) {
-                pos++;
-            }
-            if (pos < max && is_vchar(str[pos])) {
-                // continue with field-content (vchar)
-                ows_start = SIZE_MAX;
-            }
-            goto CHECK_NEXT;
+        // Stopped at non-field-content
+        switch (str[pos]) {
+        default:
+            return HWIRE_EHDRVALUE;
 
         case CR:
-            if (!str[pos + 1]) {
-                // null-terminator
+            if (pos + 1 == len) {
+                // reached end of string, need more bytes to check for LF
                 break;
             }
             if (str[pos + 1] != LF) {
@@ -1294,22 +1348,28 @@ CHECK_NEXT:
                 return HWIRE_EEOL;
             }
         case LF:
-            // set tail position
-            *cur    = pos + 1 + (c == CR);
-            *maxlen = (ows_start == SIZE_MAX) ? pos : ows_start;
-            return HWIRE_OK;
+            // set tail position after CRLF and trim trailing OWS
+            *cur = pos + 1 + (str[pos] == CR);
 
-        // invalid
-        default:
-            return HWIRE_EHDRVALUE;
+            // Backtrack to trim trailing OWS
+            // remove trailing CR if present
+            if (pos > 0 && str[pos - 1] == CR) {
+                pos--;
+            }
+            // remove trailing OWS
+            while (pos > 0 && (str[pos - 1] == SP || str[pos - 1] == HT)) {
+                pos--;
+            }
+            *maxlen = pos;
+            return HWIRE_OK;
         }
     }
 
+    // CHECK_LEN:
     // header-length too large
     if (len > max) {
         return HWIRE_EHDRLEN;
     }
-
     return HWIRE_EAGAIN;
 }
 
