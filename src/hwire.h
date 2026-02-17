@@ -68,7 +68,8 @@ typedef enum {
     HWIRE_EEXTVAL   = -14, /**< Invalid extension value or missing EOL */
     HWIRE_ENOBUFS   = -15, /**< Buffer overflow (e.g., max_exts exceeded) */
     HWIRE_EKEYLEN   = -16, /**< Key length exceeds buffer size */
-    HWIRE_ECALLBACK = -17  /**< Callback returned non-zero */
+    HWIRE_ECALLBACK = -17, /**< Callback returned non-zero */
+    HWIRE_EURI      = -18  /**< Invalid URI character */
 } hwire_code_t;
 
 /** @} */ /* end of Error Codes */

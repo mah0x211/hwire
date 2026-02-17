@@ -89,6 +89,45 @@ static const unsigned char VCHAR[256] = {
     1, 1, 1};
 
 /**
+ * @brief URI allowed characters (RFC 3986)
+ *
+ * unreserved / sub-delims / ":" / "@" / "/" / "?" / "%"
+ * unreserved = ALPHA / DIGIT / "-" / "." / "_" / "~"
+ * sub-delims = "!" / "$" / "&" / "'" / "(" / ")" / "*" / "+" / "," / ";" / "="
+ */
+static const unsigned char URI_CHAR[256] = {
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // 0-15
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // 16-31
+    0, 1, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    1, // 32-47 ( ! # $ % & ' ( ) * + , - . / )
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 0, 1, // 48-63 ( 0-9 : ; < = > ? )
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, // 64-79 ( @ A-O )
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 1, // 80-95 ( P-Z [ \ ] ^ _ )
+    0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, // 96-111 ( ` a-o )
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 1,
+    0, // 112-127 ( p-z { | } ~ DEL )
+    // Extended ASCII (128-255) are NOT allowed in URI (must be unreserved)
+    // Actually RFC 3986 says characters "not in the allowed set" must be
+    // pct-encoded. So raw UTF-8 bytes > 127 are invalid in URI.
+    0};
+
+static inline int is_uri_char(unsigned char c)
+{
+    return URI_CHAR[c];
+}
+
+static inline size_t strurichar(const unsigned char *str, size_t len)
+{
+    size_t i = 0;
+    for (; i < len; i++) {
+        if (!is_uri_char(str[i])) {
+            break;
+        }
+    }
+    return i;
+}
+
+/**
  * @brief QDTEXT lookup table for quoted-string validation
  *
  * RFC 7230:
@@ -636,6 +675,8 @@ int hwire_is_vchar(unsigned char c)
  * @param pos Input: start offset, Output: end offset (must not be NULL)
  * @return Number of consecutive tchar characters matched (0 if first char is
  * not tchar)
+ * @see RFC 7230 Section 3.2.6 Field Value Components
+ * @see RFC 9110 Section 5.6.2 Tokens
  */
 size_t hwire_parse_tchar(const char *str, size_t len, size_t *pos)
 {
@@ -660,6 +701,8 @@ size_t hwire_parse_tchar(const char *str, size_t len, size_t *pos)
  * @param pos Input: start offset, Output: end offset (must not be NULL)
  * @return Number of consecutive vchar characters matched (0 if first char is
  * not vchar)
+ * @see RFC 7230 Section 3.2.6 Field Value Components
+ * @see RFC 9110 Section 5.5 Field Values
  */
 size_t hwire_parse_vchar(const char *str, size_t len, size_t *pos)
 {
@@ -672,6 +715,10 @@ size_t hwire_parse_vchar(const char *str, size_t len, size_t *pos)
     return n;
 }
 
+/**
+ * @see RFC 7230 Section 3.2.6 Field Value Components
+ * @see RFC 9110 Section 5.6.4 Quoted Strings
+ */
 int hwire_parse_quoted_string(const char *str, size_t len, size_t *pos,
                               size_t maxlen)
 {
@@ -695,6 +742,9 @@ int hwire_parse_quoted_string(const char *str, size_t len, size_t *pos,
     cur++;
 
     // parse quoted-string
+    // RFC 9110 5.6.4: quoted-string = DQUOTE *( qdtext / quoted-pair ) DQUOTE
+    // qdtext = HTAB / SP / %x21 / %x23-5B / %x5D-7E / obs-text
+    // obs-text = %x80-FF
     for (; cur < tail; cur++) {
         unsigned char c = ustr[cur];
         if (!QDTEXT[c]) {
@@ -765,6 +815,8 @@ int hwire_parse_quoted_string(const char *str, size_t len, size_t *pos,
  * @return HWIRE_ELEN if length exceeds maxlen
  * @return HWIRE_EKEYLEN if key length exceeds cb->key_lc.size
  * @return HWIRE_ECALLBACK if callback returned non-zero
+ * @see RFC 7231 Section 3.1.1.1 Parameter
+ * @see RFC 9110 Section 5.6.6 Parameters
  */
 static int parse_parameter(char *str, size_t len, size_t *pos, size_t maxpos,
                            hwire_callbacks_t *cb)
@@ -813,6 +865,11 @@ static int parse_parameter(char *str, size_t len, size_t *pos, size_t maxpos,
     CHECK_POSITON();
     param.key.ptr = str + head;
     param.key.len = cur - head;
+    // parameter-name must not be empty
+    if (param.key.len == 0) {
+        *pos = cur;
+        return HWIRE_EILSEQ;
+    }
 
     // check for '='
     if (ustr[cur] != '=') {
@@ -922,6 +979,8 @@ CHECK_NEXT_PARAM:
         // E.g., for CRLF or end of string (NULL-terminator).
         return HWIRE_OK;
     }
+
+SKIP_SEMICOLON:
     // skip ';'
     cur++;
 
@@ -950,6 +1009,20 @@ CHECK_PARAM:
     cb->key_lc.len = 0;
 
     // parse one parameter
+    // RFC 9110 5.6.6: parameters = *( OWS ";" OWS [ parameter ] )
+    if (ustr[cur] == SEMICOLON) {
+        // empty parameter, skip
+        goto SKIP_SEMICOLON;
+    }
+
+    // Checking for end of string is required because we might have
+    // consumed a semicolon (empty parameter) and reached EOS.
+    // In this case, we have a valid empty parameter at the end, so return OK.
+    if (cur == len) {
+        *pos = cur;
+        return HWIRE_OK;
+    }
+
     rv = parse_parameter(str, len, &cur, maxpos, cb);
     if (rv == HWIRE_OK) {
         // parsed one parameter, continue to next
@@ -1022,6 +1095,8 @@ int hwire_parse_chunksize(char *str, size_t len, size_t *pos, size_t maxlen,
     }
 
     // parse chunk-size
+    // chunk-size = 1*HEXDIG
+    // RFC 7230 4.1 / RFC 9112 7.1: Chunk Size
     size = hex2size(ustr, len, &cur, HWIRE_MAX_CHUNKSIZE);
     if (size < 0) {
         // chunk size exceeds maximum allowed size or invalid
@@ -1036,11 +1111,12 @@ int hwire_parse_chunksize(char *str, size_t len, size_t *pos, size_t maxlen,
         return HWIRE_ECALLBACK;
     }
 
-    // 4.1.1.  Chunk Extensions
+    // 4.1.1. Chunk Extensions
     //
     // chunk-ext    = *( BWS ";" BWS ext-name [ BWS "=" BWS ext-val ] )
     // ext-name     = token
     // ext-val      = token / quoted-string
+    // RFC 7230 4.1.1 / RFC 9112 7.1.1: Chunk Extensions
     //
     // trailer-part = *( header-field CRLF )
     //
@@ -1097,7 +1173,6 @@ CHECK_EOL:
         // return and number of bytes consumed
         *pos = cur + 1;
         return HWIRE_OK;
-        break;
 
     case SEMICOLON:
         // has chunk-extensions
@@ -1350,6 +1425,9 @@ RETRY:
     klen           = maxlen;
     cb->key_lc.len = 0;
     // parse key and store lowercase in key_lc
+    // header-field = field-name ":" OWS field-value OWS
+    // field-name = token
+    // RFC 7230 3.2 / RFC 9112 5.1: Field Names
     rv             = parse_hkey(ustr, len, &cur, &klen, cb);
     if (rv != HWIRE_OK) {
         return rv;
@@ -1369,19 +1447,15 @@ RETRY:
 
     header.value.ptr = (const char *)ustr;
     vlen             = maxlen - (size_t)(ustr - head);
+    // field-value = *field-content
+    // RFC 7230 3.2 / RFC 9112 5.5: Field Values
+    // Note: Empty field-value is allowed.
     rv               = parse_hval(ustr, len, &cur, &vlen);
     if (rv != HWIRE_OK) {
         return rv;
     }
     ustr += cur;
     len -= cur;
-
-    // check empty header value
-    if (!vlen) {
-        // avoid header with empty value
-        nhdr--;
-        goto RETRY;
-    }
 
     // set header key and value
     header.key.ptr   = (const char *)head;
@@ -1435,6 +1509,49 @@ static int parse_version(const unsigned char *str, size_t len, size_t *pos,
 }
 
 /**
+ * @brief Parse request-target (URI)
+ *
+ * Scans the request-target until a space (SP) is found.
+ * Defines the request-target as origin-form / absolute-form / authority-form /
+ * asterisk-form (RFC 7230 3.1.1 / RFC 9112 3.2).
+ *
+ * @param str Input string
+ * @param len Total length of input string
+ * @param pos Output: position after parsed URI (excluding SP)
+ * @param maxlen Maximum allowed length for URI
+ * @param uri Output: URI string slice
+ * @return HWIRE_OK on success
+ * @return HWIRE_EAGAIN if more data is needed
+ * @return HWIRE_ELEN if URI exceeds maxlen
+ * @return HWIRE_EURI if invalid character is found
+ */
+static int parse_uri(const unsigned char *str, size_t len, size_t *pos,
+                     size_t maxlen, hwire_str_t *uri)
+{
+    size_t limit   = len > maxlen ? maxlen : len;
+    size_t uri_len = strurichar(str, limit);
+
+    if (uri_len < len && str[uri_len] == SP) {
+        if (uri_len == 0) {
+            return HWIRE_EURI;
+        }
+        uri->ptr = (const char *)str;
+        uri->len = uri_len;
+        *pos     = uri_len + 1;
+        return HWIRE_OK;
+    }
+
+    if (uri_len != limit) {
+        // found an illegal character before reaching maxlen
+        return HWIRE_EURI;
+    } else if (uri_len == len) {
+        // reached end of string without finding SP, need more bytes
+        return HWIRE_EAGAIN;
+    }
+    return HWIRE_ELEN;
+}
+
+/**
  * @brief Parse HTTP method
  *
  * Parses method as 1*tchar followed by SP.
@@ -1474,6 +1591,9 @@ static int parse_method(unsigned char *str, size_t len, size_t *pos,
     return HWIRE_OK;
 }
 
+/**
+ * @brief Parse request line
+ */
 int hwire_parse_request(char *str, size_t len, size_t *pos, size_t maxlen,
                         uint8_t maxnhdrs, hwire_callbacks_t *cb)
 {
@@ -1502,6 +1622,8 @@ SKIP_NEXT_CRLF:
     }
 
     // parse method
+    // method = 1*tchar
+    // RFC 7230 3.1.1 / RFC 9112 3.1: Method
     rv = parse_method(ustr, len, &cur, &req.method);
     if (rv != HWIRE_OK) {
         return rv;
@@ -1510,25 +1632,18 @@ SKIP_NEXT_CRLF:
     len -= cur;
 
     // parse-uri (find SP delimiter)
-    req.uri.ptr = (const char *)ustr;
-    if (len > maxlen) {
-        unsigned char *sp = memchr(ustr, SP, maxlen);
-        if (!sp) {
-            return HWIRE_ELEN;
-        }
-        ustr = sp;
-    } else {
-        unsigned char *sp = memchr(ustr, SP, len);
-        if (!sp) {
-            return HWIRE_EAGAIN;
-        }
-        ustr = sp;
+    // request-target = origin-form / absolute-form / authority-form /
+    // asterik-form RFC 7230 3.1.1 / RFC 9112 3.2: Request Target
+    rv = parse_uri(ustr, len, &cur, maxlen, &req.uri);
+    if (rv != HWIRE_OK) {
+        return rv;
     }
-    req.uri.len = (size_t)(ustr - (unsigned char *)req.uri.ptr);
-    ustr++;
-    len -= req.uri.len + 1;
+    ustr += cur;
+    len -= cur;
 
     // parse version
+    // HTTP-version = HTTP-name "/" DIGIT "." DIGIT
+    // RFC 7230 2.6 / RFC 9110 2.5: Protocol Versioning
     rv = parse_version(ustr, len, &cur, &req.version);
     if (rv != HWIRE_OK) {
         return rv;
@@ -1714,6 +1829,9 @@ SKIP_NEXT_CRLF:
     }
 
     // parse version
+    // status-line = HTTP-version SP status-code SP reason-phrase CRLF
+    // RFC 7230 3.1.2 / RFC 9112 4: Status Line
+    // RFC 7230 3.1.2 / RFC 9112 4: Status Line
     rv = parse_version(ustr, len, &cur, &rsp.version);
     if (rv != HWIRE_OK) {
         return rv;
@@ -1726,6 +1844,8 @@ SKIP_NEXT_CRLF:
     len -= cur + 1;
 
     // parse status
+    // status-code = 3DIGIT
+    // RFC 7230 3.1.2 / RFC 9112 4: Status Code
     rv = parse_status_hwire(ustr, len, &cur, &rsp.status);
     if (rv != HWIRE_OK) {
         return rv;
@@ -1734,6 +1854,8 @@ SKIP_NEXT_CRLF:
     len -= cur;
 
     // parse reason
+    // reason-phrase = *( HTAB / SP / VCHAR / obs-text )
+    // RFC 7230 3.1.2 / RFC 9112 4: Reason Phrase
     rsp.reason.ptr = (const char *)ustr;
     rsp.reason.len = maxlen;
     rv             = parse_reason_hwire(ustr, len, &cur, &rsp.reason.len);
