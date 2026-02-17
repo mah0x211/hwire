@@ -17,6 +17,7 @@ endif
 # External dependency paths
 PICO_DIR := deps/picohttpparser
 LLHTTP_DIR := deps/llhttp
+HTTPARSE_DIR := deps/httparse_bench
 
 INCLUDES = -I../src -I$(PICO_DIR) -I$(LLHTTP_DIR) -I$(CATCH2_INC)
 LDFLAGS = -L$(CATCH2_LIB) -lCatch2Main -lCatch2
@@ -25,8 +26,8 @@ LDFLAGS = -L$(CATCH2_LIB) -lCatch2Main -lCatch2
 UNAME_M := $(shell uname -m)
 
 .PHONY: all clean run report bench deps patch unpatch \
-        run-hwire run-pico run-llhttp \
-        bench-hwire bench-pico bench-llhttp
+        run-hwire run-pico run-llhttp run-httparse \
+        bench-hwire bench-pico bench-llhttp bench-httparse
 
 # Fetch external dependencies
 deps:
@@ -41,6 +42,10 @@ deps:
 	@if [ ! -f "$(LLHTTP_DIR)/build/c/llhttp.c" ]; then \
 		echo "Building llhttp..."; \
 		cd $(LLHTTP_DIR) && npm install && make generate; \
+	fi
+	@if [ ! -f "$(HTTPARSE_DIR)/Cargo.toml" ]; then \
+		echo "Setting up httparse_bench..."; \
+		./scripts/setup_httparse.sh; \
 	fi
 
 # Apply NO_SIMD patches (script-based)
@@ -72,7 +77,10 @@ else
     LLHTTP_TARGETS = bench_llhttp_neon bench_llhttp_nosimd
 endif
 
-BENCH_TARGETS = $(HWIRE_TARGETS) $(PICO_TARGETS) $(LLHTTP_TARGETS)
+# httparse (Rust): SIMD only (no nosimd variant)
+HTTPARSE_TARGETS = bench_httparse_simd
+
+BENCH_TARGETS = $(HWIRE_TARGETS) $(PICO_TARGETS) $(LLHTTP_TARGETS) $(HTTPARSE_TARGETS)
 
 # Build all targets
 all:
@@ -144,6 +152,24 @@ bench_llhttp_nosimd: bench_llhttp.cc $(LLHTTP_SRC)
 	$(CXX) $(CXXFLAGS) -DNO_SIMD $(INCLUDES) -I$(LLHTTP_DIR)/build -o $@ bench_llhttp.cc llhttp_nosimd.o api_nosimd.o http_nosimd.o $(LDFLAGS)
 
 # =============================================================================
+# httparse benchmarks (Rust via FFI)
+# =============================================================================
+
+# Detect cargo path
+CARGO := $(shell which cargo 2>/dev/null || echo $$HOME/.cargo/bin/cargo)
+
+libhttparse_bench.a:
+	@if [ ! -f "$(CARGO)" ]; then \
+		echo "Error: cargo not found. Please install Rust: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh"; \
+		exit 1; \
+	fi
+	cd $(HTTPARSE_DIR) && $(CARGO) build --release
+	cp $(HTTPARSE_DIR)/target/release/libhttparse_bench.a ./
+
+bench_httparse_simd: bench_httparse.cc libhttparse_bench.a
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -o $@ bench_httparse.cc libhttparse_bench.a -lpthread -ldl -lm $(LDFLAGS)
+
+# =============================================================================
 # Utility targets
 # =============================================================================
 
@@ -152,6 +178,7 @@ clean:
 	rm -f bench_hwire_avx2 bench_hwire_sse2 bench_hwire_neon bench_hwire_nosimd \
 	      bench_pico_sse42 bench_pico_nosimd \
 	      bench_llhttp_sse42 bench_llhttp_neon bench_llhttp_nosimd \
+	      bench_httparse_simd libhttparse_bench.a \
 	      *.o results.txt
 	rm -rf deps/
 
@@ -219,4 +246,17 @@ bench-pico:
 
 bench-llhttp:
 	$(MAKE) run-llhttp
+	$(MAKE) report
+
+run-httparse:
+	$(MAKE) libhttparse_bench.a
+	$(MAKE) $(HTTPARSE_TARGETS)
+	@rm -f results.txt
+	@for target in $(HTTPARSE_TARGETS); do \
+		echo "Running $$target..."; \
+		./$$target 2>&1 | tee -a results.txt; \
+	done
+
+bench-httparse:
+	$(MAKE) run-httparse
 	$(MAKE) report
