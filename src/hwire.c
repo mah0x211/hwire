@@ -236,63 +236,6 @@ static const unsigned char HEXDIGIT[256] = {
 #define DQUOTE    '"'
 #define BACKSLASH '\\'
 
-#define STRTCHAR_NOOP ((void)0)
-
-/**
- * @brief Internal macro: check one character in strtchar_ex loop
- *
- * @param str String being parsed (unsigned char*)
- * @param pos Current position (will be incremented if tchar)
- * @param c Variable to store lowercase tchar (or 0 if not tchar)
- * @param udf User-defined action to execute for each tchar
- */
-#define STRTCHAR_EX_CHECK(str, pos, c, udf)                                    \
-    {                                                                          \
-        c = TCHAR[(unsigned char)(str)[pos]];                                  \
-        if (!c)                                                                \
-            break;                                                             \
-        udf;                                                                   \
-        pos++;                                                                 \
-    }
-
-/**
- * @brief Internal macro: count consecutive tchar characters with loop unrolling
- *
- * Counts consecutive tchar (token) characters starting at position `pos`,
- * with 8x loop unrolling for performance. Executes `udf` for each matched
- * character (typically lowercase conversion).
- *
- * @param str String being parsed (unsigned char*)
- * @param len Maximum length of string
- * @param pos Starting position (will be modified in-place)
- * @param c Variable to store lowercase tchar (or 0 if not tchar)
- * @param udf User-defined action to execute for each tchar (e.g., ustr[pos] =
- * c)
- * @return Updated position after counting (points to first non-tchar or end)
- *
- * @note This is a statement expression macro that returns the final `pos`
- * value.
- * @note Uses 8x loop unrolling: processes 8 characters per iteration when
- * possible.
- */
-#define strtchar_ex(str, len, pos, c, udf)                                     \
-    ({                                                                         \
-        while (pos + 8 <= (len)) {                                             \
-            STRTCHAR_EX_CHECK((str), pos, c, udf);                             \
-            STRTCHAR_EX_CHECK((str), pos, c, udf);                             \
-            STRTCHAR_EX_CHECK((str), pos, c, udf);                             \
-            STRTCHAR_EX_CHECK((str), pos, c, udf);                             \
-            STRTCHAR_EX_CHECK((str), pos, c, udf);                             \
-            STRTCHAR_EX_CHECK((str), pos, c, udf);                             \
-            STRTCHAR_EX_CHECK((str), pos, c, udf);                             \
-            STRTCHAR_EX_CHECK((str), pos, c, udf);                             \
-        }                                                                      \
-        while (pos < (len)) {                                                  \
-            STRTCHAR_EX_CHECK((str), pos, c, udf);                             \
-        }                                                                      \
-        pos;                                                                   \
-    })
-
 /** @} */ /* end of Internal Macros */
 
 /**
@@ -373,21 +316,192 @@ static inline int is_vchar(unsigned char c)
 }
 
 /**
- * @brief Count consecutive tchar characters
+ * @brief Count consecutive tchar characters with optional lowercase conversion
  *
  * Counts the number of consecutive tchar (token) characters from the
- * beginning of str. This is a simple wrapper around strtchar_ex with
- * STRTCHAR_NOOP (no modification).
+ * beginning of str. Uses 8x loop unrolling for performance.
+ *
+ * If lc is non-NULL, stores the lowercase-converted tchar characters into
+ * lc->buf starting at lc->len.
  *
  * @param str String to parse (must not be NULL)
  * @param len Maximum length of string
+ * @param lc  Optional lowercase buffer (NULL to skip lowercase conversion)
  * @return Number of consecutive tchar characters (0 if first char is not tchar)
+ * @return SIZE_MAX if buffer is full and there are more tchars to process
  */
-static inline size_t strtchar(const unsigned char *str, size_t len)
+static inline size_t strtchar_cmp_lc(const unsigned char *str, size_t len,
+                                     hwire_buf_t *lc)
 {
-    size_t pos      = 0;
-    unsigned char c = 0;
-    return strtchar_ex(str, len, pos, c, STRTCHAR_NOOP);
+    size_t pos         = 0;
+    size_t lci         = 0;
+    unsigned char *buf = (unsigned char *)lc->buf;
+    size_t limit       = (len < lc->size) ? len : lc->size;
+
+    // Check 8 characters at a time with loop unrolling for performance
+    while (pos + 8 <= limit) {
+        if (!(buf[lci++] = TCHAR[str[pos++]]) ||
+            !(buf[lci++] = TCHAR[str[pos++]]) ||
+            !(buf[lci++] = TCHAR[str[pos++]]) ||
+            !(buf[lci++] = TCHAR[str[pos++]]) ||
+            !(buf[lci++] = TCHAR[str[pos++]]) ||
+            !(buf[lci++] = TCHAR[str[pos++]]) ||
+            !(buf[lci++] = TCHAR[str[pos++]]) ||
+            !(buf[lci++] = TCHAR[str[pos++]])) {
+            lc->len = pos - 1;
+            return lc->len;
+        }
+    }
+    // Check remaining characters one by one
+    while (pos < limit) {
+        if (!(buf[pos] = TCHAR[str[pos]])) {
+            lc->len = pos;
+            return pos;
+        }
+        pos++;
+    }
+    lc->len = pos;
+
+    // buffer is full - check if there are more tchars
+    if (pos < len && TCHAR[str[pos]]) {
+        return SIZE_MAX;
+    }
+    return pos;
+}
+
+/**
+ * @brief Count consecutive tchar characters with optional lowercase conversion
+ *
+ * Counts the number of consecutive tchar (token) characters from the
+ * beginning of str. Uses 8x loop unrolling for performance.
+ *
+ * If lc is non-NULL, stores the lowercase-converted tchar characters into
+ * lc->buf starting at lc->len.
+ *
+ * @param str String to parse (must not be NULL)
+ * @param len Maximum length of string
+ * @param lc  Optional lowercase buffer (NULL to skip lowercase conversion)
+ * @return Number of consecutive tchar characters (0 if first char is not tchar)
+ * @return SIZE_MAX if buffer is full and there are more tchars to process
+ */
+static inline size_t strtchar_cmp(const unsigned char *str, size_t len)
+{
+    size_t pos = 0;
+
+    // Check 8 characters at a time with loop unrolling for performance
+    while (pos + 8 <= len) {
+        if (!TCHAR[str[pos++]] || !TCHAR[str[pos++]] || !TCHAR[str[pos++]] ||
+            !TCHAR[str[pos++]] || !TCHAR[str[pos++]] || !TCHAR[str[pos++]] ||
+            !TCHAR[str[pos++]] || !TCHAR[str[pos++]]) {
+            return --pos;
+        }
+    }
+    // Check remaining characters one by one
+    while (pos < len) {
+        if (!TCHAR[str[pos++]]) {
+            return --pos;
+        }
+    }
+
+    return pos;
+}
+
+// strtchar_sse42: SSE4.2 optimized implementation using PCMPESTRI
+//
+// Blacklist approach (same as picohttpparser's parse_token):
+// Uses PCMPESTRI to find non-TCHAR characters efficiently.
+// When a match is found, switches to slow loop (LUT) for accurate validation.
+//
+// Non-TCHAR ranges (8 ranges = 16 bytes):
+//   0x00-0x20: control chars + SP
+//   0x22:      "
+//   0x28-0x29: ( )
+//   0x2C:      ,
+//   0x2F:      /
+//   0x3A-0x40: : ; < = > ? @
+//   0x5B-0x5D: [ \ ]
+//   0x7B-0xFF: { and above (includes | and ~ which are valid TCHAR)
+//
+// Note: | (0x7C) and ~ (0x7E) are valid TCHAR but fall within 0x7B-0xFF range.
+// They are handled correctly in the slow loop using LUT.
+#if defined(__SSE4_2__)
+# include <nmmintrin.h>
+
+// Non-TCHAR character ranges for PCMPESTRI (8 ranges = 16 bytes)
+static const char __attribute__((aligned(16))) TCHAR_NONTCHAR_RANGES[] =
+    "\x00\x20"  // 0x00-0x20: control chars + SP
+    "\"\""      // 0x22: "
+    "()"        // 0x28-0x29: ( )
+    ",,"        // 0x2c: ,
+    "//"        // 0x2f: /
+    ":@"        // 0x3a-0x40: : ; < = > ? @
+    "[]"        // 0x5b-0x5d: [ \ ]
+    "\x7b\xff"; // 0x7b-0xff: { and above (includes | and ~)
+
+static inline size_t strtchar_sse42(const unsigned char *str, size_t len)
+{
+    size_t pos = 0;
+    const __m128i ranges =
+        _mm_loadu_si128((const __m128i *)(const void *)TCHAR_NONTCHAR_RANGES);
+    const int ranges_len = 15; // 8 ranges = 16 bytes, null terminator excluded
+
+    while (pos + 16 <= len) {
+        __m128i data =
+            _mm_loadu_si128((const __m128i *)(const void *)(str + pos));
+
+        // PCMPESTRI: find first byte in data that falls within any of the
+        // ranges Returns index (0-15) of first match, or 16 if no match
+        int idx = _mm_cmpestri(ranges, ranges_len, data, 16,
+                               _SIDD_LEAST_SIGNIFICANT | _SIDD_CMP_RANGES |
+                                   _SIDD_UBYTE_OPS);
+
+        if (idx != 16) {
+            // Found a potential non-TCHAR character
+            // Switch to slow loop (LUT) from this position for accurate
+            // validation
+            pos += idx;
+            return pos + strtchar_cmp(str + pos, len - pos);
+        }
+
+        pos += 16;
+    }
+
+    // Handle remaining bytes with LUT (accurate validation)
+    // | (0x7C) and ~ (0x7E) are correctly handled here
+    return pos + strtchar_cmp(str + pos, len - pos);
+}
+
+#endif
+
+/**
+ * @brief Count consecutive tchar characters with optional lowercase conversion
+ *
+ * Counts the number of consecutive tchar (token) characters from the
+ * beginning of str. Uses 8x loop unrolling for performance.
+ *
+ * If lc is non-NULL, stores the lowercase-converted tchar characters into
+ * lc->buf starting at lc->len.
+ *
+ * @param str String to parse (must not be NULL)
+ * @param len Maximum length of string
+ * @param lc  Optional lowercase buffer (NULL to skip lowercase conversion)
+ * @return Number of consecutive tchar characters (0 if first char is not tchar)
+ * @return SIZE_MAX if buffer is full and there are more tchars to process
+ */
+static inline size_t strtchar(const unsigned char *str, size_t len,
+                              hwire_buf_t *lc)
+{
+    if (lc) {
+        return strtchar_cmp_lc(str, len, lc);
+    }
+
+    // No lowercase buffer - use SIMD if available
+#if defined(__SSE4_2__)
+    if (len >= 16) {
+        return strtchar_sse42(str, len);
+    }
+#endif
+    return strtchar_cmp(str, len);
 }
 
 /**
@@ -504,8 +618,7 @@ static inline size_t strvchar_cmp(const unsigned char *str, size_t len,
 static inline size_t strvchar_neon(const unsigned char *str, size_t len,
                                    int is_field_vchar)
 {
-    size_t pos = 0;
-
+    size_t pos                 = 0;
     // Pre-compute constants (compile-time inlined)
     // 0x20 for field-vchar, else 0x21 (exclamation mark) for VCHAR
     const uint8x16_t first_cmp = vdupq_n_u8(is_field_vchar ? 0x20 : 0x21);
@@ -641,6 +754,60 @@ static inline size_t strvchar_sse2(const unsigned char *str, size_t len,
 
 #endif
 
+#if defined(__SSE4_2__)
+# include <nmmintrin.h>
+
+// strvchar_sse42: SSE4.2 optimized implementation using PCMPESTRI
+//
+// Algorithm: Blacklist approach using PCMPESTRI range matching
+// - Invalid ranges for VCHAR: 0x00-0x20, 0x7F-0x7F
+// - Invalid ranges for field-vchar: 0x00-0x08, 0x0A-0x1F, 0x7F-0x7F (excludes
+// HT)
+// - Valid: 0x21-0x7E (VCHAR) or 0x80-0xFF (obs-text)
+//
+// PCMPESTRI checks up to 8 ranges (16 bytes) against 16 bytes of data.
+// When a match is found (invalid char), switch to slow loop.
+static inline size_t strvchar_sse42(const unsigned char *str, size_t len,
+                                    int is_field_vchar)
+{
+    size_t pos = 0;
+    // Invalid character ranges:
+    // - VCHAR: 0x00-0x20 (control + SP), 0x7F-0x7F (DEL) - 2 ranges
+    // - field-vchar: 0x00-0x08, 0x0A-0x1F, 0x7F-0x7F - 3 ranges (excludes
+    // HT)
+    static const char __attribute__((aligned(16))) VCHAR_INVALID_RANGES[] =
+        "\x00\x20\x7f\x7f"; // 2 ranges = 4 bytes
+    static const char __attribute__((aligned(16))) FCVCHAR_INVALID_RANGES[] =
+        "\x00\x08\x0a\x1f\x7f\x7f"; // 3 ranges = 6 bytes
+
+    const __m128i ranges = _mm_loadu_si128((
+        const __m128i *)(const void *)(is_field_vchar ? FCVCHAR_INVALID_RANGES :
+                                                        VCHAR_INVALID_RANGES));
+    const int ranges_len = is_field_vchar ? 6 : 4;
+
+    while (pos + 16 <= len) {
+        __m128i data =
+            _mm_loadu_si128((const __m128i *)(const void *)(str + pos));
+
+        // PCMPESTRI: find first byte in data that falls within any of the
+        // invalid ranges. Returns index of first match (0-15), or 16 if no
+        // match.
+        int idx = _mm_cmpestri(ranges, ranges_len, data, 16,
+                               _SIDD_LEAST_SIGNIFICANT | _SIDD_CMP_RANGES |
+                                   _SIDD_UBYTE_OPS);
+
+        if (idx != 16) {
+            return pos + idx;
+        }
+
+        pos += 16;
+    }
+
+    return pos + strvchar_cmp(str + pos, len - pos, is_field_vchar);
+}
+
+#endif
+
 #if defined(__AVX2__)
 # include <immintrin.h>
 
@@ -670,8 +837,8 @@ static inline size_t strvchar_avx2(const unsigned char *str, size_t len,
             _mm256_loadu_si256((const __m256i *)(const void *)(str + pos));
         __m256i data_shifted = _mm256_xor_si256(data, sign_flip);
 
-        // Check 1: Characters less than firstc (after sign flip) are invalid
-        // (data ^ 0x80) < (firstc ^ 0x80)
+        // Check 1: Characters less than firstc (after sign flip) are
+        // invalid (data ^ 0x80) < (firstc ^ 0x80)
         __m256i is_before_first = _mm256_cmpgt_epi8(first_cmp, data_shifted);
 
         // Check2: HT exception logic - if allow_ht, then HT (0x09) is valid
@@ -710,29 +877,50 @@ static inline size_t strvchar_avx2(const unsigned char *str, size_t len,
 // SP, HT) Returns the number of consecutive characters from the beginning
 // of str that are field-content (VCHAR, obs-text, SP, HT)
 
+static inline size_t strvchar(const unsigned char *str, size_t len)
+{
 #if defined(__AVX2__)
-# define strvchar(str, len)                                                    \
-     strvchar_avx2((const unsigned char *)(str), (len), 0)
-# define strfcchar(str, len)                                                   \
-     strvchar_avx2((const unsigned char *)(str), (len), 1)
-
+    if (len >= 32) {
+        return strvchar_avx2(str, len, 0);
+    }
+#elif defined(__SSE4_2__)
+    if (len >= 16) {
+        return strvchar_sse42(str, len, 0);
+    }
 #elif defined(__SSE2__)
-# define strvchar(str, len)                                                    \
-     strvchar_sse2((const unsigned char *)(str), (len), 0)
-# define strfcchar(str, len)                                                   \
-     strvchar_sse2((const unsigned char *)(str), (len), 1)
-
+    if (len >= 16) {
+        return strvchar_sse2(str, len, 0);
+    }
 #elif defined(__aarch64__) || (defined(__arm__) && defined(__ARM_NEON))
-# define strvchar(str, len)                                                    \
-     strvchar_neon((const unsigned char *)(str), (len), 0)
-# define strfcchar(str, len)                                                   \
-     strvchar_neon((const unsigned char *)(str), (len), 1)
-
-#else
-# define strvchar(str, len) strvchar_cmp((const unsigned char *)(str), (len), 0)
-# define strfcchar(str, len)                                                   \
-     strvchar_cmp((const unsigned char *)(str), (len), 1)
+    if (len >= 16) {
+        return strvchar_neon(str, len, 0);
+    }
 #endif
+    return strvchar_cmp(str, len, 0);
+}
+
+static inline size_t strfcchar(const unsigned char *str, size_t len)
+{
+#if defined(__AVX2__)
+    if (len >= 32) {
+        return strvchar_avx2(str, len, 1);
+    }
+#elif defined(__SSE4_2__)
+    if (len >= 16) {
+        return strvchar_sse42(str, len, 1);
+    }
+#elif defined(__SSE2__)
+    if (len >= 16) {
+        return strvchar_sse2(str, len, 1);
+    }
+#elif defined(__aarch64__) || (defined(__arm__) && defined(__ARM_NEON))
+    if (len >= 16) {
+        return strvchar_neon(str, len, 1);
+    }
+#endif
+
+    return strvchar_cmp(str, len, 1);
+}
 
 /** @} */ /* end of Internal Character Validation Functions */
 
@@ -772,7 +960,7 @@ size_t hwire_parse_tchar(const char *str, size_t len, size_t *pos)
     assert(pos != NULL);
     size_t cur                = *pos;
     const unsigned char *ustr = (const unsigned char *)str + cur;
-    size_t n                  = strtchar(ustr, len - cur);
+    size_t n                  = strtchar(ustr, len - cur, NULL);
     *pos += n;
     return n;
 }
@@ -932,23 +1120,14 @@ static int parse_parameter(char *str, size_t len, size_t *pos, size_t maxpos,
 
     // parse parameter-name (token)
     if (cb->key_lc.size > 0) {
-        unsigned char c        = 0;
-        unsigned char *key_buf = (unsigned char *)cb->key_lc.buf;
-        size_t key_len         = cb->key_lc.len;
-        size_t key_size        = cb->key_lc.size;
-        cur                    = strtchar_ex(ustr, tail, cur, c, {
-            // convert to lowercase and store in key_buf
-            if (key_len >= key_size) {
-                *pos           = cur;
-                cb->key_lc.len = key_len;
-                return HWIRE_EKEYLEN;
-            }
-            key_buf[key_len++] = c;
-        });
-        // update key_lc.len after parsing
-        cb->key_lc.len         = key_len;
+        size_t n = strtchar(ustr + cur, tail - cur, &cb->key_lc);
+        if (n == SIZE_MAX) {
+            *pos = cur;
+            return HWIRE_EKEYLEN;
+        }
+        cur += n;
     } else {
-        cur += strtchar(ustr + cur, tail - cur);
+        cur += strtchar(ustr + cur, tail - cur, NULL);
     }
     CHECK_POSITON();
     param.key.ptr = str + head;
@@ -1402,28 +1581,16 @@ static int parse_hval(unsigned char *str, size_t len, size_t *cur,
 static int parse_hkey(unsigned char *str, size_t len, size_t *cur,
                       size_t *maxlen, hwire_callbacks_t *cb)
 {
-    size_t pos       = 0;
     size_t max       = (len > *maxlen) ? *maxlen : len;
     size_t tchar_len = 0;
 
     if (cb->key_lc.size > 0) {
-        unsigned char c        = 0;
-        unsigned char *key_buf = (unsigned char *)cb->key_lc.buf;
-        size_t key_len         = cb->key_lc.len;
-        size_t key_size        = cb->key_lc.size;
-        tchar_len              = strtchar_ex(str, max, pos, c, {
-            // convert to lowercase and store in key_buf
-            if (key_len >= key_size) {
-                // Restore before returning error
-                cb->key_lc.len = key_len;
-                return HWIRE_EKEYLEN;
-            }
-            key_buf[key_len++] = c;
-        });
-        // Update the structure
-        cb->key_lc.len         = key_len;
+        tchar_len = strtchar(str, max, &cb->key_lc);
+        if (tchar_len == SIZE_MAX) {
+            return HWIRE_EKEYLEN;
+        }
     } else {
-        tchar_len = strtchar(str, max);
+        tchar_len = strtchar(str, max, NULL);
     }
 
     if (tchar_len == 0) {
