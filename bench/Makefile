@@ -29,15 +29,20 @@ UNAME_M := $(shell uname -m)
         run-hwire run-pico run-llhttp run-httparse \
         bench-hwire bench-pico bench-llhttp bench-httparse
 
+# External dependency versions
+PICO_COMMIT := f8326098f63eefabfa2b6ec595d90e9ed5ed958a
+LLHTTP_TAG := v9.3.1
+
 # Fetch external dependencies
 deps:
 	@if [ ! -d "$(PICO_DIR)" ]; then \
-		echo "Cloning picohttpparser..."; \
-		mkdir -p deps && git clone --depth 1 https://github.com/h2o/picohttpparser.git $(PICO_DIR); \
+		echo "Cloning picohttpparser ($(PICO_COMMIT))..."; \
+		mkdir -p deps && git clone https://github.com/h2o/picohttpparser.git $(PICO_DIR) && \
+		cd $(PICO_DIR) && git checkout $(PICO_COMMIT); \
 	fi
 	@if [ ! -d "$(LLHTTP_DIR)" ]; then \
-		echo "Cloning llhttp..."; \
-		mkdir -p deps && git clone --depth 1 https://github.com/nodejs/llhttp.git $(LLHTTP_DIR); \
+		echo "Cloning llhttp ($(LLHTTP_TAG))..."; \
+		mkdir -p deps && git clone --depth 1 --branch $(LLHTTP_TAG) https://github.com/nodejs/llhttp.git $(LLHTTP_DIR); \
 	fi
 	@if [ ! -f "$(LLHTTP_DIR)/build/c/llhttp.c" ]; then \
 		echo "Building llhttp..."; \
