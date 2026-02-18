@@ -89,6 +89,28 @@ static const unsigned char VCHAR[256] = {
     1, 1, 1};
 
 /**
+ * @brief Field-content allowed characters (RFC 7230)
+ */
+static const unsigned char FCVCHAR[256] = {
+    0, 0, 0, 0, 0, 0, 0, 0, 0,
+    1, // HT is allowed for field-vchar, but not for VCHAR
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    // VCHAR 0x20 - 0x7E
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    // except DEL 0x7F
+    0,
+    // all obs-text 0x80 - 0xFF
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    1, 1, 1};
+
+/**
  * @brief URI allowed characters (RFC 3986)
  *
  * unreserved / sub-delims / ":" / "@" / "/" / "?" / "%"
@@ -428,14 +450,14 @@ static inline int skip_ws(unsigned char *str, size_t len, size_t *pos,
 static inline size_t strvchar_cmp(const unsigned char *str, size_t len,
                                   int is_field_vchar)
 {
-    size_t pos           = 0;
-    // SP for field-vchar, else '!' for VCHAR
-    unsigned char firstc = is_field_vchar ? 0x20 : 0x21;
-    int disallow_ht = !is_field_vchar; // disallow HT if is_field_vchar is false
+    size_t pos                  = 0;
+    // Select lookup table based on is_field_vchar: FCVCHAR for field-vchar,
+    // else VCHAR
+    const unsigned char *lookup = is_field_vchar ? FCVCHAR : VCHAR;
 
 #define CHECK_VCHAR()                                                          \
     do {                                                                       \
-        if (str[pos] < firstc && (disallow_ht || str[pos] != '\t')) {          \
+        if (!lookup[str[pos]]) {                                               \
             return pos;                                                        \
         }                                                                      \
         pos++;                                                                 \
@@ -455,8 +477,7 @@ static inline size_t strvchar_cmp(const unsigned char *str, size_t len,
 #undef CHECK_VCHAR
 
     // Handle remaining bytes (< 8)
-    while (pos < len && str[pos] >= firstc &&
-           (disallow_ht || str[pos] != '\t')) {
+    while (pos < len && lookup[str[pos]]) {
         pos++;
     }
     return pos;
