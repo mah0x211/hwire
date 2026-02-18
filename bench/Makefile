@@ -52,12 +52,13 @@ deps:
 		echo "Setting up httparse_bench..."; \
 		./scripts/setup_httparse.sh; \
 	fi
+	@echo "Copying hwire source..."
+	@mkdir -p deps/hwire
+	@cp ../src/hwire.c deps/hwire/hwire.c
 
 # Apply NO_SIMD patches (script-based)
 patch:
 	@echo "Applying NO_SIMD patches..."
-	@mkdir -p deps/hwire
-	@cp ../src/hwire.c deps/hwire/hwire.c
 	@./scripts/apply-no-simd.sh hwire
 	@./scripts/apply-no-simd.sh pico
 	@./scripts/apply-no-simd.sh llhttp
