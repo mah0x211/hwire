@@ -884,7 +884,9 @@ static inline size_t strvchar(const unsigned char *str, size_t len)
     if (len >= 32) {
         return strvchar_avx2(str, len, 0);
     }
-#elif defined(__SSE4_2__)
+#endif
+
+#if defined(__SSE4_2__)
     if (len >= 16) {
         return strvchar_sse42(str, len, 0);
     }
@@ -906,7 +908,9 @@ static inline size_t strfcchar(const unsigned char *str, size_t len)
     if (len >= 32) {
         return strvchar_avx2(str, len, 1);
     }
-#elif defined(__SSE4_2__)
+#endif
+
+#if defined(__SSE4_2__)
     if (len >= 16) {
         return strvchar_sse42(str, len, 1);
     }
