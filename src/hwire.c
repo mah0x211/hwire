@@ -1555,31 +1555,17 @@ static int parse_hval(unsigned char *str, size_t len, size_t *cur,
     size_t pos = strfcchar(str, max);
     if (pos < max) {
         // Stopped at non-field-content
-        switch (str[pos]) {
-        default:
-            return HWIRE_EHDRVALUE;
-
-        case CR:
-            if (pos + 1 == len) {
-                // reached end of string, need more bytes to check for LF
-                break;
-            }
-            if (str[pos + 1] != LF) {
-                // invalid end-of-line terminator
-                return HWIRE_EEOL;
-            }
-        case LF:
+        unsigned char c = str[pos];
+        if (likely(c == CR && pos + 1 < max && str[pos + 1] == LF)) {
+            // valid end of header value, continue to trim OWS and check CRLF
             // set tail position after CRLF and trim trailing OWS
-            *cur = pos + 1 + (str[pos] == CR);
+            *cur = pos + 2; // skip CRLF
 
-            // remove trailing CR if present
-            if (pos > 0 && str[pos - 1] == CR) {
-                pos--;
-            }
+REMOVE_OWS:
 
+#define IS_OWS() (pos > 0 && (str[pos - 1] == SP || str[pos - 1] == HT))
             // Backtrack to trim trailing OWS
             // Enter slow loop only if the last character is OWS
-#define IS_OWS() (pos > 0 && (str[pos - 1] == SP || str[pos - 1] == HT))
             if (unlikely(IS_OWS())) {
                 do {
                     pos--;
@@ -1589,6 +1575,16 @@ static int parse_hval(unsigned char *str, size_t len, size_t *cur,
 
             *maxlen = pos;
             return HWIRE_OK;
+        } else if (likely(c == LF)) {
+            // only LF found - valid end of header value, continue to trim OWS
+            // and check LF
+            goto REMOVE_OWS;
+        } else if (unlikely(c != CR)) {
+            // invalid character in header value
+            return HWIRE_EHDRVALUE;
+        } else if (unlikely(pos + 1 != len)) {
+            // invalid end-of-line terminator
+            return HWIRE_EEOL;
         }
     }
 
