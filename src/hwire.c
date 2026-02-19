@@ -798,7 +798,7 @@ static inline size_t strvchar_sse42(const unsigned char *str, size_t len,
                                    _SIDD_UBYTE_OPS);
 
         if (idx != 16) {
-            return pos + idx;
+            return pos + (size_t)idx;
         }
 
         pos += 16;
