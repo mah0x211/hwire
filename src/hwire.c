@@ -358,144 +358,130 @@ static inline size_t strtchar_cmp_lc(const unsigned char *str, size_t len,
                                      hwire_buf_t *lc)
 {
     size_t pos         = 0;
-    size_t lci         = 0;
     unsigned char *buf = (unsigned char *)lc->buf;
     size_t limit       = (len < lc->size) ? len : lc->size;
 
-    // Check 8 characters at a time with loop unrolling for performance
-    while (pos + 8 <= limit) {
-        if (!(buf[lci++] = TCHAR[str[pos++]]) ||
-            !(buf[lci++] = TCHAR[str[pos++]]) ||
-            !(buf[lci++] = TCHAR[str[pos++]]) ||
-            !(buf[lci++] = TCHAR[str[pos++]]) ||
-            !(buf[lci++] = TCHAR[str[pos++]]) ||
-            !(buf[lci++] = TCHAR[str[pos++]]) ||
-            !(buf[lci++] = TCHAR[str[pos++]]) ||
-            !(buf[lci++] = TCHAR[str[pos++]])) {
-            lc->len = pos - 1;
-            return lc->len;
+    while (pos + 4 <= limit) {
+        unsigned char c0 = str[pos];
+        unsigned char c1 = str[pos + 1];
+        unsigned char c2 = str[pos + 2];
+        unsigned char c3 = str[pos + 3];
+        if (likely(is_tchar(c0) & is_tchar(c1) & is_tchar(c2) & is_tchar(c3))) {
+            buf[pos]     = TCHAR[c0];
+            buf[pos + 1] = TCHAR[c1];
+            buf[pos + 2] = TCHAR[c2];
+            buf[pos + 3] = TCHAR[c3];
+            pos += 4;
+            continue;
         }
+        break;
     }
-    // Check remaining characters one by one
-    while (pos < limit) {
-        if (!(buf[pos] = TCHAR[str[pos]])) {
-            lc->len = pos;
-            return pos;
-        }
+
+    while (pos < limit && is_tchar(str[pos])) {
+        buf[pos] = TCHAR[str[pos]];
         pos++;
     }
     lc->len = pos;
 
     // buffer is full - check if there are more tchars
-    if (pos < len && TCHAR[str[pos]]) {
+    if (pos < len && is_tchar(str[pos])) {
         return SIZE_MAX;
     }
     return pos;
 }
 
+// SIMD support for strtchar_cmp nibble-trick tchar validation
+#if defined(__AVX2__)
+# include <immintrin.h>
+#elif defined(__SSSE3__)
+# include <tmmintrin.h>
+#endif
+
+// TCHAR_NIBBLE_LO / TCHAR_NIBBLE_HI: nibble-split lookup tables for tchar
+// validation.
+//
+// For any byte c: (TCHAR_NIBBLE_LO[c & 0xF] & TCHAR_NIBBLE_HI[c >> 4]) != 0
+// iff c is a valid tchar character (RFC 7230).
+//
+// Bit assignment in TCHAR_NIBBLE_HI: hi=2→bit0, hi=3→bit1, hi=4→bit2,
+//   hi=5→bit3, hi=6→bit4, hi=7→bit5. hi=0,1,8-F map to 0 (all invalid).
+#if defined(__AVX2__) || defined(__SSSE3__)
+static const int8_t TCHAR_NIBBLE_LO[16] = {
+    // lo:   0x0   0x1   0x2   0x3   0x4   0x5   0x6   0x7
+    0x3A, 0x3F, 0x3E, 0x3F, 0x3F, 0x3F, 0x3F, 0x3F,
+    // lo:   0x8   0x9   0xA   0xB   0xC   0xD   0xE   0xF
+    0x3E, 0x3E, 0x3D, 0x15, 0x34, 0x15, 0x3D, 0x1C};
+static const int8_t TCHAR_NIBBLE_HI[16] = {
+    // hi:   0x0   0x1   0x2   0x3   0x4   0x5   0x6   0x7
+    0x00, 0x00, 0x01, 0x02, 0x04, 0x08, 0x10, 0x20,
+    // hi:   0x8   0x9   0xA   0xB   0xC   0xD   0xE   0xF
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+#endif
+
 /**
- * @brief Count consecutive tchar characters with optional lowercase conversion
+ * @brief Count consecutive tchar characters (no lowercase conversion)
  *
- * Counts the number of consecutive tchar (token) characters from the
- * beginning of str. Uses 8x loop unrolling for performance.
- *
- * If lc is non-NULL, stores the lowercase-converted tchar characters into
- * lc->buf starting at lc->len.
+ * Uses AVX2 (32B/iter) or SSSE3 (16B/iter) nibble-trick when available,
+ * with scalar fallback for tail bytes.  For typical HTTP header names
+ * (6-15 chars) the AVX2/SSSE3 path completes in a single iteration.
  *
  * @param str String to parse (must not be NULL)
  * @param len Maximum length of string
- * @param lc  Optional lowercase buffer (NULL to skip lowercase conversion)
- * @return Number of consecutive tchar characters (0 if first char is not tchar)
- * @return SIZE_MAX if buffer is full and there are more tchars to process
+ * @return Index of first non-tchar byte (0 if first char is not tchar)
  */
 static inline size_t strtchar_cmp(const unsigned char *str, size_t len)
 {
     size_t pos = 0;
 
-    // Check 8 characters at a time with loop unrolling for performance
-    while (pos + 8 <= len) {
-        if (!TCHAR[str[pos++]] || !TCHAR[str[pos++]] || !TCHAR[str[pos++]] ||
-            !TCHAR[str[pos++]] || !TCHAR[str[pos++]] || !TCHAR[str[pos++]] ||
-            !TCHAR[str[pos++]] || !TCHAR[str[pos++]]) {
-            return --pos;
-        }
+#if defined(__AVX2__)
+    if (pos + 32 <= len) {
+        const __m256i lo_lut = _mm256_broadcastsi128_si256(
+            _mm_loadu_si128((const __m128i *)(const void *)TCHAR_NIBBLE_LO));
+        const __m256i hi_lut = _mm256_broadcastsi128_si256(
+            _mm_loadu_si128((const __m128i *)(const void *)TCHAR_NIBBLE_HI));
+        const __m256i nibble = _mm256_set1_epi8(0x0F);
+        do {
+            __m256i data =
+                _mm256_loadu_si256((const __m256i *)(const void *)(str + pos));
+            __m256i lo_v =
+                _mm256_shuffle_epi8(lo_lut, _mm256_and_si256(data, nibble));
+            __m256i hi_v = _mm256_shuffle_epi8(
+                hi_lut, _mm256_and_si256(_mm256_srli_epi16(data, 4), nibble));
+            int mask = _mm256_movemask_epi8(_mm256_cmpeq_epi8(
+                _mm256_and_si256(lo_v, hi_v), _mm256_setzero_si256()));
+            if (mask)
+                return pos + (size_t)__builtin_ctz((unsigned)mask);
+            pos += 32;
+        } while (pos + 32 <= len);
     }
-    // Check remaining characters one by one
-    while (pos < len) {
-        if (!TCHAR[str[pos++]]) {
-            return --pos;
-        }
+#elif defined(__SSSE3__)
+    if (pos + 16 <= len) {
+        const __m128i lo_lut =
+            _mm_loadu_si128((const __m128i *)(const void *)TCHAR_NIBBLE_LO);
+        const __m128i hi_lut =
+            _mm_loadu_si128((const __m128i *)(const void *)TCHAR_NIBBLE_HI);
+        const __m128i nibble = _mm_set1_epi8(0x0F);
+        do {
+            __m128i data =
+                _mm_loadu_si128((const __m128i *)(const void *)(str + pos));
+            __m128i lo_v =
+                _mm_shuffle_epi8(lo_lut, _mm_and_si128(data, nibble));
+            __m128i hi_v = _mm_shuffle_epi8(
+                hi_lut, _mm_and_si128(_mm_srli_epi16(data, 4), nibble));
+            int mask = _mm_movemask_epi8(
+                _mm_cmpeq_epi8(_mm_and_si128(lo_v, hi_v), _mm_setzero_si128()));
+            if (mask)
+                return pos + (size_t)__builtin_ctz((unsigned)mask);
+            pos += 16;
+        } while (pos + 16 <= len);
     }
+#endif
 
+    while (pos < len && TCHAR[str[pos]]) {
+        pos++;
+    }
     return pos;
 }
-
-// strtchar_sse42: SSE4.2 optimized implementation using PCMPESTRI
-//
-// Blacklist approach (same as picohttpparser's parse_token):
-// Uses PCMPESTRI to find non-TCHAR characters efficiently.
-// When a match is found, switches to slow loop (LUT) for accurate validation.
-//
-// Non-TCHAR ranges (8 ranges = 16 bytes):
-//   0x00-0x20: control chars + SP
-//   0x22:      "
-//   0x28-0x29: ( )
-//   0x2C:      ,
-//   0x2F:      /
-//   0x3A-0x40: : ; < = > ? @
-//   0x5B-0x5D: [ \ ]
-//   0x7B-0xFF: { and above (includes | and ~ which are valid TCHAR)
-//
-// Note: | (0x7C) and ~ (0x7E) are valid TCHAR but fall within 0x7B-0xFF range.
-// They are handled correctly in the slow loop using LUT.
-#if defined(__SSE4_2__)
-# include <nmmintrin.h>
-
-// Non-TCHAR character ranges for PCMPESTRI (8 ranges = 16 bytes)
-static const char __attribute__((aligned(16))) TCHAR_NONTCHAR_RANGES[] =
-    "\x00\x20"  // 0x00-0x20: control chars + SP
-    "\"\""      // 0x22: "
-    "()"        // 0x28-0x29: ( )
-    ",,"        // 0x2c: ,
-    "//"        // 0x2f: /
-    ":@"        // 0x3a-0x40: : ; < = > ? @
-    "[]"        // 0x5b-0x5d: [ \ ]
-    "\x7b\xff"; // 0x7b-0xff: { and above (includes | and ~)
-
-static inline size_t strtchar_sse42(const unsigned char *str, size_t len)
-{
-    size_t pos = 0;
-    const __m128i ranges =
-        _mm_loadu_si128((const __m128i *)(const void *)TCHAR_NONTCHAR_RANGES);
-    const int ranges_len = 15; // 8 ranges = 16 bytes, null terminator excluded
-
-    while (pos + 16 <= len) {
-        __m128i data =
-            _mm_loadu_si128((const __m128i *)(const void *)(str + pos));
-
-        // PCMPESTRI: find first byte in data that falls within any of the
-        // ranges Returns index (0-15) of first match, or 16 if no match
-        int idx = _mm_cmpestri(ranges, ranges_len, data, 16,
-                               _SIDD_LEAST_SIGNIFICANT | _SIDD_CMP_RANGES |
-                                   _SIDD_UBYTE_OPS);
-
-        if (idx != 16) {
-            // Found a potential non-TCHAR character
-            // Switch to slow loop (LUT) from this position for accurate
-            // validation
-            pos += idx;
-            return pos + strtchar_cmp(str + pos, len - pos);
-        }
-
-        pos += 16;
-    }
-
-    // Handle remaining bytes with LUT (accurate validation)
-    // | (0x7C) and ~ (0x7E) are correctly handled here
-    return pos + strtchar_cmp(str + pos, len - pos);
-}
-
-#endif
 
 /**
  * @brief Count consecutive tchar characters with optional lowercase conversion
@@ -519,12 +505,6 @@ static inline size_t strtchar(const unsigned char *str, size_t len,
         return strtchar_cmp_lc(str, len, lc);
     }
 
-    // No lowercase buffer - use SIMD if available
-#if defined(__SSE4_2__)
-    if (len >= 16) {
-        return strtchar_sse42(str, len);
-    }
-#endif
     return strtchar_cmp(str, len);
 }
 
@@ -1623,7 +1603,7 @@ static int parse_hkey(unsigned char *str, size_t len, size_t *cur,
 
     if (tchar_len < max) {
         // strtchar stopped before maxlen - check why
-        if (str[tchar_len] == ':') {
+        if (likely(str[tchar_len] == ':')) {
             // Found colon - success
             *maxlen = tchar_len;
             *cur    = tchar_len + 1;
@@ -1787,8 +1767,8 @@ static int parse_version(const unsigned char *str, size_t len, size_t *pos,
  * @brief Parse request-target (URI)
  *
  * Scans the request-target until a space (SP) is found.
- * Defines the request-target as origin-form / absolute-form / authority-form /
- * asterisk-form (RFC 7230 3.1.1 / RFC 9112 3.2).
+ * Defines the request-target as origin-form / absolute-form /
+ * authority-form / asterisk-form (RFC 7230 3.1.1 / RFC 9112 3.2).
  *
  * @param str Input string
  * @param len Total length of input string
