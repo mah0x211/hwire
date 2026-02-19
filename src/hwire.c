@@ -569,26 +569,23 @@ static inline size_t strvchar_cmp(const unsigned char *str, size_t len,
     // else VCHAR
     const unsigned char *lookup = is_field_vchar ? FCVCHAR : VCHAR;
 
-#define CHECK_VCHAR()                                                          \
-    do {                                                                       \
-        if (!lookup[str[pos]]) {                                               \
-            return pos;                                                        \
-        }                                                                      \
-        pos++;                                                                 \
-    } while (0)
-
-    // Process 8 bytes at a time (manual unrolling)
+    // Process 8 bytes at a time using bitwise OR (branchless)
     while (pos + 8 <= len) {
-        CHECK_VCHAR();
-        CHECK_VCHAR();
-        CHECK_VCHAR();
-        CHECK_VCHAR();
-        CHECK_VCHAR();
-        CHECK_VCHAR();
-        CHECK_VCHAR();
-        CHECK_VCHAR();
+        int check = !lookup[str[pos + 0]] | !lookup[str[pos + 1]] |
+                    !lookup[str[pos + 2]] | !lookup[str[pos + 3]] |
+                    !lookup[str[pos + 4]] | !lookup[str[pos + 5]] |
+                    !lookup[str[pos + 6]] | !lookup[str[pos + 7]];
+
+        if (check) {
+            // Find exact position of invalid character
+            for (size_t i = 0; i < 8; i++) {
+                if (!lookup[str[pos + i]]) {
+                    return pos + i;
+                }
+            }
+        }
+        pos += 8;
     }
-#undef CHECK_VCHAR
 
     // Handle remaining bytes (< 8)
     while (pos < len && lookup[str[pos]]) {
