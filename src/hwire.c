@@ -133,18 +133,34 @@ static const unsigned char URI_CHAR[256] = {
     // pct-encoded. So raw UTF-8 bytes > 127 are invalid in URI.
     0};
 
-static inline int is_uri_char(unsigned char c)
-{
-    return URI_CHAR[c];
-}
-
 static inline size_t strurichar(const unsigned char *str, size_t len)
 {
     size_t i = 0;
-    for (; i < len; i++) {
-        if (!is_uri_char(str[i])) {
-            break;
+
+    // Process 8 bytes at a time using bitwise OR (branchless)
+    while (i + 8 <= len) {
+        int check = !URI_CHAR[str[i + 0]] | !URI_CHAR[str[i + 1]] |
+                    !URI_CHAR[str[i + 2]] | !URI_CHAR[str[i + 3]] |
+                    !URI_CHAR[str[i + 4]] | !URI_CHAR[str[i + 5]] |
+                    !URI_CHAR[str[i + 6]] | !URI_CHAR[str[i + 7]];
+
+        if (check) {
+            // Find exact position of invalid character
+            for (size_t j = 0; j < 8; j++) {
+                if (!URI_CHAR[str[i + j]]) {
+                    return i + j;
+                }
+            }
         }
+        i += 8;
+    }
+
+    // Handle remaining bytes
+    while (i < len) {
+        if (!URI_CHAR[str[i]]) {
+            return i;
+        }
+        i++;
     }
     return i;
 }
