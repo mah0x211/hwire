@@ -30,6 +30,14 @@
 #include <string.h>
 #include <sys/types.h>
 
+#if defined(__GNUC__) || defined(__clang__)
+# define likely(x)   __builtin_expect(!!(x), 1)
+# define unlikely(x) __builtin_expect(!!(x), 0)
+#else
+# define likely(x)   (x)
+# define unlikely(x) (x)
+#endif
+
 /**
  * @name Character Validation Tables
  * @{
@@ -1564,15 +1572,21 @@ static int parse_hval(unsigned char *str, size_t len, size_t *cur,
             // set tail position after CRLF and trim trailing OWS
             *cur = pos + 1 + (str[pos] == CR);
 
-            // Backtrack to trim trailing OWS
             // remove trailing CR if present
             if (pos > 0 && str[pos - 1] == CR) {
                 pos--;
             }
-            // remove trailing OWS
-            while (pos > 0 && (str[pos - 1] == SP || str[pos - 1] == HT)) {
-                pos--;
+
+            // Backtrack to trim trailing OWS
+            // Enter slow loop only if the last character is OWS
+#define IS_OWS() (pos > 0 && (str[pos - 1] == SP || str[pos - 1] == HT))
+            if (unlikely(IS_OWS())) {
+                do {
+                    pos--;
+                } while (IS_OWS());
             }
+#undef IS_OWS
+
             *maxlen = pos;
             return HWIRE_OK;
         }
@@ -1695,9 +1709,13 @@ RETRY:
     }
 
     // skip OWS
-    while (ustr[cur] == SP || ustr[cur] == HT) {
-        cur++;
+#define IS_OWS() (ustr[cur] == SP || ustr[cur] == HT)
+    if (likely(IS_OWS())) {
+        do {
+            cur++;
+        } while (IS_OWS());
     }
+#undef IS_OWS
 
     // re-check maximum header length constraint
     if (cur > maxlen) {
