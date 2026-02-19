@@ -26,6 +26,7 @@ LDFLAGS = -L$(CATCH2_LIB) -lCatch2Main -lCatch2
 UNAME_M := $(shell uname -m)
 
 .PHONY: all clean run report bench deps patch unpatch \
+        deps-pico deps-llhttp deps-httparse deps-hwire \
         run-hwire run-pico run-llhttp run-httparse \
         bench-hwire bench-pico bench-llhttp bench-httparse
 
@@ -34,12 +35,16 @@ PICO_COMMIT := f8326098f63eefabfa2b6ec595d90e9ed5ed958a
 LLHTTP_TAG := v9.3.1
 
 # Fetch external dependencies
-deps:
+deps: deps-pico deps-llhttp deps-httparse deps-hwire
+
+deps-pico:
 	@if [ ! -d "$(PICO_DIR)" ]; then \
 		echo "Cloning picohttpparser ($(PICO_COMMIT))..."; \
 		mkdir -p deps && git clone https://github.com/h2o/picohttpparser.git $(PICO_DIR) && \
 		cd $(PICO_DIR) && git checkout $(PICO_COMMIT); \
 	fi
+
+deps-llhttp:
 	@if [ ! -d "$(LLHTTP_DIR)" ]; then \
 		echo "Cloning llhttp ($(LLHTTP_TAG))..."; \
 		mkdir -p deps && git clone --depth 1 --branch $(LLHTTP_TAG) https://github.com/nodejs/llhttp.git $(LLHTTP_DIR); \
@@ -48,10 +53,14 @@ deps:
 		echo "Building llhttp..."; \
 		cd $(LLHTTP_DIR) && npm install && make generate; \
 	fi
+
+deps-httparse:
 	@if [ ! -f "$(HTTPARSE_DIR)/Cargo.toml" ]; then \
 		echo "Setting up httparse_bench..."; \
 		./scripts/setup_httparse.sh; \
 	fi
+
+deps-hwire:
 	@echo "Copying hwire source..."
 	@mkdir -p deps/hwire
 	@cp ../src/hwire.c deps/hwire/hwire.c
