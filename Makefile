@@ -1,5 +1,5 @@
 CC = clang
-CFLAGS = -std=c99 -Isrc -Wall -Wextra -Wpedantic -Wconversion -Wsign-conversion -Wshadow -Wstrict-prototypes -Wmissing-declarations -Wunused-parameter -Werror -Wundef -Wcast-align -Wwrite-strings -Wunreachable-code -Wformat=2 -fno-common -Wno-gnu-statement-expression
+CFLAGS = -std=c99 -Isrc -Wall -Wextra -Wpedantic -Wconversion -Wsign-conversion -Wshadow -Wstrict-prototypes -Wmissing-declarations -Wunused-parameter -Werror -Wundef -Wcast-align -Wwrite-strings -Wunreachable-code -Wformat=2 -fno-common -Wno-gnu-statement-expression -Wno-bitwise-instead-of-logical
 COV_FLAGS = -fprofile-instr-generate -fcoverage-mapping
 
 # Detect architecture for AVX2 support (only x86_64)
