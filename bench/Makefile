@@ -81,8 +81,8 @@ unpatch:
 
 # Benchmark targets (architecture-specific)
 ifeq ($(UNAME_M),x86_64)
-    # x86_64: hwire has SSE2 and AVX2, pico/llhttp have SSE4.2
-    HWIRE_TARGETS = bench_hwire_avx2 bench_hwire_sse2 bench_hwire_nosimd
+    # x86_64: hwire has SSE2, SSE4.2 and AVX2, pico/llhttp have SSE4.2
+    HWIRE_TARGETS = bench_hwire_avx2 bench_hwire_sse42 bench_hwire_sse2 bench_hwire_nosimd
     PICO_TARGETS = bench_pico_sse42 bench_pico_nosimd
     LLHTTP_TARGETS = bench_llhttp_sse42 bench_llhttp_nosimd
 else
@@ -116,6 +116,11 @@ bench_hwire_sse2: bench_hwire.cc deps/hwire/hwire.c
 bench_hwire_avx2: bench_hwire.cc deps/hwire/hwire.c
 	$(CC) $(CFLAGS) -mavx2 -mfma $(INCLUDES) -c -o hwire_avx2.o deps/hwire/hwire.c
 	$(CXX) $(CXXFLAGS) -mavx2 -mfma $(INCLUDES) -o $@ bench_hwire.cc hwire_avx2.o $(LDFLAGS)
+
+# x86_64: SSE4.2 (-msse4.2 required)
+bench_hwire_sse42: bench_hwire.cc deps/hwire/hwire.c
+	$(CC) $(CFLAGS) -msse4.2 $(INCLUDES) -c -o hwire_sse42.o deps/hwire/hwire.c
+	$(CXX) $(CXXFLAGS) -msse4.2 $(INCLUDES) -o $@ bench_hwire.cc hwire_sse42.o $(LDFLAGS)
 
 # ARM: NEON (default on ARM, no flags needed)
 bench_hwire_neon: bench_hwire.cc deps/hwire/hwire.c
