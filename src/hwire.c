@@ -30,6 +30,28 @@
 #include <string.h>
 #include <sys/types.h>
 
+// SIMD intrinsic headers (included once here for all SIMD paths below).
+// Each header transitively includes its prerequisites: AVX2 ⊃ SSE4.2 ⊃ SSSE3 ⊃
+// SSE2.
+#if defined(__AVX2__)
+# include <immintrin.h>
+#elif defined(__SSE4_2__)
+# include <nmmintrin.h>
+#elif defined(__SSSE3__)
+# include <tmmintrin.h>
+#elif defined(__SSE2__)
+# include <emmintrin.h>
+#endif
+#if defined(__aarch64__) || (defined(__arm__) && defined(__ARM_NEON))
+# include <arm_neon.h>
+#endif
+
+// Sign-flip trick: (byte ^ 0x80) maps unsigned bytes to signed, enabling
+// _mm_cmplt_epi8 to implement unsigned byte < threshold comparisons.
+#if defined(__SSE2__)
+# define SIMD_SIGN_FLIP ((int8_t)0x80)
+#endif
+
 #if defined(__GNUC__) || defined(__clang__)
 # define likely(x)   __builtin_expect(!!(x), 1)
 # define unlikely(x) __builtin_expect(!!(x), 0)
@@ -390,13 +412,6 @@ static inline size_t strtchar_cmp_lc(const unsigned char *str, size_t len,
     return pos;
 }
 
-// SIMD support for strtchar_cmp nibble-trick tchar validation
-#if defined(__AVX2__)
-# include <immintrin.h>
-#elif defined(__SSSE3__)
-# include <tmmintrin.h>
-#endif
-
 // TCHAR_NIBBLE_LO / TCHAR_NIBBLE_HI: nibble-split lookup tables for tchar
 // validation.
 //
@@ -599,7 +614,6 @@ static inline size_t strvchar_cmp(const unsigned char *str, size_t len,
 }
 
 #if defined(__aarch64__) || (defined(__arm__) && defined(__ARM_NEON))
-# include <arm_neon.h>
 
 // strvchar_neon: NEON-optimized implementation (16 bytes)
 //
@@ -673,13 +687,6 @@ static inline size_t strvchar_neon(const unsigned char *str, size_t len,
 #endif
 
 #if defined(__SSE2__)
-# include <emmintrin.h>
-
-// SIMD constants for threshold comparison (as int8_t for signed SIMD ops)
-// Used by SSE2/AVX2 implementations to detect invalid characters using
-// sign-flip technique: (data ^ 0x80) < (0x21 ^ 0x80) is equivalent to data <
-// 0x21 Defined in SSE2 block since AVX2 implies SSE2 (superset)
-# define SIMD_SIGN_FLIP ((int8_t)0x80) // XOR mask to toggle sign bit
 
 // strvchar_sse2: SSE2 optimized implementation (16 bytes)
 //
@@ -756,7 +763,6 @@ static inline size_t strvchar_sse2(const unsigned char *str, size_t len,
 #endif
 
 #if defined(__SSE4_2__)
-# include <nmmintrin.h>
 
 // strvchar_sse42: SSE4.2 optimized implementation using PCMPESTRI
 //
@@ -810,7 +816,6 @@ static inline size_t strvchar_sse42(const unsigned char *str, size_t len,
 #endif
 
 #if defined(__AVX2__)
-# include <immintrin.h>
 
 // strvchar_avx2: AVX2 optimized implementation (32 bytes)
 //
