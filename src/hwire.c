@@ -30,6 +30,36 @@
 #include <string.h>
 #include <sys/types.h>
 
+// SIMD intrinsic headers (included once here for all SIMD paths below).
+// Each header transitively includes its prerequisites: AVX2 ⊃ SSE4.2 ⊃ SSSE3 ⊃
+// SSE2.
+#if defined(__AVX2__)
+# include <immintrin.h>
+#elif defined(__SSE4_2__)
+# include <nmmintrin.h>
+#elif defined(__SSSE3__)
+# include <tmmintrin.h>
+#elif defined(__SSE2__)
+# include <emmintrin.h>
+#endif
+#if defined(__aarch64__) || (defined(__arm__) && defined(__ARM_NEON))
+# include <arm_neon.h>
+#endif
+
+// Sign-flip trick: (byte ^ 0x80) maps unsigned bytes to signed, enabling
+// _mm_cmplt_epi8 to implement unsigned byte < threshold comparisons.
+#if defined(__SSE2__)
+# define SIMD_SIGN_FLIP ((int8_t)0x80)
+#endif
+
+#if defined(__GNUC__) || defined(__clang__)
+# define likely(x)   __builtin_expect(!!(x), 1)
+# define unlikely(x) __builtin_expect(!!(x), 0)
+#else
+# define likely(x)   (x)
+# define unlikely(x) (x)
+#endif
+
 /**
  * @name Character Validation Tables
  * @{
@@ -89,6 +119,28 @@ static const unsigned char VCHAR[256] = {
     1, 1, 1};
 
 /**
+ * @brief Field-content allowed characters (RFC 7230)
+ */
+static const unsigned char FCVCHAR[256] = {
+    0, 0, 0, 0, 0, 0, 0, 0, 0,
+    1, // HT is allowed for field-vchar, but not for VCHAR
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    // VCHAR 0x20 - 0x7E
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    // except DEL 0x7F
+    0,
+    // all obs-text 0x80 - 0xFF
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    1, 1, 1};
+
+/**
  * @brief URI allowed characters (RFC 3986)
  *
  * unreserved / sub-delims / ":" / "@" / "/" / "?" / "%"
@@ -111,18 +163,34 @@ static const unsigned char URI_CHAR[256] = {
     // pct-encoded. So raw UTF-8 bytes > 127 are invalid in URI.
     0};
 
-static inline int is_uri_char(unsigned char c)
-{
-    return URI_CHAR[c];
-}
-
 static inline size_t strurichar(const unsigned char *str, size_t len)
 {
     size_t i = 0;
-    for (; i < len; i++) {
-        if (!is_uri_char(str[i])) {
-            break;
+
+    // Process 8 bytes at a time using bitwise OR (branchless)
+    while (i + 8 <= len) {
+        int check = !URI_CHAR[str[i + 0]] | !URI_CHAR[str[i + 1]] |
+                    !URI_CHAR[str[i + 2]] | !URI_CHAR[str[i + 3]] |
+                    !URI_CHAR[str[i + 4]] | !URI_CHAR[str[i + 5]] |
+                    !URI_CHAR[str[i + 6]] | !URI_CHAR[str[i + 7]];
+
+        if (check) {
+            // Find exact position of invalid character
+            for (size_t j = 0; j < 8; j++) {
+                if (!URI_CHAR[str[i + j]]) {
+                    return i + j;
+                }
+            }
         }
+        i += 8;
+    }
+
+    // Handle remaining bytes
+    while (i < len) {
+        if (!URI_CHAR[str[i]]) {
+            return i;
+        }
+        i++;
     }
     return i;
 }
@@ -214,63 +282,6 @@ static const unsigned char HEXDIGIT[256] = {
 #define DQUOTE    '"'
 #define BACKSLASH '\\'
 
-#define STRTCHAR_NOOP ((void)0)
-
-/**
- * @brief Internal macro: check one character in strtchar_ex loop
- *
- * @param str String being parsed (unsigned char*)
- * @param pos Current position (will be incremented if tchar)
- * @param c Variable to store lowercase tchar (or 0 if not tchar)
- * @param udf User-defined action to execute for each tchar
- */
-#define STRTCHAR_EX_CHECK(str, pos, c, udf)                                    \
-    {                                                                          \
-        c = TCHAR[(unsigned char)(str)[pos]];                                  \
-        if (!c)                                                                \
-            break;                                                             \
-        udf;                                                                   \
-        pos++;                                                                 \
-    }
-
-/**
- * @brief Internal macro: count consecutive tchar characters with loop unrolling
- *
- * Counts consecutive tchar (token) characters starting at position `pos`,
- * with 8x loop unrolling for performance. Executes `udf` for each matched
- * character (typically lowercase conversion).
- *
- * @param str String being parsed (unsigned char*)
- * @param len Maximum length of string
- * @param pos Starting position (will be modified in-place)
- * @param c Variable to store lowercase tchar (or 0 if not tchar)
- * @param udf User-defined action to execute for each tchar (e.g., ustr[pos] =
- * c)
- * @return Updated position after counting (points to first non-tchar or end)
- *
- * @note This is a statement expression macro that returns the final `pos`
- * value.
- * @note Uses 8x loop unrolling: processes 8 characters per iteration when
- * possible.
- */
-#define strtchar_ex(str, len, pos, c, udf)                                     \
-    ({                                                                         \
-        while (pos + 8 <= (len)) {                                             \
-            STRTCHAR_EX_CHECK((str), pos, c, udf);                             \
-            STRTCHAR_EX_CHECK((str), pos, c, udf);                             \
-            STRTCHAR_EX_CHECK((str), pos, c, udf);                             \
-            STRTCHAR_EX_CHECK((str), pos, c, udf);                             \
-            STRTCHAR_EX_CHECK((str), pos, c, udf);                             \
-            STRTCHAR_EX_CHECK((str), pos, c, udf);                             \
-            STRTCHAR_EX_CHECK((str), pos, c, udf);                             \
-            STRTCHAR_EX_CHECK((str), pos, c, udf);                             \
-        }                                                                      \
-        while (pos < (len)) {                                                  \
-            STRTCHAR_EX_CHECK((str), pos, c, udf);                             \
-        }                                                                      \
-        pos;                                                                   \
-    })
-
 /** @} */ /* end of Internal Macros */
 
 /**
@@ -350,22 +361,239 @@ static inline int is_vchar(unsigned char c)
     return VCHAR[c] == 1;
 }
 
+// TCHAR_NIBBLE_LO / TCHAR_NIBBLE_HI: nibble-split lookup tables for tchar
+// validation.
+//
+// For any byte c: (TCHAR_NIBBLE_LO[c & 0xF] & TCHAR_NIBBLE_HI[c >> 4]) != 0
+// iff c is a valid tchar character (RFC 7230).
+//
+// Bit assignment in TCHAR_NIBBLE_HI: hi=2→bit0, hi=3→bit1, hi=4→bit2,
+//   hi=5→bit3, hi=6→bit4, hi=7→bit5. hi=0,1,8-F map to 0 (all invalid).
+#if defined(__AVX2__) || defined(__SSSE3__)
+static const int8_t TCHAR_NIBBLE_LO[16] = {
+    // lo:   0x0   0x1   0x2   0x3   0x4   0x5   0x6   0x7
+    0x3A, 0x3F, 0x3E, 0x3F, 0x3F, 0x3F, 0x3F, 0x3F,
+    // lo:   0x8   0x9   0xA   0xB   0xC   0xD   0xE   0xF
+    0x3E, 0x3E, 0x3D, 0x15, 0x34, 0x15, 0x3D, 0x1C};
+static const int8_t TCHAR_NIBBLE_HI[16] = {
+    // hi:   0x0   0x1   0x2   0x3   0x4   0x5   0x6   0x7
+    0x00, 0x00, 0x01, 0x02, 0x04, 0x08, 0x10, 0x20,
+    // hi:   0x8   0x9   0xA   0xB   0xC   0xD   0xE   0xF
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+#endif
+
 /**
- * @brief Count consecutive tchar characters
+ * @brief Count consecutive tchar characters with lowercase conversion
  *
  * Counts the number of consecutive tchar (token) characters from the
- * beginning of str. This is a simple wrapper around strtchar_ex with
- * STRTCHAR_NOOP (no modification).
+ * beginning of str, writing the lowercase-converted characters into lc->buf.
+ *
+ * Uses AVX2 (32B/iter) or SSSE3 (16B/iter) for validation and lowercasing
+ * when available.  For typical HTTP header names (4-15 chars) the SIMD path
+ * completes in a single iteration.  A scalar 4-char-unrolled fallback handles
+ * any remaining bytes.
+ *
+ * @param str   String to parse (must not be NULL)
+ * @param len   Maximum length of string
+ * @param lc    Lowercase output buffer (must not be NULL)
+ * @return Number of consecutive tchar characters written to lc->buf
+ * @return SIZE_MAX if lc->buf is full and more tchars remain in str
+ */
+static inline size_t strtchar_cmp_lc(const unsigned char *str, size_t len,
+                                     hwire_buf_t *lc)
+{
+    size_t pos         = 0;
+    unsigned char *buf = (unsigned char *)lc->buf;
+    size_t limit       = (len < lc->size) ? len : lc->size;
+
+#if defined(__AVX2__)
+    if (likely(pos + 32 <= limit)) {
+        const __m256i lo_lut = _mm256_broadcastsi128_si256(
+            _mm_loadu_si128((const __m128i *)(const void *)TCHAR_NIBBLE_LO));
+        const __m256i hi_lut = _mm256_broadcastsi128_si256(
+            _mm_loadu_si128((const __m128i *)(const void *)TCHAR_NIBBLE_HI));
+        const __m256i nibble  = _mm256_set1_epi8(0x0F);
+        const __m256i at_char = _mm256_set1_epi8(0x40); // '@' (0x41-1)
+        const __m256i bkt     = _mm256_set1_epi8(0x5B); // '[' (0x5A+1)
+        const __m256i bit5    = _mm256_set1_epi8(0x20);
+        do {
+            __m256i data =
+                _mm256_loadu_si256((const __m256i *)(const void *)(str + pos));
+            __m256i lo_v =
+                _mm256_shuffle_epi8(lo_lut, _mm256_and_si256(data, nibble));
+            __m256i hi_v = _mm256_shuffle_epi8(
+                hi_lut, _mm256_and_si256(_mm256_srli_epi16(data, 4), nibble));
+            int mask = _mm256_movemask_epi8(_mm256_cmpeq_epi8(
+                _mm256_and_si256(lo_v, hi_v), _mm256_setzero_si256()));
+            // lowercase: A-Z (0x41-0x5A) -> set bit5
+            __m256i is_upper =
+                _mm256_and_si256(_mm256_cmpgt_epi8(data, at_char), // c > '@'
+                                 _mm256_cmpgt_epi8(bkt, data));    // '[' > c
+            __m256i lc_out =
+                _mm256_or_si256(data, _mm256_and_si256(is_upper, bit5));
+            // store 32 bytes (safe: pos+32 <= limit <= lc->size)
+            _mm256_storeu_si256((__m256i *)(void *)(buf + pos), lc_out);
+            if (mask) {
+                pos += (size_t)__builtin_ctz((unsigned)mask);
+                lc->len = pos;
+                return pos;
+            }
+            pos += 32;
+        } while (pos + 32 <= limit);
+    }
+#elif defined(__SSSE3__)
+    if (pos + 16 <= limit) {
+        const __m128i lo_lut =
+            _mm_loadu_si128((const __m128i *)(const void *)TCHAR_NIBBLE_LO);
+        const __m128i hi_lut =
+            _mm_loadu_si128((const __m128i *)(const void *)TCHAR_NIBBLE_HI);
+        const __m128i nibble  = _mm_set1_epi8(0x0F);
+        const __m128i at_char = _mm_set1_epi8(0x40); // '@' (0x41-1)
+        const __m128i bkt     = _mm_set1_epi8(0x5B); // '[' (0x5A+1)
+        const __m128i bit5    = _mm_set1_epi8(0x20);
+        do {
+            __m128i data =
+                _mm_loadu_si128((const __m128i *)(const void *)(str + pos));
+            __m128i lo_v =
+                _mm_shuffle_epi8(lo_lut, _mm_and_si128(data, nibble));
+            __m128i hi_v = _mm_shuffle_epi8(
+                hi_lut, _mm_and_si128(_mm_srli_epi16(data, 4), nibble));
+            int mask = _mm_movemask_epi8(
+                _mm_cmpeq_epi8(_mm_and_si128(lo_v, hi_v), _mm_setzero_si128()));
+            // lowercase: A-Z (0x41-0x5A) -> set bit5
+            __m128i is_upper =
+                _mm_and_si128(_mm_cmpgt_epi8(data, at_char), // c > '@'
+                              _mm_cmpgt_epi8(bkt, data));    // '[' > c
+            __m128i lc_out = _mm_or_si128(data, _mm_and_si128(is_upper, bit5));
+            // store 16 bytes (safe: pos+16 <= limit <= lc->size)
+            _mm_storeu_si128((__m128i *)(void *)(buf + pos), lc_out);
+            if (mask) {
+                pos += (size_t)__builtin_ctz((unsigned)mask);
+                lc->len = pos;
+                return pos;
+            }
+            pos += 16;
+        } while (pos + 16 <= limit);
+    }
+#endif
+
+    // scalar fallback for remaining bytes (< 16/32) or non-SIMD builds
+    while (pos + 4 <= limit) {
+        unsigned char c0 = str[pos];
+        unsigned char c1 = str[pos + 1];
+        unsigned char c2 = str[pos + 2];
+        unsigned char c3 = str[pos + 3];
+        if (likely(is_tchar(c0) & is_tchar(c1) & is_tchar(c2) & is_tchar(c3))) {
+            buf[pos]     = TCHAR[c0];
+            buf[pos + 1] = TCHAR[c1];
+            buf[pos + 2] = TCHAR[c2];
+            buf[pos + 3] = TCHAR[c3];
+            pos += 4;
+            continue;
+        }
+        break;
+    }
+    while (pos < limit && is_tchar(str[pos])) {
+        buf[pos] = TCHAR[str[pos]];
+        pos++;
+    }
+    lc->len = pos;
+
+    // buffer is full - check if there are more tchars
+    if (pos < len && is_tchar(str[pos])) {
+        return SIZE_MAX;
+    }
+    return pos;
+}
+
+/**
+ * @brief Count consecutive tchar characters (no lowercase conversion)
+ *
+ * Uses AVX2 (32B/iter) or SSSE3 (16B/iter) nibble-trick when available,
+ * with scalar fallback for tail bytes.  For typical HTTP header names
+ * (6-15 chars) the AVX2/SSSE3 path completes in a single iteration.
  *
  * @param str String to parse (must not be NULL)
  * @param len Maximum length of string
- * @return Number of consecutive tchar characters (0 if first char is not tchar)
+ * @return Index of first non-tchar byte (0 if first char is not tchar)
  */
-static inline size_t strtchar(const unsigned char *str, size_t len)
+static inline size_t strtchar_cmp(const unsigned char *str, size_t len)
 {
-    size_t pos      = 0;
-    unsigned char c = 0;
-    return strtchar_ex(str, len, pos, c, STRTCHAR_NOOP);
+    size_t pos = 0;
+
+#if defined(__AVX2__)
+    if (likely(pos + 32 <= len)) {
+        const __m256i lo_lut = _mm256_broadcastsi128_si256(
+            _mm_loadu_si128((const __m128i *)(const void *)TCHAR_NIBBLE_LO));
+        const __m256i hi_lut = _mm256_broadcastsi128_si256(
+            _mm_loadu_si128((const __m128i *)(const void *)TCHAR_NIBBLE_HI));
+        const __m256i nibble = _mm256_set1_epi8(0x0F);
+        do {
+            __m256i data =
+                _mm256_loadu_si256((const __m256i *)(const void *)(str + pos));
+            __m256i lo_v =
+                _mm256_shuffle_epi8(lo_lut, _mm256_and_si256(data, nibble));
+            __m256i hi_v = _mm256_shuffle_epi8(
+                hi_lut, _mm256_and_si256(_mm256_srli_epi16(data, 4), nibble));
+            int mask = _mm256_movemask_epi8(_mm256_cmpeq_epi8(
+                _mm256_and_si256(lo_v, hi_v), _mm256_setzero_si256()));
+            if (mask)
+                return pos + (size_t)__builtin_ctz((unsigned)mask);
+            pos += 32;
+        } while (pos + 32 <= len);
+    }
+#elif defined(__SSSE3__)
+    if (pos + 16 <= len) {
+        const __m128i lo_lut =
+            _mm_loadu_si128((const __m128i *)(const void *)TCHAR_NIBBLE_LO);
+        const __m128i hi_lut =
+            _mm_loadu_si128((const __m128i *)(const void *)TCHAR_NIBBLE_HI);
+        const __m128i nibble = _mm_set1_epi8(0x0F);
+        do {
+            __m128i data =
+                _mm_loadu_si128((const __m128i *)(const void *)(str + pos));
+            __m128i lo_v =
+                _mm_shuffle_epi8(lo_lut, _mm_and_si128(data, nibble));
+            __m128i hi_v = _mm_shuffle_epi8(
+                hi_lut, _mm_and_si128(_mm_srli_epi16(data, 4), nibble));
+            int mask = _mm_movemask_epi8(
+                _mm_cmpeq_epi8(_mm_and_si128(lo_v, hi_v), _mm_setzero_si128()));
+            if (mask)
+                return pos + (size_t)__builtin_ctz((unsigned)mask);
+            pos += 16;
+        } while (pos + 16 <= len);
+    }
+#endif
+
+    while (pos < len && TCHAR[str[pos]]) {
+        pos++;
+    }
+    return pos;
+}
+
+/**
+ * @brief Count consecutive tchar characters with optional lowercase conversion
+ *
+ * Counts the number of consecutive tchar (token) characters from the
+ * beginning of str. Uses 8x loop unrolling for performance.
+ *
+ * If lc is non-NULL, stores the lowercase-converted tchar characters into
+ * lc->buf starting at lc->len.
+ *
+ * @param str String to parse (must not be NULL)
+ * @param len Maximum length of string
+ * @param lc  Optional lowercase buffer (NULL to skip lowercase conversion)
+ * @return Number of consecutive tchar characters (0 if first char is not tchar)
+ * @return SIZE_MAX if buffer is full and there are more tchars to process
+ */
+static inline size_t strtchar(const unsigned char *str, size_t len,
+                              hwire_buf_t *lc)
+{
+    if (lc) {
+        return strtchar_cmp_lc(str, len, lc);
+    }
+
+    return strtchar_cmp(str, len);
 }
 
 /**
@@ -425,45 +653,45 @@ static inline int skip_ws(unsigned char *str, size_t len, size_t *pos,
 // field-vchar support. Returns the number of valid characters from the start of
 // str.
 // is_field_vchar: 1 to allow field-vchar, 0 otherwise
+// endc: set to the first invalid byte (non-NULL assumed)
 static inline size_t strvchar_cmp(const unsigned char *str, size_t len,
-                                  int is_field_vchar)
+                                  int is_field_vchar, unsigned char *endc)
 {
-    size_t pos           = 0;
-    // SP for field-vchar, else '!' for VCHAR
-    unsigned char firstc = is_field_vchar ? 0x20 : 0x21;
-    int disallow_ht = !is_field_vchar; // disallow HT if is_field_vchar is false
+    size_t pos                  = 0;
+    // Select lookup table based on is_field_vchar: FCVCHAR for field-vchar,
+    // else VCHAR
+    const unsigned char *lookup = is_field_vchar ? FCVCHAR : VCHAR;
 
-#define CHECK_VCHAR()                                                          \
-    do {                                                                       \
-        if (str[pos] < firstc && (disallow_ht || str[pos] != '\t')) {          \
-            return pos;                                                        \
-        }                                                                      \
-        pos++;                                                                 \
-    } while (0)
-
-    // Process 8 bytes at a time (manual unrolling)
+    // Process 8 bytes at a time using bitwise OR (branchless)
     while (pos + 8 <= len) {
-        CHECK_VCHAR();
-        CHECK_VCHAR();
-        CHECK_VCHAR();
-        CHECK_VCHAR();
-        CHECK_VCHAR();
-        CHECK_VCHAR();
-        CHECK_VCHAR();
-        CHECK_VCHAR();
+        int check = !lookup[str[pos + 0]] | !lookup[str[pos + 1]] |
+                    !lookup[str[pos + 2]] | !lookup[str[pos + 3]] |
+                    !lookup[str[pos + 4]] | !lookup[str[pos + 5]] |
+                    !lookup[str[pos + 6]] | !lookup[str[pos + 7]];
+
+        if (check) {
+            // Find exact position of invalid character
+            for (size_t i = 0; i < 8; i++) {
+                if (!lookup[str[pos + i]]) {
+                    *endc = str[pos + i];
+                    return pos + i;
+                }
+            }
+        }
+        pos += 8;
     }
-#undef CHECK_VCHAR
 
     // Handle remaining bytes (< 8)
-    while (pos < len && str[pos] >= firstc &&
-           (disallow_ht || str[pos] != '\t')) {
+    while (pos < len && lookup[str[pos]]) {
         pos++;
+    }
+    if (pos < len) {
+        *endc = str[pos];
     }
     return pos;
 }
 
 #if defined(__aarch64__) || (defined(__arm__) && defined(__ARM_NEON))
-# include <arm_neon.h>
 
 // strvchar_neon: NEON-optimized implementation (16 bytes)
 //
@@ -480,11 +708,11 @@ static inline size_t strvchar_cmp(const unsigned char *str, size_t len,
 // - 63 >> 3 = 7, which is within the 8-byte range (0-7)
 // - Combined with pos, the result is always within the 16-byte chunk
 // strvchar_neon: NEON-optimized implementation (16 bytes)
+// endc: set to the first invalid byte (non-NULL assumed)
 static inline size_t strvchar_neon(const unsigned char *str, size_t len,
-                                   int is_field_vchar)
+                                   int is_field_vchar, unsigned char *endc)
 {
-    size_t pos = 0;
-
+    size_t pos                 = 0;
     // Pre-compute constants (compile-time inlined)
     // 0x20 for field-vchar, else 0x21 (exclamation mark) for VCHAR
     const uint8x16_t first_cmp = vdupq_n_u8(is_field_vchar ? 0x20 : 0x21);
@@ -520,31 +748,28 @@ static inline size_t strvchar_neon(const unsigned char *str, size_t len,
 
         uint64_t mask1 = vgetq_lane_u64(qdata, 0);
         if (mask1) {
-            return pos + (size_t)(__builtin_ctzll(mask1) >> 3);
+            size_t first = (size_t)(__builtin_ctzll(mask1) >> 3);
+            *endc        = str[pos + first]; // L1 hit: data was just loaded
+            return pos + first;
         }
 
         uint64_t mask2 = vgetq_lane_u64(qdata, 1);
         if (mask2) {
-            return pos + 8 + (size_t)(__builtin_ctzll(mask2) >> 3);
+            size_t first = 8 + (size_t)(__builtin_ctzll(mask2) >> 3);
+            *endc        = str[pos + first]; // L1 hit: data was just loaded
+            return pos + first;
         }
 
         pos += 16;
     }
 
     // Fall back to LUT for remaining bytes (< 16 bytes)
-    return pos + strvchar_cmp(str + pos, len - pos, is_field_vchar);
+    return pos + strvchar_cmp(str + pos, len - pos, is_field_vchar, endc);
 }
 
 #endif
 
 #if defined(__SSE2__)
-# include <emmintrin.h>
-
-// SIMD constants for threshold comparison (as int8_t for signed SIMD ops)
-// Used by SSE2/AVX2 implementations to detect invalid characters using
-// sign-flip technique: (data ^ 0x80) < (0x21 ^ 0x80) is equivalent to data <
-// 0x21 Defined in SSE2 block since AVX2 implies SSE2 (superset)
-# define SIMD_SIGN_FLIP ((int8_t)0x80) // XOR mask to toggle sign bit
 
 // strvchar_sse2: SSE2 optimized implementation (16 bytes)
 //
@@ -564,8 +789,9 @@ static inline size_t strvchar_neon(const unsigned char *str, size_t len,
 //
 // Parameters:
 // - is_field_vchar: non-zero if field-vchar is allowed, 0x00 otherwise
+// - endc: set to the first invalid byte (non-NULL assumed)
 static inline size_t strvchar_sse2(const unsigned char *str, size_t len,
-                                   int8_t is_field_vchar)
+                                   int8_t is_field_vchar, unsigned char *endc)
 {
     size_t pos              = 0;
     // Pre-compute constants (compile-time)
@@ -606,22 +832,80 @@ static inline size_t strvchar_sse2(const unsigned char *str, size_t len,
         // Create 16-bit mask: bit i is 1 if byte i is invalid
         int mask = _mm_movemask_epi8(is_invalid);
         if (mask) {
-            // __builtin_ctz(mask) returns the position of the first set bit
-            // which corresponds to the first invalid byte position (0-15)
-            return pos + (size_t)__builtin_ctz((unsigned int)mask);
+            int first = __builtin_ctz((unsigned int)mask);
+            // L1 hit: data was just loaded from str+pos
+            *endc     = str[pos + (size_t)first];
+            return pos + (size_t)first;
         }
 
         // All 16 bytes are valid, continue to next chunk
         pos += 16;
     }
 
-    return pos + strvchar_cmp(str + pos, len - pos, is_field_vchar);
+    return pos + strvchar_cmp(str + pos, len - pos, is_field_vchar, endc);
+}
+
+#endif
+
+#if defined(__SSE4_2__)
+
+// strvchar_sse42: SSE4.2 optimized implementation using PCMPESTRI
+//
+// Algorithm: Blacklist approach using PCMPESTRI range matching
+// - Invalid ranges for VCHAR: 0x00-0x20, 0x7F-0x7F
+// - Invalid ranges for field-vchar: 0x00-0x08, 0x0A-0x1F, 0x7F-0x7F (excludes
+// HT)
+// - Valid: 0x21-0x7E (VCHAR) or 0x80-0xFF (obs-text)
+//
+// PCMPESTRI checks up to 8 ranges (16 bytes) against 16 bytes of data.
+// When a match is found (invalid char), switch to slow loop.
+static inline size_t strvchar_sse42(const unsigned char *str, size_t len,
+                                    int is_field_vchar, unsigned char *endc)
+{
+    size_t pos = 0;
+    // Invalid character ranges:
+    // - VCHAR: 0x00-0x20 (control + SP), 0x7F-0x7F (DEL) - 2 ranges
+    // - field-vchar: 0x00-0x08, 0x0A-0x1F, 0x7F-0x7F - 3 ranges (excludes
+    // HT)
+    static const char __attribute__((aligned(16))) VCHAR_INVALID_RANGES[] =
+        "\x00\x20\x7f\x7f"; // 2 ranges = 4 bytes
+    static const char __attribute__((aligned(16))) FCVCHAR_INVALID_RANGES[] =
+        "\x00\x08\x0a\x1f\x7f\x7f"; // 3 ranges = 6 bytes
+
+    const __m128i ranges = _mm_loadu_si128((
+        const __m128i *)(const void *)(is_field_vchar ? FCVCHAR_INVALID_RANGES :
+                                                        VCHAR_INVALID_RANGES));
+    const int ranges_len = is_field_vchar ? 6 : 4;
+
+    while (pos + 16 <= len) {
+        __m128i data =
+            _mm_loadu_si128((const __m128i *)(const void *)(str + pos));
+
+        // PCMPESTRI: find first byte in data that falls within any of the
+        // invalid ranges. Returns index of first match (0-15), or 16 if no
+        // match.
+        int idx = _mm_cmpestri(ranges, ranges_len, data, 16,
+                               _SIDD_LEAST_SIGNIFICANT | _SIDD_CMP_RANGES |
+                                   _SIDD_UBYTE_OPS);
+
+        if (idx != 16) {
+            // Use PSHUFB to bring data[idx] to lane 0 — no memory address
+            // dependency on 'idx' (unlike str[pos+idx] which needs
+            // idx→addr→load)
+            *endc = (unsigned char)_mm_cvtsi128_si32(
+                _mm_shuffle_epi8(data, _mm_set1_epi8((int8_t)idx)));
+            return pos + (size_t)idx;
+        }
+
+        pos += 16;
+    }
+
+    return pos + strvchar_cmp(str + pos, len - pos, is_field_vchar, endc);
 }
 
 #endif
 
 #if defined(__AVX2__)
-# include <immintrin.h>
 
 // strvchar_avx2: AVX2 optimized implementation (32 bytes)
 //
@@ -631,8 +915,13 @@ static inline size_t strvchar_sse2(const unsigned char *str, size_t len,
 //
 // Parameters:
 // - is_field_vchar: non-zero if field-vchar is allowed, 0x00 otherwise
+// - endc: set to the first invalid byte (non-NULL assumed)
+//
+// AVX2 implies SSSE3, so _mm_shuffle_epi8 (PSHUFB) is available.
+// We extract the stopped byte from the already-loaded 256-bit 'data' register
+// using VEXTRACTI128 + PSHUFB, avoiding str[pos+first] address dependency.
 static inline size_t strvchar_avx2(const unsigned char *str, size_t len,
-                                   int8_t is_field_vchar)
+                                   int8_t is_field_vchar, unsigned char *endc)
 {
     size_t pos              = 0;
     // Pre-compute constants (compile-time if arguments are constant)
@@ -649,8 +938,8 @@ static inline size_t strvchar_avx2(const unsigned char *str, size_t len,
             _mm256_loadu_si256((const __m256i *)(const void *)(str + pos));
         __m256i data_shifted = _mm256_xor_si256(data, sign_flip);
 
-        // Check 1: Characters less than firstc (after sign flip) are invalid
-        // (data ^ 0x80) < (firstc ^ 0x80)
+        // Check 1: Characters less than firstc (after sign flip) are
+        // invalid (data ^ 0x80) < (firstc ^ 0x80)
         __m256i is_before_first = _mm256_cmpgt_epi8(first_cmp, data_shifted);
 
         // Check2: HT exception logic - if allow_ht, then HT (0x09) is valid
@@ -667,16 +956,21 @@ static inline size_t strvchar_avx2(const unsigned char *str, size_t len,
 
         int mask = _mm256_movemask_epi8(is_invalid);
         if (mask) {
-            return pos + (size_t)__builtin_ctz((unsigned int)mask);
+            int first    = __builtin_ctz((unsigned int)mask);
+            // Use VEXTRACTI128 + PSHUFB to extract data[first] from the loaded
+            // register — avoids str[pos+first] memory address dependency on
+            // 'first'
+            __m128i half = first < 16 ? _mm256_castsi256_si128(data) :
+                                        _mm256_extracti128_si256(data, 1);
+            *endc        = (unsigned char)_mm_cvtsi128_si32(
+                _mm_shuffle_epi8(half, _mm_set1_epi8((int8_t)(first & 15))));
+            return pos + (size_t)first;
         }
         pos += 32;
     }
 
     // Fall back to SSE2 for remaining bytes (< 32 bytes)
-    // Note: SSE2 implementation is currently NOT parameterized, so it only
-    // supports standard VCHAR. This is acceptable for now as we are strictly
-    // refactoring strvchar integration.
-    return pos + strvchar_sse2(str + pos, len - pos, is_field_vchar);
+    return pos + strvchar_sse2(str + pos, len - pos, is_field_vchar, endc);
 }
 
 #endif
@@ -689,29 +983,56 @@ static inline size_t strvchar_avx2(const unsigned char *str, size_t len,
 // SP, HT) Returns the number of consecutive characters from the beginning
 // of str that are field-content (VCHAR, obs-text, SP, HT)
 
+static inline size_t strvchar(const unsigned char *str, size_t len)
+{
+    unsigned char endc = 0; // discarded; compiler optimizes away
 #if defined(__AVX2__)
-# define strvchar(str, len)                                                    \
-     strvchar_avx2((const unsigned char *)(str), (len), 0)
-# define strfcchar(str, len)                                                   \
-     strvchar_avx2((const unsigned char *)(str), (len), 1)
-
-#elif defined(__SSE2__)
-# define strvchar(str, len)                                                    \
-     strvchar_sse2((const unsigned char *)(str), (len), 0)
-# define strfcchar(str, len)                                                   \
-     strvchar_sse2((const unsigned char *)(str), (len), 1)
-
-#elif defined(__aarch64__) || (defined(__arm__) && defined(__ARM_NEON))
-# define strvchar(str, len)                                                    \
-     strvchar_neon((const unsigned char *)(str), (len), 0)
-# define strfcchar(str, len)                                                   \
-     strvchar_neon((const unsigned char *)(str), (len), 1)
-
-#else
-# define strvchar(str, len) strvchar_cmp((const unsigned char *)(str), (len), 0)
-# define strfcchar(str, len)                                                   \
-     strvchar_cmp((const unsigned char *)(str), (len), 1)
+    if (likely(len >= 32)) {
+        return strvchar_avx2(str, len, 0, &endc);
+    }
 #endif
+
+#if defined(__SSE4_2__)
+    if (likely(len >= 16)) {
+        return strvchar_sse42(str, len, 0, &endc);
+    }
+#elif defined(__SSE2__)
+    if (likely(len >= 16)) {
+        return strvchar_sse2(str, len, 0, &endc);
+    }
+#elif defined(__aarch64__) || (defined(__arm__) && defined(__ARM_NEON))
+    if (likely(len >= 16)) {
+        return strvchar_neon(str, len, 0, &endc);
+    }
+#endif
+    return strvchar_cmp(str, len, 0, &endc);
+}
+
+static inline size_t strfcchar(const unsigned char *str, size_t len,
+                               unsigned char *endc)
+{
+#if defined(__AVX2__)
+    if (likely(len >= 32)) {
+        return strvchar_avx2(str, len, 1, endc);
+    }
+#endif
+
+#if defined(__SSE4_2__)
+    if (likely(len >= 16)) {
+        return strvchar_sse42(str, len, 1, endc);
+    }
+#elif defined(__SSE2__)
+    if (likely(len >= 16)) {
+        return strvchar_sse2(str, len, 1, endc);
+    }
+#elif defined(__aarch64__) || (defined(__arm__) && defined(__ARM_NEON))
+    if (likely(len >= 16)) {
+        return strvchar_neon(str, len, 1, endc);
+    }
+#endif
+
+    return strvchar_cmp(str, len, 1, endc);
+}
 
 /** @} */ /* end of Internal Character Validation Functions */
 
@@ -751,7 +1072,7 @@ size_t hwire_parse_tchar(const char *str, size_t len, size_t *pos)
     assert(pos != NULL);
     size_t cur                = *pos;
     const unsigned char *ustr = (const unsigned char *)str + cur;
-    size_t n                  = strtchar(ustr, len - cur);
+    size_t n                  = strtchar(ustr, len - cur, NULL);
     *pos += n;
     return n;
 }
@@ -911,23 +1232,14 @@ static int parse_parameter(char *str, size_t len, size_t *pos, size_t maxpos,
 
     // parse parameter-name (token)
     if (cb->key_lc.size > 0) {
-        unsigned char c        = 0;
-        unsigned char *key_buf = (unsigned char *)cb->key_lc.buf;
-        size_t key_len         = cb->key_lc.len;
-        size_t key_size        = cb->key_lc.size;
-        cur                    = strtchar_ex(ustr, tail, cur, c, {
-            // convert to lowercase and store in key_buf
-            if (key_len >= key_size) {
-                *pos           = cur;
-                cb->key_lc.len = key_len;
-                return HWIRE_EKEYLEN;
-            }
-            key_buf[key_len++] = c;
-        });
-        // update key_lc.len after parsing
-        cb->key_lc.len         = key_len;
+        size_t n = strtchar(ustr + cur, tail - cur, &cb->key_lc);
+        if (n == SIZE_MAX) {
+            *pos = cur;
+            return HWIRE_EKEYLEN;
+        }
+        cur += n;
     } else {
-        cur += strtchar(ustr + cur, tail - cur);
+        cur += strtchar(ustr + cur, tail - cur, NULL);
     }
     CHECK_POSITON();
     param.key.ptr = str + head;
@@ -1331,37 +1643,43 @@ static int parse_hval(unsigned char *str, size_t len, size_t *cur,
 
     // Use strfcchar to scan VCHAR + SP + HT + obs-text in one go
     // This stops at CR, LF, or any invalid character (e.g. CTLs)
-    size_t pos = strfcchar(str, max);
+    // endc receives the stopped byte from within the SIMD function (pshufb on
+    // AVX2/SSE4.2) or via L1-cached str[pos] on SSE2/NEON/scalar — avoids
+    // a separate str[pos] load after strfcchar returns.
+    unsigned char endc = 0;
+    size_t pos         = strfcchar(str, max, &endc);
     if (pos < max) {
-        // Stopped at non-field-content
-        switch (str[pos]) {
-        default:
-            return HWIRE_EHDRVALUE;
-
-        case CR:
-            if (pos + 1 == len) {
-                // reached end of string, need more bytes to check for LF
-                break;
-            }
-            if (str[pos + 1] != LF) {
-                // invalid end-of-line terminator
-                return HWIRE_EEOL;
-            }
-        case LF:
+        // Stopped at non-field-content; use endc (already set) instead of
+        // str[pos]
+        if (likely(endc == CR && pos + 1 < max && str[pos + 1] == LF)) {
+            // valid end of header value, continue to trim OWS and check CRLF
             // set tail position after CRLF and trim trailing OWS
-            *cur = pos + 1 + (str[pos] == CR);
+            *cur = pos + 2; // skip CRLF
 
+REMOVE_OWS:
+
+#define IS_OWS() (pos > 0 && (str[pos - 1] == SP || str[pos - 1] == HT))
             // Backtrack to trim trailing OWS
-            // remove trailing CR if present
-            if (pos > 0 && str[pos - 1] == CR) {
-                pos--;
+            // Enter slow loop only if the last character is OWS
+            if (unlikely(IS_OWS())) {
+                do {
+                    pos--;
+                } while (IS_OWS());
             }
-            // remove trailing OWS
-            while (pos > 0 && (str[pos - 1] == SP || str[pos - 1] == HT)) {
-                pos--;
-            }
+#undef IS_OWS
+
             *maxlen = pos;
             return HWIRE_OK;
+        } else if (likely(endc == LF)) {
+            // only LF found - valid end of header value, continue to trim OWS
+            // and check LF
+            goto REMOVE_OWS;
+        } else if (unlikely(endc != CR)) {
+            // invalid character in header value
+            return HWIRE_EHDRVALUE;
+        } else if (unlikely(pos + 1 != len)) {
+            // invalid end-of-line terminator
+            return HWIRE_EEOL;
         }
     }
 
@@ -1381,38 +1699,26 @@ static int parse_hval(unsigned char *str, size_t len, size_t *cur,
 static int parse_hkey(unsigned char *str, size_t len, size_t *cur,
                       size_t *maxlen, hwire_callbacks_t *cb)
 {
-    size_t pos       = 0;
     size_t max       = (len > *maxlen) ? *maxlen : len;
     size_t tchar_len = 0;
 
     if (cb->key_lc.size > 0) {
-        unsigned char c        = 0;
-        unsigned char *key_buf = (unsigned char *)cb->key_lc.buf;
-        size_t key_len         = cb->key_lc.len;
-        size_t key_size        = cb->key_lc.size;
-        tchar_len              = strtchar_ex(str, max, pos, c, {
-            // convert to lowercase and store in key_buf
-            if (key_len >= key_size) {
-                // Restore before returning error
-                cb->key_lc.len = key_len;
-                return HWIRE_EKEYLEN;
-            }
-            key_buf[key_len++] = c;
-        });
-        // Update the structure
-        cb->key_lc.len         = key_len;
+        tchar_len = strtchar(str, max, &cb->key_lc);
+        if (tchar_len == SIZE_MAX) {
+            return HWIRE_EKEYLEN;
+        }
     } else {
-        tchar_len = strtchar(str, max);
+        tchar_len = strtchar(str, max, NULL);
     }
 
-    if (tchar_len == 0) {
+    if (unlikely(tchar_len == 0)) {
         // Empty or first character is invalid
         return HWIRE_EHDRNAME;
     }
 
-    if (tchar_len < max) {
+    if (likely(tchar_len < max)) {
         // strtchar stopped before maxlen - check why
-        if (str[tchar_len] == ':') {
+        if (likely(str[tchar_len] == ':')) {
             // Found colon - success
             *maxlen = tchar_len;
             *cur    = tchar_len + 1;
@@ -1423,7 +1729,7 @@ static int parse_hkey(unsigned char *str, size_t len, size_t *cur,
     }
 
     // All characters up to maxlen were tchar
-    if (len > max) {
+    if (unlikely(len > max)) {
         // More data available but exceeded maxlen
         return HWIRE_EHDRLEN;
     }
@@ -1454,29 +1760,32 @@ int hwire_parse_headers(char *str, size_t len, size_t *pos, size_t maxlen,
     hwire_header_t header;
 
 RETRY:
-    switch (*ustr) {
-    // need more bytes
-    case 0:
-        return HWIRE_EAGAIN;
-
-    // check header-tail
-    case CR:
-        // null-terminated
-        if (!ustr[1]) {
-            return HWIRE_EAGAIN;
-        } else if (ustr[1] == LF) {
-            // skip CR
-            ustr++;
-        case LF:
-            // skip LF
+    // End-of-headers (CR/LF) or incomplete data (0) — happens once per request,
+    // not once per header. Use unlikely to keep the hot header-parsing path
+    // as a straight-line fall-through.
+    if (unlikely(*ustr <= CR)) {
+        // Most common: CRLF end-of-headers (browsers always send CRLF)
+        if (likely(*ustr == CR)) {
+            if (unlikely(!ustr[1])) {
+                return HWIRE_EAGAIN;
+            } else if (likely(ustr[1] == LF)) {
+                ustr += 2;
+                *pos = (size_t)(ustr - top);
+                return HWIRE_OK;
+            }
+            // CR without LF: fall through → parse_hkey rejects as non-tchar
+        } else if (*ustr == LF) {
             ustr++;
             *pos = (size_t)(ustr - top);
             return HWIRE_OK;
+        } else if (*ustr == 0) {
+            return HWIRE_EAGAIN;
         }
+        // Any other control char ≤ CR: fall through → parse_hkey rejects
     }
 
     // check maximum header number constraint
-    if (nhdr >= maxnhdrs) {
+    if (unlikely(nhdr >= maxnhdrs)) {
         return HWIRE_ENOBUFS;
     }
     nhdr++;
@@ -1489,17 +1798,21 @@ RETRY:
     // field-name = token
     // RFC 7230 3.2 / RFC 9112 5.1: Field Names
     rv             = parse_hkey(ustr, len, &cur, &klen, cb);
-    if (rv != HWIRE_OK) {
+    if (unlikely(rv != HWIRE_OK)) {
         return rv;
     }
 
     // skip OWS
-    while (ustr[cur] == SP || ustr[cur] == HT) {
-        cur++;
+#define IS_OWS() (ustr[cur] == SP || ustr[cur] == HT)
+    if (likely(IS_OWS())) {
+        do {
+            cur++;
+        } while (IS_OWS());
     }
+#undef IS_OWS
 
     // re-check maximum header length constraint
-    if (cur > maxlen) {
+    if (unlikely(cur > maxlen)) {
         return HWIRE_EHDRLEN;
     }
     ustr += cur;
@@ -1511,7 +1824,7 @@ RETRY:
     // RFC 7230 3.2 / RFC 9112 5.5: Field Values
     // Note: Empty field-value is allowed.
     rv               = parse_hval(ustr, len, &cur, &vlen);
-    if (rv != HWIRE_OK) {
+    if (unlikely(rv != HWIRE_OK)) {
         return rv;
     }
     ustr += cur;
@@ -1523,7 +1836,7 @@ RETRY:
     header.value.len = vlen;
 
     // call callback
-    if (cb->header_cb(cb, &header) != 0) {
+    if (unlikely(cb->header_cb(cb, &header) != 0)) {
         return HWIRE_ECALLBACK;
     }
 
@@ -1572,8 +1885,8 @@ static int parse_version(const unsigned char *str, size_t len, size_t *pos,
  * @brief Parse request-target (URI)
  *
  * Scans the request-target until a space (SP) is found.
- * Defines the request-target as origin-form / absolute-form / authority-form /
- * asterisk-form (RFC 7230 3.1.1 / RFC 9112 3.2).
+ * Defines the request-target as origin-form / absolute-form /
+ * authority-form / asterisk-form (RFC 7230 3.1.1 / RFC 9112 3.2).
  *
  * @param str Input string
  * @param len Total length of input string

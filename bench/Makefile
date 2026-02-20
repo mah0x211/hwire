@@ -26,6 +26,7 @@ LDFLAGS = -L$(CATCH2_LIB) -lCatch2Main -lCatch2
 UNAME_M := $(shell uname -m)
 
 .PHONY: all clean run report bench deps patch unpatch \
+        deps-pico deps-llhttp deps-httparse deps-hwire \
         run-hwire run-pico run-llhttp run-httparse \
         bench-hwire bench-pico bench-llhttp bench-httparse
 
@@ -34,12 +35,16 @@ PICO_COMMIT := f8326098f63eefabfa2b6ec595d90e9ed5ed958a
 LLHTTP_TAG := v9.3.1
 
 # Fetch external dependencies
-deps:
+deps: deps-pico deps-llhttp deps-httparse deps-hwire
+
+deps-pico:
 	@if [ ! -d "$(PICO_DIR)" ]; then \
 		echo "Cloning picohttpparser ($(PICO_COMMIT))..."; \
 		mkdir -p deps && git clone https://github.com/h2o/picohttpparser.git $(PICO_DIR) && \
 		cd $(PICO_DIR) && git checkout $(PICO_COMMIT); \
 	fi
+
+deps-llhttp:
 	@if [ ! -d "$(LLHTTP_DIR)" ]; then \
 		echo "Cloning llhttp ($(LLHTTP_TAG))..."; \
 		mkdir -p deps && git clone --depth 1 --branch $(LLHTTP_TAG) https://github.com/nodejs/llhttp.git $(LLHTTP_DIR); \
@@ -48,16 +53,21 @@ deps:
 		echo "Building llhttp..."; \
 		cd $(LLHTTP_DIR) && npm install && make generate; \
 	fi
+
+deps-httparse:
 	@if [ ! -f "$(HTTPARSE_DIR)/Cargo.toml" ]; then \
 		echo "Setting up httparse_bench..."; \
 		./scripts/setup_httparse.sh; \
 	fi
 
+deps-hwire:
+	@echo "Copying hwire source..."
+	@mkdir -p deps/hwire
+	@cp ../src/hwire.c deps/hwire/hwire.c
+
 # Apply NO_SIMD patches (script-based)
 patch:
 	@echo "Applying NO_SIMD patches..."
-	@mkdir -p deps/hwire
-	@cp ../src/hwire.c deps/hwire/hwire.c
 	@./scripts/apply-no-simd.sh hwire
 	@./scripts/apply-no-simd.sh pico
 	@./scripts/apply-no-simd.sh llhttp
@@ -71,8 +81,8 @@ unpatch:
 
 # Benchmark targets (architecture-specific)
 ifeq ($(UNAME_M),x86_64)
-    # x86_64: hwire has SSE2 and AVX2, pico/llhttp have SSE4.2
-    HWIRE_TARGETS = bench_hwire_avx2 bench_hwire_sse2 bench_hwire_nosimd
+    # x86_64: hwire has SSE2, SSE4.2 and AVX2, pico/llhttp have SSE4.2
+    HWIRE_TARGETS = bench_hwire_avx2 bench_hwire_sse42 bench_hwire_sse2 bench_hwire_nosimd
     PICO_TARGETS = bench_pico_sse42 bench_pico_nosimd
     LLHTTP_TARGETS = bench_llhttp_sse42 bench_llhttp_nosimd
 else
@@ -106,6 +116,11 @@ bench_hwire_sse2: bench_hwire.cc deps/hwire/hwire.c
 bench_hwire_avx2: bench_hwire.cc deps/hwire/hwire.c
 	$(CC) $(CFLAGS) -mavx2 -mfma $(INCLUDES) -c -o hwire_avx2.o deps/hwire/hwire.c
 	$(CXX) $(CXXFLAGS) -mavx2 -mfma $(INCLUDES) -o $@ bench_hwire.cc hwire_avx2.o $(LDFLAGS)
+
+# x86_64: SSE4.2 (-msse4.2 required)
+bench_hwire_sse42: bench_hwire.cc deps/hwire/hwire.c
+	$(CC) $(CFLAGS) -msse4.2 $(INCLUDES) -c -o hwire_sse42.o deps/hwire/hwire.c
+	$(CXX) $(CXXFLAGS) -msse4.2 $(INCLUDES) -o $@ bench_hwire.cc hwire_sse42.o $(LDFLAGS)
 
 # ARM: NEON (default on ARM, no flags needed)
 bench_hwire_neon: bench_hwire.cc deps/hwire/hwire.c
@@ -185,6 +200,8 @@ clean:
 	      bench_llhttp_sse42 bench_llhttp_neon bench_llhttp_nosimd \
 	      bench_httparse_simd libhttparse_bench.a \
 	      *.o results.txt
+
+dist-clean: clean
 	rm -rf deps/
 
 # Run benchmarks
