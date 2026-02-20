@@ -40,9 +40,9 @@ LLHTTP_TAG := v9.3.1
 deps: deps-pico deps-llhttp deps-httparse deps-hwire deps-npm
 
 deps-npm:
-	@if [ ! -d "node_modules" ]; then \
-		echo "Installing npm dependencies..."; \
-		npm install; \
+	@if [ ! -d "node_modules/fast-xml-parser" ]; then \
+		echo "Installing fast-xml-parser..."; \
+		npm install fast-xml-parser; \
 	fi
 
 deps-pico:
