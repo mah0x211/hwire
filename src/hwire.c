@@ -407,7 +407,7 @@ static inline size_t strtchar_cmp_lc(const unsigned char *str, size_t len,
     size_t limit       = (len < lc->size) ? len : lc->size;
 
 #if defined(__AVX2__)
-    if (pos + 32 <= limit) {
+    if (likely(pos + 32 <= limit)) {
         const __m256i lo_lut = _mm256_broadcastsi128_si256(
             _mm_loadu_si128((const __m128i *)(const void *)TCHAR_NIBBLE_LO));
         const __m256i hi_lut = _mm256_broadcastsi128_si256(
@@ -522,7 +522,7 @@ static inline size_t strtchar_cmp(const unsigned char *str, size_t len)
     size_t pos = 0;
 
 #if defined(__AVX2__)
-    if (pos + 32 <= len) {
+    if (likely(pos + 32 <= len)) {
         const __m256i lo_lut = _mm256_broadcastsi128_si256(
             _mm_loadu_si128((const __m128i *)(const void *)TCHAR_NIBBLE_LO));
         const __m256i hi_lut = _mm256_broadcastsi128_si256(
@@ -987,21 +987,21 @@ static inline size_t strvchar(const unsigned char *str, size_t len)
 {
     unsigned char endc = 0; // discarded; compiler optimizes away
 #if defined(__AVX2__)
-    if (len >= 32) {
+    if (likely(len >= 32)) {
         return strvchar_avx2(str, len, 0, &endc);
     }
 #endif
 
 #if defined(__SSE4_2__)
-    if (len >= 16) {
+    if (likely(len >= 16)) {
         return strvchar_sse42(str, len, 0, &endc);
     }
 #elif defined(__SSE2__)
-    if (len >= 16) {
+    if (likely(len >= 16)) {
         return strvchar_sse2(str, len, 0, &endc);
     }
 #elif defined(__aarch64__) || (defined(__arm__) && defined(__ARM_NEON))
-    if (len >= 16) {
+    if (likely(len >= 16)) {
         return strvchar_neon(str, len, 0, &endc);
     }
 #endif
@@ -1012,21 +1012,21 @@ static inline size_t strfcchar(const unsigned char *str, size_t len,
                                unsigned char *endc)
 {
 #if defined(__AVX2__)
-    if (len >= 32) {
+    if (likely(len >= 32)) {
         return strvchar_avx2(str, len, 1, endc);
     }
 #endif
 
 #if defined(__SSE4_2__)
-    if (len >= 16) {
+    if (likely(len >= 16)) {
         return strvchar_sse42(str, len, 1, endc);
     }
 #elif defined(__SSE2__)
-    if (len >= 16) {
+    if (likely(len >= 16)) {
         return strvchar_sse2(str, len, 1, endc);
     }
 #elif defined(__aarch64__) || (defined(__arm__) && defined(__ARM_NEON))
-    if (len >= 16) {
+    if (likely(len >= 16)) {
         return strvchar_neon(str, len, 1, endc);
     }
 #endif
@@ -1647,7 +1647,7 @@ static int parse_hval(unsigned char *str, size_t len, size_t *cur,
     // AVX2/SSE4.2) or via L1-cached str[pos] on SSE2/NEON/scalar — avoids
     // a separate str[pos] load after strfcchar returns.
     unsigned char endc = 0;
-    size_t pos = strfcchar(str, max, &endc);
+    size_t pos         = strfcchar(str, max, &endc);
     if (pos < max) {
         // Stopped at non-field-content; use endc (already set) instead of
         // str[pos]
@@ -1711,12 +1711,12 @@ static int parse_hkey(unsigned char *str, size_t len, size_t *cur,
         tchar_len = strtchar(str, max, NULL);
     }
 
-    if (tchar_len == 0) {
+    if (unlikely(tchar_len == 0)) {
         // Empty or first character is invalid
         return HWIRE_EHDRNAME;
     }
 
-    if (tchar_len < max) {
+    if (likely(tchar_len < max)) {
         // strtchar stopped before maxlen - check why
         if (likely(str[tchar_len] == ':')) {
             // Found colon - success
@@ -1729,7 +1729,7 @@ static int parse_hkey(unsigned char *str, size_t len, size_t *cur,
     }
 
     // All characters up to maxlen were tchar
-    if (len > max) {
+    if (unlikely(len > max)) {
         // More data available but exceeded maxlen
         return HWIRE_EHDRLEN;
     }
@@ -1760,29 +1760,32 @@ int hwire_parse_headers(char *str, size_t len, size_t *pos, size_t maxlen,
     hwire_header_t header;
 
 RETRY:
-    switch (*ustr) {
-    // need more bytes
-    case 0:
-        return HWIRE_EAGAIN;
-
-    // check header-tail
-    case CR:
-        // null-terminated
-        if (!ustr[1]) {
-            return HWIRE_EAGAIN;
-        } else if (ustr[1] == LF) {
-            // skip CR
-            ustr++;
-        case LF:
-            // skip LF
+    // End-of-headers (CR/LF) or incomplete data (0) — happens once per request,
+    // not once per header. Use unlikely to keep the hot header-parsing path
+    // as a straight-line fall-through.
+    if (unlikely(*ustr <= CR)) {
+        // Most common: CRLF end-of-headers (browsers always send CRLF)
+        if (likely(*ustr == CR)) {
+            if (unlikely(!ustr[1])) {
+                return HWIRE_EAGAIN;
+            } else if (likely(ustr[1] == LF)) {
+                ustr += 2;
+                *pos = (size_t)(ustr - top);
+                return HWIRE_OK;
+            }
+            // CR without LF: fall through → parse_hkey rejects as non-tchar
+        } else if (*ustr == LF) {
             ustr++;
             *pos = (size_t)(ustr - top);
             return HWIRE_OK;
+        } else if (*ustr == 0) {
+            return HWIRE_EAGAIN;
         }
+        // Any other control char ≤ CR: fall through → parse_hkey rejects
     }
 
     // check maximum header number constraint
-    if (nhdr >= maxnhdrs) {
+    if (unlikely(nhdr >= maxnhdrs)) {
         return HWIRE_ENOBUFS;
     }
     nhdr++;
@@ -1795,7 +1798,7 @@ RETRY:
     // field-name = token
     // RFC 7230 3.2 / RFC 9112 5.1: Field Names
     rv             = parse_hkey(ustr, len, &cur, &klen, cb);
-    if (rv != HWIRE_OK) {
+    if (unlikely(rv != HWIRE_OK)) {
         return rv;
     }
 
@@ -1809,7 +1812,7 @@ RETRY:
 #undef IS_OWS
 
     // re-check maximum header length constraint
-    if (cur > maxlen) {
+    if (unlikely(cur > maxlen)) {
         return HWIRE_EHDRLEN;
     }
     ustr += cur;
@@ -1821,7 +1824,7 @@ RETRY:
     // RFC 7230 3.2 / RFC 9112 5.5: Field Values
     // Note: Empty field-value is allowed.
     rv               = parse_hval(ustr, len, &cur, &vlen);
-    if (rv != HWIRE_OK) {
+    if (unlikely(rv != HWIRE_OK)) {
         return rv;
     }
     ustr += cur;
@@ -1833,7 +1836,7 @@ RETRY:
     header.value.len = vlen;
 
     // call callback
-    if (cb->header_cb(cb, &header) != 0) {
+    if (unlikely(cb->header_cb(cb, &header) != 0)) {
         return HWIRE_ECALLBACK;
     }
 
