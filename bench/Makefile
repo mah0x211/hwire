@@ -200,6 +200,8 @@ clean:
 	      bench_llhttp_sse42 bench_llhttp_neon bench_llhttp_nosimd \
 	      bench_httparse_simd libhttparse_bench.a \
 	      *.o results.txt
+
+dist-clean: clean
 	rm -rf deps/
 
 # Run benchmarks
