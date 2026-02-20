@@ -1,8 +1,15 @@
 *.o
+*.a
 *.txt
 *.profraw
 *.profdata
 *.info
+*.md
+*.json
+
+!README.md
 obj/
 tmp/
 bench/deps/
+node_modules/
+results/
