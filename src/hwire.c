@@ -361,57 +361,6 @@ static inline int is_vchar(unsigned char c)
     return VCHAR[c] == 1;
 }
 
-/**
- * @brief Count consecutive tchar characters with optional lowercase conversion
- *
- * Counts the number of consecutive tchar (token) characters from the
- * beginning of str. Uses 8x loop unrolling for performance.
- *
- * If lc is non-NULL, stores the lowercase-converted tchar characters into
- * lc->buf starting at lc->len.
- *
- * @param str String to parse (must not be NULL)
- * @param len Maximum length of string
- * @param lc  Optional lowercase buffer (NULL to skip lowercase conversion)
- * @return Number of consecutive tchar characters (0 if first char is not tchar)
- * @return SIZE_MAX if buffer is full and there are more tchars to process
- */
-static inline size_t strtchar_cmp_lc(const unsigned char *str, size_t len,
-                                     hwire_buf_t *lc)
-{
-    size_t pos         = 0;
-    unsigned char *buf = (unsigned char *)lc->buf;
-    size_t limit       = (len < lc->size) ? len : lc->size;
-
-    while (pos + 4 <= limit) {
-        unsigned char c0 = str[pos];
-        unsigned char c1 = str[pos + 1];
-        unsigned char c2 = str[pos + 2];
-        unsigned char c3 = str[pos + 3];
-        if (likely(is_tchar(c0) & is_tchar(c1) & is_tchar(c2) & is_tchar(c3))) {
-            buf[pos]     = TCHAR[c0];
-            buf[pos + 1] = TCHAR[c1];
-            buf[pos + 2] = TCHAR[c2];
-            buf[pos + 3] = TCHAR[c3];
-            pos += 4;
-            continue;
-        }
-        break;
-    }
-
-    while (pos < limit && is_tchar(str[pos])) {
-        buf[pos] = TCHAR[str[pos]];
-        pos++;
-    }
-    lc->len = pos;
-
-    // buffer is full - check if there are more tchars
-    if (pos < len && is_tchar(str[pos])) {
-        return SIZE_MAX;
-    }
-    return pos;
-}
-
 // TCHAR_NIBBLE_LO / TCHAR_NIBBLE_HI: nibble-split lookup tables for tchar
 // validation.
 //
@@ -432,6 +381,130 @@ static const int8_t TCHAR_NIBBLE_HI[16] = {
     // hi:   0x8   0x9   0xA   0xB   0xC   0xD   0xE   0xF
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
 #endif
+
+/**
+ * @brief Count consecutive tchar characters with lowercase conversion
+ *
+ * Counts the number of consecutive tchar (token) characters from the
+ * beginning of str, writing the lowercase-converted characters into lc->buf.
+ *
+ * Uses AVX2 (32B/iter) or SSSE3 (16B/iter) for validation and lowercasing
+ * when available.  For typical HTTP header names (4-15 chars) the SIMD path
+ * completes in a single iteration.  A scalar 4-char-unrolled fallback handles
+ * any remaining bytes.
+ *
+ * @param str   String to parse (must not be NULL)
+ * @param len   Maximum length of string
+ * @param lc    Lowercase output buffer (must not be NULL)
+ * @return Number of consecutive tchar characters written to lc->buf
+ * @return SIZE_MAX if lc->buf is full and more tchars remain in str
+ */
+static inline size_t strtchar_cmp_lc(const unsigned char *str, size_t len,
+                                     hwire_buf_t *lc)
+{
+    size_t pos         = 0;
+    unsigned char *buf = (unsigned char *)lc->buf;
+    size_t limit       = (len < lc->size) ? len : lc->size;
+
+#if defined(__AVX2__)
+    if (pos + 32 <= limit) {
+        const __m256i lo_lut = _mm256_broadcastsi128_si256(
+            _mm_loadu_si128((const __m128i *)(const void *)TCHAR_NIBBLE_LO));
+        const __m256i hi_lut = _mm256_broadcastsi128_si256(
+            _mm_loadu_si128((const __m128i *)(const void *)TCHAR_NIBBLE_HI));
+        const __m256i nibble  = _mm256_set1_epi8(0x0F);
+        const __m256i at_char = _mm256_set1_epi8(0x40); // '@' (0x41-1)
+        const __m256i bkt     = _mm256_set1_epi8(0x5B); // '[' (0x5A+1)
+        const __m256i bit5    = _mm256_set1_epi8(0x20);
+        do {
+            __m256i data =
+                _mm256_loadu_si256((const __m256i *)(const void *)(str + pos));
+            __m256i lo_v =
+                _mm256_shuffle_epi8(lo_lut, _mm256_and_si256(data, nibble));
+            __m256i hi_v = _mm256_shuffle_epi8(
+                hi_lut, _mm256_and_si256(_mm256_srli_epi16(data, 4), nibble));
+            int mask = _mm256_movemask_epi8(_mm256_cmpeq_epi8(
+                _mm256_and_si256(lo_v, hi_v), _mm256_setzero_si256()));
+            // lowercase: A-Z (0x41-0x5A) -> set bit5
+            __m256i is_upper =
+                _mm256_and_si256(_mm256_cmpgt_epi8(data, at_char), // c > '@'
+                                 _mm256_cmpgt_epi8(bkt, data));    // '[' > c
+            __m256i lc_out =
+                _mm256_or_si256(data, _mm256_and_si256(is_upper, bit5));
+            // store 32 bytes (safe: pos+32 <= limit <= lc->size)
+            _mm256_storeu_si256((__m256i *)(void *)(buf + pos), lc_out);
+            if (mask) {
+                pos += (size_t)__builtin_ctz((unsigned)mask);
+                lc->len = pos;
+                return pos;
+            }
+            pos += 32;
+        } while (pos + 32 <= limit);
+    }
+#elif defined(__SSSE3__)
+    if (pos + 16 <= limit) {
+        const __m128i lo_lut =
+            _mm_loadu_si128((const __m128i *)(const void *)TCHAR_NIBBLE_LO);
+        const __m128i hi_lut =
+            _mm_loadu_si128((const __m128i *)(const void *)TCHAR_NIBBLE_HI);
+        const __m128i nibble  = _mm_set1_epi8(0x0F);
+        const __m128i at_char = _mm_set1_epi8(0x40); // '@' (0x41-1)
+        const __m128i bkt     = _mm_set1_epi8(0x5B); // '[' (0x5A+1)
+        const __m128i bit5    = _mm_set1_epi8(0x20);
+        do {
+            __m128i data =
+                _mm_loadu_si128((const __m128i *)(const void *)(str + pos));
+            __m128i lo_v =
+                _mm_shuffle_epi8(lo_lut, _mm_and_si128(data, nibble));
+            __m128i hi_v = _mm_shuffle_epi8(
+                hi_lut, _mm_and_si128(_mm_srli_epi16(data, 4), nibble));
+            int mask = _mm_movemask_epi8(
+                _mm_cmpeq_epi8(_mm_and_si128(lo_v, hi_v), _mm_setzero_si128()));
+            // lowercase: A-Z (0x41-0x5A) -> set bit5
+            __m128i is_upper =
+                _mm_and_si128(_mm_cmpgt_epi8(data, at_char), // c > '@'
+                              _mm_cmpgt_epi8(bkt, data));    // '[' > c
+            __m128i lc_out = _mm_or_si128(data, _mm_and_si128(is_upper, bit5));
+            // store 16 bytes (safe: pos+16 <= limit <= lc->size)
+            _mm_storeu_si128((__m128i *)(void *)(buf + pos), lc_out);
+            if (mask) {
+                pos += (size_t)__builtin_ctz((unsigned)mask);
+                lc->len = pos;
+                return pos;
+            }
+            pos += 16;
+        } while (pos + 16 <= limit);
+    }
+#endif
+
+    // scalar fallback for remaining bytes (< 16/32) or non-SIMD builds
+    while (pos + 4 <= limit) {
+        unsigned char c0 = str[pos];
+        unsigned char c1 = str[pos + 1];
+        unsigned char c2 = str[pos + 2];
+        unsigned char c3 = str[pos + 3];
+        if (likely(is_tchar(c0) & is_tchar(c1) & is_tchar(c2) & is_tchar(c3))) {
+            buf[pos]     = TCHAR[c0];
+            buf[pos + 1] = TCHAR[c1];
+            buf[pos + 2] = TCHAR[c2];
+            buf[pos + 3] = TCHAR[c3];
+            pos += 4;
+            continue;
+        }
+        break;
+    }
+    while (pos < limit && is_tchar(str[pos])) {
+        buf[pos] = TCHAR[str[pos]];
+        pos++;
+    }
+    lc->len = pos;
+
+    // buffer is full - check if there are more tchars
+    if (pos < len && is_tchar(str[pos])) {
+        return SIZE_MAX;
+    }
+    return pos;
+}
 
 /**
  * @brief Count consecutive tchar characters (no lowercase conversion)
