@@ -28,7 +28,7 @@ EOF
 
 # Generate lib.rs
 cat > "$HTTPARSE_DIR/src/lib.rs" << 'EOF'
-use httparse::{Request, EMPTY_HEADER};
+use httparse::{Request, Response, EMPTY_HEADER};
 use std::slice;
 
 const MAX_HEADERS: usize = 128;
@@ -43,6 +43,23 @@ pub extern "C" fn httparse_bench_parse(data: *const u8, len: usize) -> i32 {
         let mut req = Request::new(&mut headers);
 
         match req.parse(bytes) {
+            Ok(httparse::Status::Complete(_)) => 0,
+            Ok(httparse::Status::Partial) => -1,
+            Err(_) => -1,
+        }
+    }
+}
+
+/// Parse HTTP response
+/// Returns: 0 on success, -1 on error
+#[no_mangle]
+pub extern "C" fn httparse_bench_parse_response(data: *const u8, len: usize) -> i32 {
+    unsafe {
+        let bytes = slice::from_raw_parts(data, len);
+        let mut headers = [EMPTY_HEADER; MAX_HEADERS];
+        let mut resp = Response::new(&mut headers);
+
+        match resp.parse(bytes) {
             Ok(httparse::Status::Complete(_)) => 0,
             Ok(httparse::Status::Partial) => -1,
             Err(_) => -1,
