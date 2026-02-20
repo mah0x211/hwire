@@ -113,8 +113,3 @@ TEST_CASE("Baseline", "[httparse][req]")
     };
 }
 
-BENCHMARK("minimal_host")
-{
-    return bench_httparse(REQ_MINIMAL_HOST, sizeof(REQ_MINIMAL_HOST) - 1);
-};
-}

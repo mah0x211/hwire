@@ -37,3 +37,23 @@ jobs:
         flags: unittests
         disable_search: true
         files: ./coverage/coverage.info
+
+  bench-build:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Install Dependencies
+      run: sudo apt-get install -y catch2
+
+    - name: Setup Rust
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+
+    - name: Build Benchmarks
+      run: make -C bench all
