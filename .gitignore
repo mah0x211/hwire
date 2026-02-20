@@ -3,6 +3,10 @@
 *.profraw
 *.profdata
 *.info
+*.md
+*.json
+
+!README.md
 obj/
 tmp/
 bench/deps/
