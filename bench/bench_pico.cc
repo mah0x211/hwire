@@ -15,103 +15,108 @@ static void bench_pico(const unsigned char *data, size_t len)
                       &path_len, &minor_version, headers, &num_headers, 0);
 }
 
-TEST_CASE("Header Count", "[pico][req]")
+TEST_CASE("Header Count, 8 Headers", "[req][header-count][8-headers]")
 {
-    char n[128];
-    snprintf(n, sizeof(n), "8 Headers, %zu B", sizeof(REQ_HDR_8) - 1);
-    BENCHMARK(n)
-    {
-        return bench_pico(REQ_HDR_8, sizeof(REQ_HDR_8) - 1);
-    };
-    snprintf(n, sizeof(n), "15 Headers, %zu B", sizeof(REQ_HDR_15) - 1);
-    BENCHMARK(n)
-    {
-        return bench_pico(REQ_HDR_15, sizeof(REQ_HDR_15) - 1);
-    };
-    snprintf(n, sizeof(n), "20 Headers, %zu B", sizeof(REQ_HDR_20) - 1);
-    BENCHMARK(n)
-    {
-        return bench_pico(REQ_HDR_20, sizeof(REQ_HDR_20) - 1);
-    };
-    snprintf(n, sizeof(n), "28 Headers, %zu B", sizeof(REQ_HDR_28) - 1);
-    BENCHMARK(n)
-    {
-        return bench_pico(REQ_HDR_28, sizeof(REQ_HDR_28) - 1);
-    };
+    char n[32];
+    snprintf(n, sizeof(n), "%zu B", sizeof(REQ_HDR_8) - 1);
+    BENCHMARK(n) { return bench_pico(REQ_HDR_8, sizeof(REQ_HDR_8) - 1); };
 }
 
-TEST_CASE("Header Value Length", "[pico][req]")
+TEST_CASE("Header Count, 15 Headers", "[req][header-count][15-headers]")
 {
-    char n[128];
-    snprintf(n, sizeof(n), "Short Values, %zu B", sizeof(REQ_VAL_SHORT) - 1);
-    BENCHMARK(n)
-    {
-        return bench_pico(REQ_VAL_SHORT, sizeof(REQ_VAL_SHORT) - 1);
-    };
-    snprintf(n, sizeof(n), "Medium Values, %zu B", sizeof(REQ_VAL_MEDIUM) - 1);
-    BENCHMARK(n)
-    {
-        return bench_pico(REQ_VAL_MEDIUM, sizeof(REQ_VAL_MEDIUM) - 1);
-    };
-    snprintf(n, sizeof(n), "Long Values, %zu B", sizeof(REQ_VAL_LONG) - 1);
-    BENCHMARK(n)
-    {
-        return bench_pico(REQ_VAL_LONG, sizeof(REQ_VAL_LONG) - 1);
-    };
-    snprintf(n, sizeof(n), "Extra Long Values, %zu B",
-             sizeof(REQ_VAL_XLONG) - 1);
-    BENCHMARK(n)
-    {
-        return bench_pico(REQ_VAL_XLONG, sizeof(REQ_VAL_XLONG) - 1);
-    };
+    char n[32];
+    snprintf(n, sizeof(n), "%zu B", sizeof(REQ_HDR_15) - 1);
+    BENCHMARK(n) { return bench_pico(REQ_HDR_15, sizeof(REQ_HDR_15) - 1); };
 }
 
-TEST_CASE("Case Sensitivity", "[pico][req]")
+TEST_CASE("Header Count, 20 Headers", "[req][header-count][20-headers]")
 {
-    char n[128];
-    snprintf(n, sizeof(n), "All Lowercase, %zu B", sizeof(REQ_CASE_LOWER) - 1);
-    BENCHMARK(n)
-    {
-        return bench_pico(REQ_CASE_LOWER, sizeof(REQ_CASE_LOWER) - 1);
-    };
-    snprintf(n, sizeof(n), "Mixed Case, %zu B", sizeof(REQ_CASE_MIXED) - 1);
-    BENCHMARK(n)
-    {
-        return bench_pico(REQ_CASE_MIXED, sizeof(REQ_CASE_MIXED) - 1);
-    };
+    char n[32];
+    snprintf(n, sizeof(n), "%zu B", sizeof(REQ_HDR_20) - 1);
+    BENCHMARK(n) { return bench_pico(REQ_HDR_20, sizeof(REQ_HDR_20) - 1); };
 }
 
-TEST_CASE("Real-World Requests", "[pico][req]")
+TEST_CASE("Header Count, 28 Headers", "[req][header-count][28-headers]")
 {
-    char n[128];
-    snprintf(n, sizeof(n), "Browser, %zu B", sizeof(REQ_REAL_BROWSER) - 1);
-    BENCHMARK(n)
-    {
-        return bench_pico(REQ_REAL_BROWSER, sizeof(REQ_REAL_BROWSER) - 1);
-    };
-    snprintf(n, sizeof(n), "REST API, %zu B", sizeof(REQ_REAL_API) - 1);
-    BENCHMARK(n)
-    {
-        return bench_pico(REQ_REAL_API, sizeof(REQ_REAL_API) - 1);
-    };
-    snprintf(n, sizeof(n), "Mobile App, %zu B", sizeof(REQ_REAL_MOBILE) - 1);
-    BENCHMARK(n)
-    {
-        return bench_pico(REQ_REAL_MOBILE, sizeof(REQ_REAL_MOBILE) - 1);
-    };
+    char n[32];
+    snprintf(n, sizeof(n), "%zu B", sizeof(REQ_HDR_28) - 1);
+    BENCHMARK(n) { return bench_pico(REQ_HDR_28, sizeof(REQ_HDR_28) - 1); };
 }
 
-TEST_CASE("Baseline", "[pico][req]")
+TEST_CASE("Header Value Length, Short Values", "[req][header-value-length][short-values]")
 {
-    char n[128];
-    snprintf(n, sizeof(n), "No Headers, %zu B", sizeof(REQ_MINIMAL) - 1);
-    BENCHMARK(n)
-    {
-        return bench_pico(REQ_MINIMAL, sizeof(REQ_MINIMAL) - 1);
-    };
-    snprintf(n, sizeof(n), "Host Only, %zu B", sizeof(REQ_MINIMAL_HOST) - 1);
-    BENCHMARK(n)
-    {
-        return bench_pico(REQ_MINIMAL_HOST, sizeof(REQ_MINIMAL_HOST) - 1);
-    };
+    char n[32];
+    snprintf(n, sizeof(n), "%zu B", sizeof(REQ_VAL_SHORT) - 1);
+    BENCHMARK(n) { return bench_pico(REQ_VAL_SHORT, sizeof(REQ_VAL_SHORT) - 1); };
 }
+
+TEST_CASE("Header Value Length, Medium Values", "[req][header-value-length][medium-values]")
+{
+    char n[32];
+    snprintf(n, sizeof(n), "%zu B", sizeof(REQ_VAL_MEDIUM) - 1);
+    BENCHMARK(n) { return bench_pico(REQ_VAL_MEDIUM, sizeof(REQ_VAL_MEDIUM) - 1); };
+}
+
+TEST_CASE("Header Value Length, Long Values", "[req][header-value-length][long-values]")
+{
+    char n[32];
+    snprintf(n, sizeof(n), "%zu B", sizeof(REQ_VAL_LONG) - 1);
+    BENCHMARK(n) { return bench_pico(REQ_VAL_LONG, sizeof(REQ_VAL_LONG) - 1); };
+}
+
+TEST_CASE("Header Value Length, Extra Long Values", "[req][header-value-length][extra-long-values]")
+{
+    char n[32];
+    snprintf(n, sizeof(n), "%zu B", sizeof(REQ_VAL_XLONG) - 1);
+    BENCHMARK(n) { return bench_pico(REQ_VAL_XLONG, sizeof(REQ_VAL_XLONG) - 1); };
+}
+
+TEST_CASE("Case Sensitivity, All Lowercase", "[req][case-sensitivity][all-lowercase]")
+{
+    char n[32];
+    snprintf(n, sizeof(n), "%zu B", sizeof(REQ_CASE_LOWER) - 1);
+    BENCHMARK(n) { return bench_pico(REQ_CASE_LOWER, sizeof(REQ_CASE_LOWER) - 1); };
+}
+
+TEST_CASE("Case Sensitivity, Mixed Case", "[req][case-sensitivity][mixed-case]")
+{
+    char n[32];
+    snprintf(n, sizeof(n), "%zu B", sizeof(REQ_CASE_MIXED) - 1);
+    BENCHMARK(n) { return bench_pico(REQ_CASE_MIXED, sizeof(REQ_CASE_MIXED) - 1); };
+}
+
+TEST_CASE("Real-World Requests, Browser", "[req][real-world][browser]")
+{
+    char n[32];
+    snprintf(n, sizeof(n), "%zu B", sizeof(REQ_REAL_BROWSER) - 1);
+    BENCHMARK(n) { return bench_pico(REQ_REAL_BROWSER, sizeof(REQ_REAL_BROWSER) - 1); };
+}
+
+TEST_CASE("Real-World Requests, REST API", "[req][real-world][rest-api]")
+{
+    char n[32];
+    snprintf(n, sizeof(n), "%zu B", sizeof(REQ_REAL_API) - 1);
+    BENCHMARK(n) { return bench_pico(REQ_REAL_API, sizeof(REQ_REAL_API) - 1); };
+}
+
+TEST_CASE("Real-World Requests, Mobile App", "[req][real-world][mobile-app]")
+{
+    char n[32];
+    snprintf(n, sizeof(n), "%zu B", sizeof(REQ_REAL_MOBILE) - 1);
+    BENCHMARK(n) { return bench_pico(REQ_REAL_MOBILE, sizeof(REQ_REAL_MOBILE) - 1); };
+}
+
+TEST_CASE("Baseline, No Headers", "[req][baseline][no-headers]")
+{
+    char n[32];
+    snprintf(n, sizeof(n), "%zu B", sizeof(REQ_MINIMAL) - 1);
+    BENCHMARK(n) { return bench_pico(REQ_MINIMAL, sizeof(REQ_MINIMAL) - 1); };
+}
+
+TEST_CASE("Baseline, Host Only", "[req][baseline][host-only]")
+{
+    char n[32];
+    snprintf(n, sizeof(n), "%zu B", sizeof(REQ_MINIMAL_HOST) - 1);
+    BENCHMARK(n) { return bench_pico(REQ_MINIMAL_HOST, sizeof(REQ_MINIMAL_HOST) - 1); };
+}
+
