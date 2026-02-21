@@ -174,7 +174,40 @@ static unsigned char RSP_VAL_XLONG[] =
     "\r\n";
 
 /* ============================================================================
- * Category 3: Real-World Scenarios
+ * Category 3: Case Sensitivity
+ * Purpose: Measure parser behavior with all-lowercase vs mixed-case headers
+ * Control: Fixed 8 headers (~330B), varying header name case
+ * ============================================================================
+ */
+
+/* All lowercase header names (~330B) */
+static unsigned char RSP_CASE_LOWER[] =
+    "HTTP/1.1 200 OK\r\n"
+    "date: Thu, 20 Feb 2026 09:00:00 GMT\r\n"
+    "content-type: text/html; charset=utf-8\r\n"
+    "content-length: 4096\r\n"
+    "connection: keep-alive\r\n"
+    "server: nginx/1.25.3\r\n"
+    "cache-control: no-cache, no-store, must-revalidate\r\n"
+    "etag: \"abc123def456\"\r\n"
+    "vary: accept-encoding\r\n"
+    "\r\n";
+
+/* Mixed case header names (~330B) */
+static unsigned char RSP_CASE_MIXED[] =
+    "HTTP/1.1 200 OK\r\n"
+    "Date: Thu, 20 Feb 2026 09:00:00 GMT\r\n"
+    "CONTENT-TYPE: text/html; charset=utf-8\r\n"
+    "Content-Length: 4096\r\n"
+    "CONNECTION: keep-alive\r\n"
+    "Server: nginx/1.25.3\r\n"
+    "CACHE-CONTROL: no-cache, no-store, must-revalidate\r\n"
+    "ETag: \"abc123def456\"\r\n"
+    "VARY: accept-encoding\r\n"
+    "\r\n";
+
+/* ============================================================================
+ * Category 4: Real-World Scenarios
  * Purpose: Measure parser with realistic production-like responses
  * Reference: Common patterns from browsers, APIs, and CDN-proxied content
  * ============================================================================
@@ -245,7 +278,7 @@ static unsigned char RSP_REAL_STATIC[] =
     "\r\n";
 
 /* ============================================================================
- * Category 4: Baseline
+ * Category 5: Baseline
  * Purpose: Measure parser overhead with minimal input
  * ============================================================================
  */

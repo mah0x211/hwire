@@ -12,91 +12,108 @@ static void bench_httparse_resp(const unsigned char *data, size_t len)
     httparse_bench_parse_response(data, len);
 }
 
-TEST_CASE("Header Count", "[httparse][resp]")
+TEST_CASE("Header Count, 4 Headers", "[resp][header-count][4-headers]")
 {
-    char n[128];
-    snprintf(n, sizeof(n), "4 Headers, %zu B", sizeof(RSP_HDR_4) - 1);
-    BENCHMARK(n)
-    {
-        return bench_httparse_resp(RSP_HDR_4, sizeof(RSP_HDR_4) - 1);
-    };
-    snprintf(n, sizeof(n), "8 Headers, %zu B", sizeof(RSP_HDR_8) - 1);
-    BENCHMARK(n)
-    {
-        return bench_httparse_resp(RSP_HDR_8, sizeof(RSP_HDR_8) - 1);
-    };
-    snprintf(n, sizeof(n), "12 Headers, %zu B", sizeof(RSP_HDR_12) - 1);
-    BENCHMARK(n)
-    {
-        return bench_httparse_resp(RSP_HDR_12, sizeof(RSP_HDR_12) - 1);
-    };
-    snprintf(n, sizeof(n), "20 Headers, %zu B", sizeof(RSP_HDR_20) - 1);
-    BENCHMARK(n)
-    {
-        return bench_httparse_resp(RSP_HDR_20, sizeof(RSP_HDR_20) - 1);
-    };
+    char n[32];
+    snprintf(n, sizeof(n), "%zu B", sizeof(RSP_HDR_4) - 1);
+    BENCHMARK(n) { return bench_httparse_resp(RSP_HDR_4, sizeof(RSP_HDR_4) - 1); };
 }
 
-TEST_CASE("Header Value Length", "[httparse][resp]")
+TEST_CASE("Header Count, 8 Headers", "[resp][header-count][8-headers]")
 {
-    char n[128];
-    snprintf(n, sizeof(n), "Short Values, %zu B", sizeof(RSP_VAL_SHORT) - 1);
-    BENCHMARK(n)
-    {
-        return bench_httparse_resp(RSP_VAL_SHORT, sizeof(RSP_VAL_SHORT) - 1);
-    };
-    snprintf(n, sizeof(n), "Medium Values, %zu B", sizeof(RSP_VAL_MEDIUM) - 1);
-    BENCHMARK(n)
-    {
-        return bench_httparse_resp(RSP_VAL_MEDIUM, sizeof(RSP_VAL_MEDIUM) - 1);
-    };
-    snprintf(n, sizeof(n), "Long Values, %zu B", sizeof(RSP_VAL_LONG) - 1);
-    BENCHMARK(n)
-    {
-        return bench_httparse_resp(RSP_VAL_LONG, sizeof(RSP_VAL_LONG) - 1);
-    };
-    snprintf(n, sizeof(n), "Extra Long Values, %zu B",
-             sizeof(RSP_VAL_XLONG) - 1);
-    BENCHMARK(n)
-    {
-        return bench_httparse_resp(RSP_VAL_XLONG, sizeof(RSP_VAL_XLONG) - 1);
-    };
+    char n[32];
+    snprintf(n, sizeof(n), "%zu B", sizeof(RSP_HDR_8) - 1);
+    BENCHMARK(n) { return bench_httparse_resp(RSP_HDR_8, sizeof(RSP_HDR_8) - 1); };
 }
 
-TEST_CASE("Real-World Responses", "[httparse][resp]")
+TEST_CASE("Header Count, 12 Headers", "[resp][header-count][12-headers]")
 {
-    char n[128];
-    snprintf(n, sizeof(n), "HTML Page, %zu B", sizeof(RSP_REAL_HTML) - 1);
-    BENCHMARK(n)
-    {
-        return bench_httparse_resp(RSP_REAL_HTML, sizeof(RSP_REAL_HTML) - 1);
-    };
-    snprintf(n, sizeof(n), "REST API, %zu B", sizeof(RSP_REAL_API) - 1);
-    BENCHMARK(n)
-    {
-        return bench_httparse_resp(RSP_REAL_API, sizeof(RSP_REAL_API) - 1);
-    };
-    snprintf(n, sizeof(n), "Static File, %zu B", sizeof(RSP_REAL_STATIC) - 1);
-    BENCHMARK(n)
-    {
-        return bench_httparse_resp(RSP_REAL_STATIC,
-                                   sizeof(RSP_REAL_STATIC) - 1);
-    };
+    char n[32];
+    snprintf(n, sizeof(n), "%zu B", sizeof(RSP_HDR_12) - 1);
+    BENCHMARK(n) { return bench_httparse_resp(RSP_HDR_12, sizeof(RSP_HDR_12) - 1); };
 }
 
-TEST_CASE("Baseline", "[httparse][resp]")
+TEST_CASE("Header Count, 20 Headers", "[resp][header-count][20-headers]")
 {
-    char n[128];
-    snprintf(n, sizeof(n), "No Extra Headers, %zu B", sizeof(RSP_MINIMAL) - 1);
-    BENCHMARK(n)
-    {
-        return bench_httparse_resp(RSP_MINIMAL, sizeof(RSP_MINIMAL) - 1);
-    };
-    snprintf(n, sizeof(n), "Date Header Only, %zu B",
-             sizeof(RSP_MINIMAL_DATE) - 1);
-    BENCHMARK(n)
-    {
-        return bench_httparse_resp(RSP_MINIMAL_DATE,
-                                   sizeof(RSP_MINIMAL_DATE) - 1);
-    };
+    char n[32];
+    snprintf(n, sizeof(n), "%zu B", sizeof(RSP_HDR_20) - 1);
+    BENCHMARK(n) { return bench_httparse_resp(RSP_HDR_20, sizeof(RSP_HDR_20) - 1); };
 }
+
+TEST_CASE("Header Value Length, Short Values", "[resp][header-value-length][short-values]")
+{
+    char n[32];
+    snprintf(n, sizeof(n), "%zu B", sizeof(RSP_VAL_SHORT) - 1);
+    BENCHMARK(n) { return bench_httparse_resp(RSP_VAL_SHORT, sizeof(RSP_VAL_SHORT) - 1); };
+}
+
+TEST_CASE("Header Value Length, Medium Values", "[resp][header-value-length][medium-values]")
+{
+    char n[32];
+    snprintf(n, sizeof(n), "%zu B", sizeof(RSP_VAL_MEDIUM) - 1);
+    BENCHMARK(n) { return bench_httparse_resp(RSP_VAL_MEDIUM, sizeof(RSP_VAL_MEDIUM) - 1); };
+}
+
+TEST_CASE("Header Value Length, Long Values", "[resp][header-value-length][long-values]")
+{
+    char n[32];
+    snprintf(n, sizeof(n), "%zu B", sizeof(RSP_VAL_LONG) - 1);
+    BENCHMARK(n) { return bench_httparse_resp(RSP_VAL_LONG, sizeof(RSP_VAL_LONG) - 1); };
+}
+
+TEST_CASE("Header Value Length, Extra Long Values", "[resp][header-value-length][extra-long-values]")
+{
+    char n[32];
+    snprintf(n, sizeof(n), "%zu B", sizeof(RSP_VAL_XLONG) - 1);
+    BENCHMARK(n) { return bench_httparse_resp(RSP_VAL_XLONG, sizeof(RSP_VAL_XLONG) - 1); };
+}
+
+TEST_CASE("Case Sensitivity, All Lowercase", "[resp][case-sensitivity][all-lowercase]")
+{
+    char n[32];
+    snprintf(n, sizeof(n), "%zu B", sizeof(RSP_CASE_LOWER) - 1);
+    BENCHMARK(n) { return bench_httparse_resp(RSP_CASE_LOWER, sizeof(RSP_CASE_LOWER) - 1); };
+}
+
+TEST_CASE("Case Sensitivity, Mixed Case", "[resp][case-sensitivity][mixed-case]")
+{
+    char n[32];
+    snprintf(n, sizeof(n), "%zu B", sizeof(RSP_CASE_MIXED) - 1);
+    BENCHMARK(n) { return bench_httparse_resp(RSP_CASE_MIXED, sizeof(RSP_CASE_MIXED) - 1); };
+}
+
+TEST_CASE("Real-World Responses, HTML Page", "[resp][real-world][html-page]")
+{
+    char n[32];
+    snprintf(n, sizeof(n), "%zu B", sizeof(RSP_REAL_HTML) - 1);
+    BENCHMARK(n) { return bench_httparse_resp(RSP_REAL_HTML, sizeof(RSP_REAL_HTML) - 1); };
+}
+
+TEST_CASE("Real-World Responses, REST API", "[resp][real-world][rest-api]")
+{
+    char n[32];
+    snprintf(n, sizeof(n), "%zu B", sizeof(RSP_REAL_API) - 1);
+    BENCHMARK(n) { return bench_httparse_resp(RSP_REAL_API, sizeof(RSP_REAL_API) - 1); };
+}
+
+TEST_CASE("Real-World Responses, Static File", "[resp][real-world][static-file]")
+{
+    char n[32];
+    snprintf(n, sizeof(n), "%zu B", sizeof(RSP_REAL_STATIC) - 1);
+    BENCHMARK(n) { return bench_httparse_resp(RSP_REAL_STATIC, sizeof(RSP_REAL_STATIC) - 1); };
+}
+
+TEST_CASE("Baseline, No Extra Headers", "[resp][baseline][no-extra-headers]")
+{
+    char n[32];
+    snprintf(n, sizeof(n), "%zu B", sizeof(RSP_MINIMAL) - 1);
+    BENCHMARK(n) { return bench_httparse_resp(RSP_MINIMAL, sizeof(RSP_MINIMAL) - 1); };
+}
+
+TEST_CASE("Baseline, Date Header Only", "[resp][baseline][date-header-only]")
+{
+    char n[32];
+    snprintf(n, sizeof(n), "%zu B", sizeof(RSP_MINIMAL_DATE) - 1);
+    BENCHMARK(n) { return bench_httparse_resp(RSP_MINIMAL_DATE, sizeof(RSP_MINIMAL_DATE) - 1); };
+}
+
