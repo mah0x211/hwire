@@ -1,0 +1,40 @@
+name: Benchmark pico (resp)
+
+on:
+  workflow_dispatch:
+  workflow_call:
+
+jobs:
+  bench:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install catch2 (Ubuntu)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y catch2 clang
+
+      - name: Install catch2 (macOS)
+        if: runner.os == 'macOS'
+        run: brew install catch2
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Run benchmarks
+        run: make -C bench run-pico-resp
+
+      - name: Generate Report
+        run: node bench/report.js bench/results/rsp_pico_*.jsonl >> $GITHUB_STEP_SUMMARY
+
+      - name: Upload results
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-pico-resp-${{ matrix.os }}
+          path: bench/results/

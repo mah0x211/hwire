@@ -1,0 +1,48 @@
+name: Benchmark (req)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  bench-hwire-req:
+    uses: ./.github/workflows/bench-hwire-req.yml
+
+  bench-pico-req:
+    uses: ./.github/workflows/bench-pico-req.yml
+
+  bench-llhttp-req:
+    uses: ./.github/workflows/bench-llhttp-req.yml
+
+  bench-httparse-req:
+    uses: ./.github/workflows/bench-httparse-req.yml
+
+  report:
+    needs: [bench-hwire-req, bench-pico-req, bench-llhttp-req, bench-httparse-req]
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Download results (${{ matrix.os }})
+        uses: actions/download-artifact@v4
+        with:
+          pattern: bench-*-req-${{ matrix.os }}
+          path: bench/results/
+          merge-multiple: true
+
+      - name: Generate Report (${{ matrix.os }})
+        run: node bench/report.js bench/results/req_*.jsonl >> $GITHUB_STEP_SUMMARY
+
+      - name: Upload combined results
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-req-results-${{ matrix.os }}
+          path: bench/results/
