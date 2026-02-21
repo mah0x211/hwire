@@ -177,19 +177,24 @@ function parseJsonlFiles(files) {
             const variantDisplay = getVariantDisplayName(variant);
 
             for (const tc of run.testCases) {
-                const category = tc.name || 'Unknown';
+                // tc.name = "Category, Data Label" (e.g. "Header Count, 8 Headers")
+                const tcParts = tc.name.split(', ');
+                const category = tcParts[0] || 'Unknown';
+                const dataLabel = tcParts[1] || '';
 
                 for (const bm of tc.benchmarks || []) {
-                    // Parse benchmark name: "<group>, <size> B[, opt1, opt2, ...]"
-                    const parts = bm.name.split(', ');
-                    const benchName = parts.slice(0, 2).join(', ');
-                    const opts = parts.slice(2);
+                    // bm.name = "433 B" or "433 B, LC"
+                    const bmParts = bm.name.split(', ');
+                    const sizeStr = bmParts[0];
+                    const opts = bmParts.slice(1);
                     const effectiveVariantDisplay = opts.length > 0
                         ? `${variantDisplay} (${opts.join(', ')})`
                         : variantDisplay;
 
-                    // Extract data size from second part: "433 B"
-                    const sizeMatch = parts[1] && parts[1].match(/^(\d+)\s*B$/);
+                    // benchName = "Data Label, Size" keeps the same table display
+                    const benchName = dataLabel ? `${dataLabel}, ${sizeStr}` : sizeStr;
+
+                    const sizeMatch = sizeStr.match(/^(\d+)\s*B$/);
                     const dataSize = sizeMatch ? parseInt(sizeMatch[1], 10) : 0;
 
                     results.push({
