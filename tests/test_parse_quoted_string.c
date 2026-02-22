@@ -1,156 +1,163 @@
 #include "test_helpers.h"
 
+/*
+ * Covers: RFC 9110 §5.6.4  quoted-string = DQUOTE *( qdtext / quoted-pair )
+ * DQUOTE qdtext       = HTAB / SP / %x21 / %x23-5B / %x5D-7E / obs-text
+ *                           quoted-pair  = "\" ( HTAB / SP / VCHAR / obs-text )
+ *                           obs-text     = %x80-FF
+ * MUST: pos MUST equal total consumed bytes (including both DQUOTE delimiters)
+ * after HWIRE_OK.
+ */
 void test_parse_quoted_string_valid(void)
 {
     TEST_START("test_parse_quoted_string_valid");
 
-    const char *str = "\"quoted string\"";
-    size_t len      = strlen(str);
-    size_t pos      = 0;
+    size_t pos;
     int rv;
+    const char *str;
 
-    rv = hwire_parse_quoted_string(str, len, &pos, 100);
-    ASSERT_OK(rv);
-    ASSERT_EQ(pos, 15); // Full length including quotes
-
-    // With escaped characters
-    str = "\"quoted\\\"string\""; // "quoted\"string"
-    len = strlen(str);
+    /* Basic quoted string */
+    str = "\"quoted string\"";
     pos = 0;
-    rv  = hwire_parse_quoted_string(str, len, &pos, 100);
+    rv  = hwire_parse_quoted_string(str, strlen(str), &pos, 100);
     ASSERT_OK(rv);
-    ASSERT_EQ(pos, 16);
+    ASSERT_EQ(pos, strlen(str)); /* includes both DQUOTE */
+
+    /* RFC 9110 §5.6.4: quoted-pair allows escaping DQUOTE inside
+       quoted-string */
+    str = "\"quoted\\\"string\"";
+    pos = 0;
+    rv  = hwire_parse_quoted_string(str, strlen(str), &pos, 100);
+    ASSERT_OK(rv);
+    ASSERT_EQ(pos, strlen(str));
 
     TEST_END();
 }
 
+/*
+ * Covers: error cases for RFC 9110 §5.6.4 quoted-string parsing.
+ * MUST reject: input not starting with DQUOTE → HWIRE_EILSEQ
+ * MUST return HWIRE_EAGAIN: no closing DQUOTE yet (incomplete input)
+ * MUST return HWIRE_EAGAIN: backslash at end of input (quoted-pair incomplete)
+ * MUST return HWIRE_EAGAIN: pos >= len (no input remaining)
+ * MUST reject: invalid quoted-pair target (CTL other than HTAB) → HWIRE_EILSEQ
+ * MUST return HWIRE_ELEN: content exceeds maxlen
+ */
 void test_parse_quoted_string_invalid(void)
 {
     TEST_START("test_parse_quoted_string_invalid");
 
-    const char *str;
-    size_t len;
     size_t pos;
     int rv;
+    const char *str;
 
-    // Missing opening quote
+    /* MUST reject: missing opening DQUOTE → HWIRE_EILSEQ */
     str = "no quotes";
-    len = strlen(str);
     pos = 0;
-    rv  = hwire_parse_quoted_string(str, len, &pos, 100);
+    rv  = hwire_parse_quoted_string(str, strlen(str), &pos, 100);
     ASSERT_EQ(rv, HWIRE_EILSEQ);
 
-    // Missing closing quote (EAGAIN)
+    /* MUST return HWIRE_EAGAIN: closing DQUOTE not yet received (incomplete) */
     str = "\"partial";
-    len = strlen(str);
     pos = 0;
-    rv  = hwire_parse_quoted_string(str, len, &pos, 100);
+    rv  = hwire_parse_quoted_string(str, strlen(str), &pos, 100);
     ASSERT_EQ(rv, HWIRE_EAGAIN);
 
-    // Invalid escape (EILSEQ) - e.g., \ followed by invalid char
-    // But hwire allows various chars after backslash... let's try \x00
-    // Actually hwire check: is_vchar(c) || c == HT || c == SP
-    // \x01 is CTL, not VCHAR.
-    str = "\"bad escape \\"
-          "\x01"
-          "\"";
-    len = strlen(str);
+    /* RFC 9110 §5.6.4: quoted-pair = "\" ( HTAB / SP / VCHAR / obs-text );
+     * 0x01 is not HTAB, SP, VCHAR, or obs-text → HWIRE_EILSEQ */
+    str = "\"bad escape \\\x01\"";
     pos = 0;
-    rv  = hwire_parse_quoted_string(str, len, &pos, 100);
+    rv  = hwire_parse_quoted_string(str, strlen(str), &pos, 100);
     ASSERT_EQ(rv, HWIRE_EILSEQ);
 
-    // Exceed maxlen
+    /* MUST return HWIRE_ELEN: content length exceeds maxlen parameter */
     str = "\"too long\"";
-    len = strlen(str);
     pos = 0;
-    // maxlen applies to content (approx) - strictly checking impl:
-    // tail = cur + maxlen. If len > tail, returns HWIRE_ELEN.
-    // So if maxlen=5, tail=5. len=10. Returns ELEN.
-    rv  = hwire_parse_quoted_string(str, len, &pos, 5);
+    rv  = hwire_parse_quoted_string(str, strlen(str), &pos, 5);
     ASSERT_EQ(rv, HWIRE_ELEN);
 
-    // pos >= len -> EAGAIN
+    /* MUST return HWIRE_EAGAIN: pos >= len (no input remaining at start) */
     str = "abc";
-    len = 3;
     pos = 3;
-    rv  = hwire_parse_quoted_string(str, len, &pos, 100);
+    rv  = hwire_parse_quoted_string(str, 3, &pos, 100);
     ASSERT_EQ(rv, HWIRE_EAGAIN);
 
-    // Backslash at EOF -> EAGAIN
+    /* MUST return HWIRE_EAGAIN: backslash at end of input (quoted-pair
+       incomplete) */
     str = "\"escape \\";
-    len = strlen(str);
     pos = 0;
-    rv  = hwire_parse_quoted_string(str, len, &pos, 100);
+    rv  = hwire_parse_quoted_string(str, strlen(str), &pos, 100);
     ASSERT_EQ(rv, HWIRE_EAGAIN);
 
     TEST_END();
 }
 
+/*
+ * Covers: RFC 9110 §5.6.4  RFC-compliant content acceptance.
+ * MUST accept: quoted-pair with HTAB, SP, DQUOTE, and VCHAR targets.
+ * MUST accept: obs-text (0x80-0xFF) as qdtext inside quoted-string.
+ * MUST accept: empty quoted-string ("").
+ */
 void test_parse_quoted_string_rfc_compliance(void)
 {
     TEST_START("test_parse_quoted_string_rfc_compliance");
 
-    const char *str;
-    size_t len;
-    size_t pos = 0;
+    size_t pos;
     int rv;
+    const char *str;
 
-    /* 1. quoted-pair with VCHAR (RFC 7230 3.2.6) */
-    /* specific chars: HTAB, SP, VCHAR, obs-text */
-    str = "\"quoted pair: \\t \\  \\\" \\A\""; // \t, \ , \", \A
-    len = strlen(str);
+    /* RFC 9110 §5.6.4: quoted-pair targets HTAB (\t), SP ( ), DQUOTE (\"),
+       and ALPHA (A) */
+    str = "\"quoted pair: \\t \\  \\\" \\A\"";
     pos = 0;
-    rv  = hwire_parse_quoted_string(str, len, &pos, 100);
+    rv  = hwire_parse_quoted_string(str, strlen(str), &pos, 100);
     ASSERT_OK(rv);
-    ASSERT_EQ(pos, len);
+    ASSERT_EQ(pos, strlen(str));
 
-    /* 2. obs-text (UTF-8 / High bit set) */
-    /* RFC 7230 3.2.6: qdtext = ... / obs-text */
-    /* obs-text = %x80-FF */
-    str = "\"UTF-8 text: こんにちは\""; // bytes > 0x7F
-    len = strlen(str);
+    /* RFC 9110 §5.6.4: obs-text = %x80-FF; multi-byte UTF-8 bytes are
+       obs-text (MUST accept) */
+    str = "\"UTF-8 text: "
+          "\xe3\x81\x93\xe3\x82\x93\xe3\x81\xab\xe3\x81\xa1\xe3\x81\xaf\"";
     pos = 0;
-    rv  = hwire_parse_quoted_string(str, len, &pos, 100);
+    rv  = hwire_parse_quoted_string(str, strlen(str), &pos, 100);
     ASSERT_OK(rv);
-    ASSERT_EQ(pos, len);
+    ASSERT_EQ(pos, strlen(str));
 
-    /* 3. Empty quoted string */
+    /* RFC 9110 §5.6.4: empty quoted-string (DQUOTE DQUOTE) MUST be accepted */
     str = "\"\"";
-    len = strlen(str);
     pos = 0;
-    rv  = hwire_parse_quoted_string(str, len, &pos, 100);
+    rv  = hwire_parse_quoted_string(str, strlen(str), &pos, 100);
     ASSERT_OK(rv);
     ASSERT_EQ(pos, 2);
 
     TEST_END();
 }
 
+/*
+ * Covers: RFC 9110 §5.6.4  rejection of invalid characters.
+ * MUST reject: invalid quoted-pair target (CTL other than HTAB) → HWIRE_EILSEQ
+ * MUST reject: CTL character (0x01-0x1F except HTAB) as qdtext → HWIRE_EILSEQ
+ */
 void test_parse_quoted_string_rfc_invalid(void)
 {
     TEST_START("test_parse_quoted_string_rfc_invalid");
 
-    const char *str;
-    size_t len;
-    size_t pos = 0;
+    size_t pos;
     int rv;
+    const char *str;
 
-    /* 1. Invalid escaped char (CTL: \x01) */
-    /* quoted-pair = "\" ( HTAB / SP / VCHAR / obs-text ) */
-    /* \x01 is not allowed */
-    str = "\"bad \\"
-          "\x01"
-          "\"";
-    len = strlen(str);
+    /* RFC 9110 §5.6.4: quoted-pair = "\" ( HTAB / SP / VCHAR / obs-text );
+     * 0x01 is CTL (not HTAB, SP, VCHAR, or obs-text) → HWIRE_EILSEQ */
+    str = "\"bad \\\x01\"";
     pos = 0;
-    rv  = hwire_parse_quoted_string(str, len, &pos, 100);
+    rv  = hwire_parse_quoted_string(str, strlen(str), &pos, 100);
     ASSERT_EQ(rv, HWIRE_EILSEQ);
 
-    /* 2. Invalid char in qdtext (CTL: \x1F) */
-    /* qdtext = HTAB / SP / ... */
+    /* RFC 9110 §5.6.4: qdtext = HTAB / SP / %x21 / %x23-5B / %x5D-7E /
+     * obs-text; 0x1F is CTL (not in qdtext) → HWIRE_EILSEQ */
     str = "\"cntrl \x1F\"";
-    len = strlen(str);
     pos = 0;
-    rv  = hwire_parse_quoted_string(str, len, &pos, 100);
+    rv  = hwire_parse_quoted_string(str, strlen(str), &pos, 100);
     ASSERT_EQ(rv, HWIRE_EILSEQ);
 
     TEST_END();
