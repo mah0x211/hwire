@@ -325,6 +325,91 @@ void test_parse_parameters_content_verification(void)
     TEST_END();
 }
 
+typedef struct {
+    struct {
+        const char *key;
+        size_t key_len;
+        const char *value;
+        size_t value_len;
+    } params[3];
+    const char *buf;
+    size_t buf_len;
+    int count;
+    int failed;
+} multi_param_expect_t;
+
+static int verify_multi_param_cb(hwire_ctx_t *ctx, hwire_param_t *param)
+{
+    multi_param_expect_t *e = (multi_param_expect_t *)ctx->uctx;
+    int idx                 = e->count;
+    if (!str_in_buf(param->key, e->buf, e->buf_len)) {
+        fprintf(stderr, "param key: ptr out of range\n");
+        e->failed = 1;
+    }
+    if (!str_in_buf(param->value, e->buf, e->buf_len)) {
+        fprintf(stderr, "param value: ptr out of range\n");
+        e->failed = 1;
+    }
+    if (idx >= 3) {
+        fprintf(stderr, "too many params: got index %d\n", idx);
+        e->failed = 1;
+        e->count++;
+        return 0;
+    }
+    if (param->key.len != e->params[idx].key_len ||
+        strncmp(param->key.ptr, e->params[idx].key, e->params[idx].key_len) !=
+            0) {
+        fprintf(stderr, "param[%d] key: expected '%.*s', got '%.*s'\n", idx,
+                (int)e->params[idx].key_len, e->params[idx].key,
+                (int)param->key.len, param->key.ptr);
+        e->failed = 1;
+    }
+    if (param->value.len != e->params[idx].value_len ||
+        strncmp(param->value.ptr, e->params[idx].value,
+                e->params[idx].value_len) != 0) {
+        fprintf(stderr, "param[%d] value: expected '%.*s', got '%.*s'\n", idx,
+                (int)e->params[idx].value_len, e->params[idx].value,
+                (int)param->value.len, param->value.ptr);
+        e->failed = 1;
+    }
+    e->count++;
+    return 0;
+}
+
+/*
+ * Covers: exact content of multiple sequential parsed parameters.
+ * MUST: each param_cb invocation receives key.ptr/len and value.ptr/len
+ * referencing the correct original input bytes in order.
+ */
+void test_parse_parameters_multi_content_verification(void)
+{
+    TEST_START("test_parse_parameters_multi_content_verification");
+
+    char key_storage[TEST_KEY_SIZE];
+    multi_param_expect_t exp = {
+        .params = {{"key1", 4, "val1", 4},
+                   {"key2", 4, "val2", 4},
+                   {"key3", 4, "val3", 4}},
+        .count  = 0,
+        .failed = 0
+    };
+    hwire_ctx_t cb = {
+        .uctx     = &exp,
+        .key_lc   = {.buf = key_storage, .size = sizeof(key_storage)},
+        .param_cb = verify_multi_param_cb
+    };
+    size_t pos      = 0;
+    const char *buf = "key1=val1; key2=val2; key3=val3";
+    exp.buf         = buf;
+    exp.buf_len     = strlen(buf);
+    int rv = hwire_parse_parameters(&cb, buf, strlen(buf), &pos, 1024, 10, 1);
+    ASSERT_OK(rv);
+    ASSERT_EQ(exp.count, 3);
+    ASSERT_EQ(exp.failed, 0);
+
+    TEST_END();
+}
+
 int main(void)
 {
     test_parse_parameters_valid();
@@ -332,6 +417,7 @@ int main(void)
     test_parse_parameters_edge_cases();
     test_parse_parameters_rfc_compliance();
     test_parse_parameters_content_verification();
+    test_parse_parameters_multi_content_verification();
     print_test_summary();
     return g_tests_failed;
 }
