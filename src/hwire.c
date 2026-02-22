@@ -1514,8 +1514,8 @@ CHECK_EOL:
     do {                                                                       \
         if (skip_ws(ustr, len, &cur, maxlen) != HWIRE_OK) {                    \
             return HWIRE_ELEN;                                                 \
-        } else if (ustr[cur] == 0) {                                           \
-            /* more bytes need */                                              \
+        } else if (cur >= len) {                                               \
+            /* more bytes needed */                                            \
             return HWIRE_EAGAIN;                                               \
         }                                                                      \
     } while (0)
@@ -1531,8 +1531,8 @@ CHECK_EOL:
     // found tail
     case CR:
         cur++;
-        if (!ustr[cur]) {
-            // more bytes need
+        if (cur >= len) {
+            // more bytes needed
             return HWIRE_EAGAIN;
         } else if (ustr[cur] != LF) {
             // invalid end-of-line terminator
@@ -1760,13 +1760,16 @@ int hwire_parse_headers(const char *str, size_t len, size_t *pos, size_t maxlen,
     hwire_header_t header;
 
 RETRY:
-    // End-of-headers (CR/LF) or incomplete data (0) — happens once per request,
+    // End-of-headers (CR/LF) or incomplete data — happens once per request,
     // not once per header. Use unlikely to keep the hot header-parsing path
     // as a straight-line fall-through.
+    if (unlikely(len == 0)) {
+        return HWIRE_EAGAIN;
+    }
     if (unlikely(*ustr <= CR)) {
         // Most common: CRLF end-of-headers (browsers always send CRLF)
         if (likely(*ustr == CR)) {
-            if (unlikely(!ustr[1])) {
+            if (unlikely(len < 2)) {
                 return HWIRE_EAGAIN;
             } else if (likely(ustr[1] == LF)) {
                 ustr += 2;
@@ -1778,8 +1781,6 @@ RETRY:
             ustr++;
             *pos = (size_t)(ustr - top);
             return HWIRE_OK;
-        } else if (*ustr == 0) {
-            return HWIRE_EAGAIN;
         }
         // Any other control char ≤ CR: fall through → parse_hkey rejects
     }
@@ -1803,13 +1804,9 @@ RETRY:
     }
 
     // skip OWS
-#define IS_OWS() (ustr[cur] == SP || ustr[cur] == HT)
-    if (likely(IS_OWS())) {
-        do {
-            cur++;
-        } while (IS_OWS());
+    while (cur < len && (ustr[cur] == SP || ustr[cur] == HT)) {
+        cur++;
     }
-#undef IS_OWS
 
     // re-check maximum header length constraint
     if (unlikely(cur > maxlen)) {
@@ -1982,11 +1979,10 @@ int hwire_parse_request(const char *str, size_t len, size_t *pos, size_t maxlen,
     int rv     = 0;
 
 SKIP_NEXT_CRLF:
-    switch (*ustr) {
-    // need more bytes
-    case 0:
+    if (unlikely(len == 0)) {
         return HWIRE_EAGAIN;
-
+    }
+    switch (*ustr) {
     case CR:
     case LF:
         ustr++;
@@ -2023,17 +2019,15 @@ SKIP_NEXT_CRLF:
     }
 
     // check end-of-line after version
-    switch (ustr[cur]) {
-    case 0:
+    if (unlikely(cur >= len)) {
         return HWIRE_EAGAIN;
-
+    }
+    switch (ustr[cur]) {
     case CR:
-        // null-terminated
-        if (!ustr[cur + 1]) {
+        if (cur + 1 >= len) {
             return HWIRE_EAGAIN;
-        }
-        // invalid end-of-line terminator
-        else if (ustr[cur + 1] != LF) {
+        } else if (ustr[cur + 1] != LF) {
+            // invalid end-of-line terminator
             return HWIRE_EEOL;
         }
         cur++;
@@ -2177,11 +2171,10 @@ int hwire_parse_response(const char *str, size_t len, size_t *pos,
     int rv     = 0;
 
 SKIP_NEXT_CRLF:
-    switch (*ustr) {
-    // need more bytes
-    case 0:
+    if (unlikely(len == 0)) {
         return HWIRE_EAGAIN;
-
+    }
+    switch (*ustr) {
     case CR:
     case LF:
         ustr++;
@@ -2196,7 +2189,7 @@ SKIP_NEXT_CRLF:
     rv = parse_version(ustr, len, &cur, &rsp.version);
     if (rv != HWIRE_OK) {
         return rv;
-    } else if (!ustr[cur]) {
+    } else if (cur >= len) {
         return HWIRE_EAGAIN;
     } else if (ustr[cur] != SP) {
         return HWIRE_EVERSION;
