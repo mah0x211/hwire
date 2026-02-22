@@ -443,6 +443,177 @@ void test_parse_request_uri_chars(void)
     TEST_END();
 }
 
+typedef struct {
+    const char *method;
+    size_t method_len;
+    const char *uri;
+    size_t uri_len;
+    hwire_http_version_t version;
+    const char *buf;
+    size_t buf_len;
+    int called;
+    int failed;
+} req_content_expect_t;
+
+static int verify_request_content_cb(hwire_ctx_t *ctx, hwire_request_t *req)
+{
+    req_content_expect_t *e = (req_content_expect_t *)ctx->uctx;
+    e->called++;
+    if (!str_in_buf(req->method, e->buf, e->buf_len)) {
+        fprintf(stderr, "method.ptr out of input buffer range\n");
+        e->failed = 1;
+    }
+    if (!str_in_buf(req->uri, e->buf, e->buf_len)) {
+        fprintf(stderr, "uri.ptr out of input buffer range\n");
+        e->failed = 1;
+    }
+    if (req->method.len != e->method_len ||
+        strncmp(req->method.ptr, e->method, e->method_len) != 0) {
+        fprintf(stderr, "method: expected '%.*s', got '%.*s'\n",
+                (int)e->method_len, e->method, (int)req->method.len,
+                req->method.ptr);
+        e->failed = 1;
+    }
+    if (req->uri.len != e->uri_len ||
+        strncmp(req->uri.ptr, e->uri, e->uri_len) != 0) {
+        fprintf(stderr, "uri: expected '%.*s', got '%.*s'\n", (int)e->uri_len,
+                e->uri, (int)req->uri.len, req->uri.ptr);
+        e->failed = 1;
+    }
+    if (req->version != e->version) {
+        fprintf(stderr, "version: expected %d, got %d\n", (int)e->version,
+                (int)req->version);
+        e->failed = 1;
+    }
+    return 0;
+}
+
+typedef struct {
+    const char *name;
+    size_t name_len;
+    const char *value;
+    size_t value_len;
+    const char *key_lc_str;
+    const char *buf;
+    size_t buf_len;
+    int called;
+    int failed;
+} req_hdr_content_expect_t;
+
+static int verify_req_header_content_cb(hwire_ctx_t *ctx,
+                                        hwire_header_t *header)
+{
+    req_hdr_content_expect_t *e = (req_hdr_content_expect_t *)ctx->uctx;
+    e->called++;
+    if (!str_in_buf(header->key, e->buf, e->buf_len)) {
+        fprintf(stderr, "header key.ptr out of input buffer range\n");
+        e->failed = 1;
+    }
+    if (!str_in_buf(header->value, e->buf, e->buf_len)) {
+        fprintf(stderr, "header value.ptr out of input buffer range\n");
+        e->failed = 1;
+    }
+    if (header->key.len != e->name_len ||
+        strncmp(header->key.ptr, e->name, e->name_len) != 0) {
+        fprintf(stderr, "header name: expected '%.*s', got '%.*s'\n",
+                (int)e->name_len, e->name, (int)header->key.len,
+                header->key.ptr);
+        e->failed = 1;
+    }
+    if (header->value.len != e->value_len ||
+        strncmp(header->value.ptr, e->value, e->value_len) != 0) {
+        fprintf(stderr, "header value: expected '%.*s', got '%.*s'\n",
+                (int)e->value_len, e->value, (int)header->value.len,
+                header->value.ptr);
+        e->failed = 1;
+    }
+    if (e->key_lc_str != NULL) {
+        size_t lc_len = strlen(e->key_lc_str);
+        if (ctx->key_lc.len != lc_len ||
+            strncmp(ctx->key_lc.buf, e->key_lc_str, lc_len) != 0) {
+            fprintf(stderr, "key_lc: expected '%s', got '%.*s'\n",
+                    e->key_lc_str, (int)ctx->key_lc.len, ctx->key_lc.buf);
+            e->failed = 1;
+        }
+    }
+    return 0;
+}
+
+/*
+ * Covers: exact content of parsed method, URI, HTTP version, and header
+ * fields. MUST: method.ptr/len, uri.ptr/len, version MUST match the input.
+ * MUST: header key.ptr/len and value.ptr/len MUST match the input bytes.
+ * MUST: key_lc.buf MUST contain the lowercase header name.
+ */
+void test_parse_request_content_verification(void)
+{
+    TEST_START("test_parse_request_content_verification");
+
+    char key_storage[TEST_KEY_SIZE];
+
+    /* Case 1: GET / HTTP/1.1 */
+    {
+        req_content_expect_t exp = {"GET", 3, "/", 1, HWIRE_HTTP_V11,
+                                    0,     0, 0,   0};
+        hwire_ctx_t cb           = {
+                      .uctx       = &exp,
+                      .key_lc     = {.buf = key_storage, .size = sizeof(key_storage)},
+                      .request_cb = verify_request_content_cb,
+                      .header_cb  = mock_header_cb
+        };
+        size_t pos      = 0;
+        const char *buf = "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n";
+        exp.buf         = buf;
+        exp.buf_len     = strlen(buf);
+        int rv = hwire_parse_request(&cb, buf, strlen(buf), &pos, 1024, 10);
+        ASSERT_OK(rv);
+        ASSERT_EQ(exp.called, 1);
+        ASSERT_EQ(exp.failed, 0);
+    }
+
+    /* Case 2: POST /path?q=1 HTTP/1.0 */
+    {
+        req_content_expect_t exp = {"POST", 4, "/path?q=1", 9, HWIRE_HTTP_V10,
+                                    0,      0, 0,           0};
+        hwire_ctx_t cb           = {
+                      .uctx       = &exp,
+                      .key_lc     = {.buf = key_storage, .size = sizeof(key_storage)},
+                      .request_cb = verify_request_content_cb,
+                      .header_cb  = mock_header_cb
+        };
+        size_t pos      = 0;
+        const char *buf = "POST /path?q=1 HTTP/1.0\r\n\r\n";
+        exp.buf         = buf;
+        exp.buf_len     = strlen(buf);
+        int rv = hwire_parse_request(&cb, buf, strlen(buf), &pos, 1024, 10);
+        ASSERT_OK(rv);
+        ASSERT_EQ(exp.called, 1);
+        ASSERT_EQ(exp.failed, 0);
+    }
+
+    /* Case 3: header content + key_lc verification */
+    {
+        req_hdr_content_expect_t exp = {
+            "Content-Type", 12, "text/html", 9, "content-type", 0, 0, 0, 0};
+        hwire_ctx_t cb = {
+            .uctx       = &exp,
+            .key_lc     = {.buf = key_storage, .size = sizeof(key_storage)},
+            .request_cb = mock_request_cb,
+            .header_cb  = verify_req_header_content_cb
+        };
+        size_t pos      = 0;
+        const char *buf = "GET / HTTP/1.1\r\nContent-Type: text/html\r\n\r\n";
+        exp.buf         = buf;
+        exp.buf_len     = strlen(buf);
+        int rv = hwire_parse_request(&cb, buf, strlen(buf), &pos, 1024, 10);
+        ASSERT_OK(rv);
+        ASSERT_EQ(exp.called, 1);
+        ASSERT_EQ(exp.failed, 0);
+    }
+
+    TEST_END();
+}
+
 int main(void)
 {
     test_parse_request_valid();
@@ -456,6 +627,7 @@ int main(void)
     test_parse_request_uri_invalid_chars();
     test_parse_request_lf_eol();
     test_parse_request_uri_chars();
+    test_parse_request_content_verification();
     print_test_summary();
     return g_tests_failed;
 }

@@ -381,6 +381,178 @@ void test_parse_response_status_boundaries(void)
     TEST_END();
 }
 
+typedef struct {
+    hwire_http_version_t version;
+    uint16_t status;
+    const char *reason;
+    size_t reason_len;
+    const char *buf;
+    size_t buf_len;
+    int called;
+    int failed;
+} rsp_content_expect_t;
+
+static int verify_response_content_cb(hwire_ctx_t *ctx, hwire_response_t *rsp)
+{
+    rsp_content_expect_t *e = (rsp_content_expect_t *)ctx->uctx;
+    e->called++;
+    if (!str_in_buf(rsp->reason, e->buf, e->buf_len)) {
+        fprintf(stderr, "reason: ptr out of range\n");
+        e->failed = 1;
+    }
+    if (rsp->version != e->version) {
+        fprintf(stderr, "version: expected %d, got %d\n", (int)e->version,
+                (int)rsp->version);
+        e->failed = 1;
+    }
+    if (rsp->status != e->status) {
+        fprintf(stderr, "status: expected %u, got %u\n", (unsigned)e->status,
+                (unsigned)rsp->status);
+        e->failed = 1;
+    }
+    if (rsp->reason.len != e->reason_len ||
+        strncmp(rsp->reason.ptr, e->reason, e->reason_len) != 0) {
+        fprintf(stderr, "reason: expected '%.*s', got '%.*s'\n",
+                (int)e->reason_len, e->reason, (int)rsp->reason.len,
+                rsp->reason.ptr);
+        e->failed = 1;
+    }
+    return 0;
+}
+
+typedef struct {
+    const char *name;
+    size_t name_len;
+    const char *value;
+    size_t value_len;
+    const char *buf;
+    size_t buf_len;
+    int called;
+    int failed;
+} rsp_hdr_content_expect_t;
+
+static int verify_rsp_header_content_cb(hwire_ctx_t *ctx,
+                                        hwire_header_t *header)
+{
+    rsp_hdr_content_expect_t *e = (rsp_hdr_content_expect_t *)ctx->uctx;
+    e->called++;
+    if (!str_in_buf(header->key, e->buf, e->buf_len)) {
+        fprintf(stderr, "header key: ptr out of range\n");
+        e->failed = 1;
+    }
+    if (!str_in_buf(header->value, e->buf, e->buf_len)) {
+        fprintf(stderr, "header value: ptr out of range\n");
+        e->failed = 1;
+    }
+    if (header->key.len != e->name_len ||
+        strncmp(header->key.ptr, e->name, e->name_len) != 0) {
+        fprintf(stderr, "header name: expected '%.*s', got '%.*s'\n",
+                (int)e->name_len, e->name, (int)header->key.len,
+                header->key.ptr);
+        e->failed = 1;
+    }
+    if (header->value.len != e->value_len ||
+        strncmp(header->value.ptr, e->value, e->value_len) != 0) {
+        fprintf(stderr, "header value: expected '%.*s', got '%.*s'\n",
+                (int)e->value_len, e->value, (int)header->value.len,
+                header->value.ptr);
+        e->failed = 1;
+    }
+    return 0;
+}
+
+/*
+ * Covers: exact content of parsed HTTP version, status code, reason phrase,
+ * and header fields. MUST: version, status, and reason.ptr/len MUST match the
+ * input. MUST: header key.ptr/len and value.ptr/len MUST match the input bytes.
+ */
+void test_parse_response_content_verification(void)
+{
+    TEST_START("test_parse_response_content_verification");
+
+    char key_storage[TEST_KEY_SIZE];
+
+    /* Case 1: HTTP/1.1 200 OK */
+    {
+        rsp_content_expect_t exp = {HWIRE_HTTP_V11, 200, "OK", 2,
+                                    NULL,           0,   0,    0};
+        hwire_ctx_t cb           = {
+                      .uctx        = &exp,
+                      .key_lc      = {.buf = key_storage, .size = sizeof(key_storage)},
+                      .response_cb = verify_response_content_cb,
+                      .header_cb   = mock_header_cb
+        };
+        size_t pos      = 0;
+        const char *buf = "HTTP/1.1 200 OK\r\n\r\n";
+        exp.buf         = buf;
+        exp.buf_len     = strlen(buf);
+        int rv = hwire_parse_response(&cb, buf, strlen(buf), &pos, 1024, 10);
+        ASSERT_OK(rv);
+        ASSERT_EQ(exp.called, 1);
+        ASSERT_EQ(exp.failed, 0);
+    }
+
+    /* Case 2: HTTP/1.0 404 Not Found */
+    {
+        rsp_content_expect_t exp = {HWIRE_HTTP_V10, 404, "Not Found", 9,
+                                    NULL,           0,   0,           0};
+        hwire_ctx_t cb           = {
+                      .uctx        = &exp,
+                      .key_lc      = {.buf = key_storage, .size = sizeof(key_storage)},
+                      .response_cb = verify_response_content_cb,
+                      .header_cb   = mock_header_cb
+        };
+        size_t pos      = 0;
+        const char *buf = "HTTP/1.0 404 Not Found\r\n\r\n";
+        exp.buf         = buf;
+        exp.buf_len     = strlen(buf);
+        int rv = hwire_parse_response(&cb, buf, strlen(buf), &pos, 1024, 10);
+        ASSERT_OK(rv);
+        ASSERT_EQ(exp.called, 1);
+        ASSERT_EQ(exp.failed, 0);
+    }
+
+    /* Case 3: HTTP/1.1 200 <SP> (empty reason phrase) */
+    {
+        rsp_content_expect_t exp = {HWIRE_HTTP_V11, 200, "", 0, NULL, 0, 0, 0};
+        hwire_ctx_t cb           = {
+                      .uctx        = &exp,
+                      .key_lc      = {.buf = key_storage, .size = sizeof(key_storage)},
+                      .response_cb = verify_response_content_cb,
+                      .header_cb   = mock_header_cb
+        };
+        size_t pos      = 0;
+        const char *buf = "HTTP/1.1 200 \r\n\r\n";
+        exp.buf         = buf;
+        exp.buf_len     = strlen(buf);
+        int rv = hwire_parse_response(&cb, buf, strlen(buf), &pos, 1024, 10);
+        ASSERT_OK(rv);
+        ASSERT_EQ(exp.called, 1);
+        ASSERT_EQ(exp.failed, 0);
+    }
+
+    /* Case 4: header content verification */
+    {
+        rsp_hdr_content_expect_t exp = {"X-Foo", 5, "bar", 3, NULL, 0, 0, 0};
+        hwire_ctx_t cb               = {
+                          .uctx        = &exp,
+                          .key_lc      = {.buf = key_storage, .size = sizeof(key_storage)},
+                          .response_cb = mock_response_cb,
+                          .header_cb   = verify_rsp_header_content_cb
+        };
+        size_t pos      = 0;
+        const char *buf = "HTTP/1.1 200 OK\r\nX-Foo: bar\r\n\r\n";
+        exp.buf         = buf;
+        exp.buf_len     = strlen(buf);
+        int rv = hwire_parse_response(&cb, buf, strlen(buf), &pos, 1024, 10);
+        ASSERT_OK(rv);
+        ASSERT_EQ(exp.called, 1);
+        ASSERT_EQ(exp.failed, 0);
+    }
+
+    TEST_END();
+}
+
 int main(void)
 {
     test_parse_response_valid();
@@ -390,6 +562,7 @@ int main(void)
     test_parse_response_edge_cases();
     test_parse_response_reason_obstext();
     test_parse_response_status_boundaries();
+    test_parse_response_content_verification();
     print_test_summary();
     return g_tests_failed;
 }
