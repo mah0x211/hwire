@@ -280,6 +280,57 @@ void test_parse_headers_ows_maxlen(void)
     TEST_END();
 }
 
+/*
+ * Covers: RFC 9110 §5.5  field-value scanning at maxlen boundary
+ * MUST: a header value whose content is exactly (maxlen-1) bytes followed by
+ *       CRLF MUST be accepted.  Previously, parse_hval checked
+ *       `pos+1 < max` (scan limit) instead of `pos+1 < len` (buffer limit)
+ *       and incorrectly returned HWIRE_EEOL when CR landed at max-1 while
+ *       the corresponding LF was available at max (still within len).
+ *
+ * Internal detail: hwire_parse_headers passes vlen = maxlen - (key+colon+OWS)
+ * to parse_hval as the value-content limit.  For "K: value\r\n":
+ *   key="K"(1) + ":"(1) + " "(1) = 3 bytes consumed before value
+ *   vlen = maxlen - 3
+ * So with maxlen=10, vlen=7.  Boundary case: value is 6 bytes = vlen-1.
+ */
+void test_parse_headers_hval_maxlen_boundary(void)
+{
+    TEST_START("test_parse_headers_hval_maxlen_boundary");
+
+    char key_storage[TEST_KEY_SIZE];
+    hwire_callbacks_t cb = {
+        .key_lc = {.buf = key_storage, .size = sizeof(key_storage), .len = 0},
+        .header_cb = mock_header_cb
+    };
+    size_t pos;
+    int rv;
+
+    /* maxlen=10, vlen=7; value="123456" (6 bytes = vlen-1): boundary case
+     * CR lands at pos=6 == vlen-1 == max-1.
+     * Bug: `pos+1 < max` → 7 < 7 → false → fell through to HWIRE_EEOL.
+     * Fix: `pos+1 < len` → 7 < 12 → true → str[7]=='\\n' → HWIRE_OK. */
+    const char *buf = "K: 123456\r\n\r\n";
+    pos             = 0;
+    rv              = hwire_parse_headers(buf, strlen(buf), &pos, 10, 10, &cb);
+    ASSERT_OK(rv);
+    ASSERT_EQ(pos, strlen(buf));
+
+    /* value="12345" (5 bytes, well within vlen-1): always worked */
+    buf = "K: 12345\r\n\r\n";
+    pos = 0;
+    rv  = hwire_parse_headers(buf, strlen(buf), &pos, 10, 10, &cb);
+    ASSERT_OK(rv);
+
+    /* value="1234567" (7 bytes = vlen, exceeds maxlen): HWIRE_EHDRLEN */
+    buf = "K: 1234567\r\n\r\n";
+    pos = 0;
+    rv  = hwire_parse_headers(buf, strlen(buf), &pos, 10, 10, &cb);
+    ASSERT_EQ(rv, HWIRE_EHDRLEN);
+
+    TEST_END();
+}
+
 static int check_empty_value_cb(hwire_callbacks_t *cb, hwire_header_t *header)
 {
     (void)cb;
@@ -594,6 +645,7 @@ int main(void)
     test_parse_headers_key_parsing();
     test_parse_headers_empty_and_eol();
     test_parse_headers_ows_maxlen();
+    test_parse_headers_hval_maxlen_boundary();
     test_parse_headers_allows_empty_value();
     test_parse_headers_rfc_compliance();
     test_parse_headers_obstext();
