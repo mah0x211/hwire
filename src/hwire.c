@@ -30,6 +30,29 @@
 #include <string.h>
 #include <sys/types.h>
 
+// ALIGNED(n): compiler-portable alignment specifier.
+// Standard alignas/`_Alignas` is preferred when available (C++11 / C11).
+// The #else branch also disables all SIMD paths by undefining the architecture
+// macros before the intrinsic headers are included, since an unknown compiler
+// is unlikely to support the required intrinsics.
+#if defined(__cplusplus) && __cplusplus >= 201103L
+# define ALIGNED(n) alignas(n)
+#elif __STDC_VERSION__ >= 201112L
+# define ALIGNED(n) _Alignas(n)
+#elif defined(_MSC_VER)
+# define ALIGNED(n) __declspec(align(n))
+#elif defined(__GNUC__) || defined(__clang__)
+# define ALIGNED(n) __attribute__((aligned(n)))
+#else
+# define ALIGNED(n)
+# undef __AVX2__
+# undef __SSE4_2__
+# undef __SSSE3__
+# undef __SSE2__
+# undef __aarch64__
+# undef __ARM_NEON
+#endif
+
 // SIMD intrinsic headers (included once here for all SIMD paths below).
 // Each header transitively includes its prerequisites: AVX2 ⊃ SSE4.2 ⊃ SSSE3 ⊃
 // SSE2.
@@ -371,12 +394,12 @@ static inline int is_vchar(unsigned char c)
 // Bit assignment in TCHAR_NIBBLE_HI: hi=2→bit0, hi=3→bit1, hi=4→bit2,
 //   hi=5→bit3, hi=6→bit4, hi=7→bit5. hi=0,1,8-F map to 0 (all invalid).
 #if defined(__AVX2__) || defined(__SSSE3__)
-static const int8_t TCHAR_NIBBLE_LO[16] = {
+static const int8_t ALIGNED(16) TCHAR_NIBBLE_LO[16] = {
     // lo:   0x0   0x1   0x2   0x3   0x4   0x5   0x6   0x7
     0x3A, 0x3F, 0x3E, 0x3F, 0x3F, 0x3F, 0x3F, 0x3F,
     // lo:   0x8   0x9   0xA   0xB   0xC   0xD   0xE   0xF
     0x3E, 0x3E, 0x3D, 0x15, 0x34, 0x15, 0x3D, 0x1C};
-static const int8_t TCHAR_NIBBLE_HI[16] = {
+static const int8_t ALIGNED(16) TCHAR_NIBBLE_HI[16] = {
     // hi:   0x0   0x1   0x2   0x3   0x4   0x5   0x6   0x7
     0x00, 0x00, 0x01, 0x02, 0x04, 0x08, 0x10, 0x20,
     // hi:   0x8   0x9   0xA   0xB   0xC   0xD   0xE   0xF
@@ -864,14 +887,14 @@ static inline size_t strvchar_sse42(const unsigned char *str, size_t len,
                                     int is_field_vchar, unsigned char *endc)
 {
     size_t pos = 0;
-    // Invalid character ranges:
-    // - VCHAR: 0x00-0x20 (control + SP), 0x7F-0x7F (DEL) - 2 ranges
-    // - field-vchar: 0x00-0x08, 0x0A-0x1F, 0x7F-0x7F - 3 ranges (excludes
-    // HT)
-    static const char __attribute__((aligned(16))) VCHAR_INVALID_RANGES[] =
-        "\x00\x20\x7f\x7f"; // 2 ranges = 4 bytes
-    static const char __attribute__((aligned(16))) FCVCHAR_INVALID_RANGES[] =
-        "\x00\x08\x0a\x1f\x7f\x7f"; // 3 ranges = 6 bytes
+    // Invalid character ranges (padded to 16 bytes to match _mm_loadu_si128):
+    // - VCHAR:       0x00-0x20 (control + SP), 0x7F-0x7F (DEL) - 2 ranges
+    // - field-vchar: 0x00-0x08, 0x0A-0x1F, 0x7F-0x7F - 3 ranges (excludes HT)
+    static const char ALIGNED(16) VCHAR_INVALID_RANGES[16] =
+        "\x00\x20\x7f\x7f"; // 2 ranges = 4 bytes; remaining 12 bytes are \0
+    static const char ALIGNED(16) FCVCHAR_INVALID_RANGES[16] =
+        "\x00\x08\x0a\x1f\x7f\x7f"; // 3 ranges = 6 bytes; remaining 10 bytes
+                                    // are \0
 
     const __m128i ranges = _mm_loadu_si128((
         const __m128i *)(const void *)(is_field_vchar ? FCVCHAR_INVALID_RANGES :
