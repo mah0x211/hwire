@@ -13,7 +13,7 @@ void test_parse_parameters_valid(void)
     TEST_START("test_parse_parameters_valid");
 
     char key_storage[TEST_KEY_SIZE];
-    hwire_callbacks_t cb = {
+    hwire_ctx_t cb = {
         .key_lc   = {.buf = key_storage, .size = sizeof(key_storage), .len = 0},
         .param_cb = mock_param_cb
     };
@@ -24,14 +24,14 @@ void test_parse_parameters_valid(void)
     /* Single parameter with token value */
     buf = "; key=value ";
     pos = 0;
-    rv  = hwire_parse_parameters(buf, strlen(buf), &pos, 100, 10, 0, &cb);
+    rv  = hwire_parse_parameters(&cb, buf, strlen(buf), &pos, 100, 10, 0);
     ASSERT_OK(rv);
     ASSERT_EQ(pos, strlen(buf));
 
     /* Multiple parameters: second with quoted-string value */
     buf = "; k1=v1; k2=\"quoted\" ";
     pos = 0;
-    rv  = hwire_parse_parameters(buf, strlen(buf), &pos, 100, 10, 0, &cb);
+    rv  = hwire_parse_parameters(&cb, buf, strlen(buf), &pos, 100, 10, 0);
     ASSERT_OK(rv);
     ASSERT_EQ(pos, strlen(buf));
 
@@ -39,7 +39,7 @@ void test_parse_parameters_valid(void)
      */
     buf = "key=value ";
     pos = 0;
-    rv  = hwire_parse_parameters(buf, strlen(buf), &pos, 100, 10, 1, &cb);
+    rv  = hwire_parse_parameters(&cb, buf, strlen(buf), &pos, 100, 10, 1);
     ASSERT_OK(rv);
     ASSERT_EQ(pos, strlen(buf));
 
@@ -60,7 +60,7 @@ void test_parse_parameters_invalid(void)
     TEST_START("test_parse_parameters_invalid");
 
     char key_storage[TEST_KEY_SIZE];
-    hwire_callbacks_t cb = {
+    hwire_ctx_t cb = {
         .key_lc   = {.buf = key_storage, .size = sizeof(key_storage), .len = 0},
         .param_cb = mock_param_cb
     };
@@ -72,28 +72,28 @@ void test_parse_parameters_invalid(void)
        HWIRE_EILSEQ */
     buf = "; key?";
     pos = 0;
-    rv  = hwire_parse_parameters(buf, strlen(buf), &pos, 100, 10, 0, &cb);
+    rv  = hwire_parse_parameters(&cb, buf, strlen(buf), &pos, 100, 10, 0);
     ASSERT_EQ(rv, HWIRE_EILSEQ);
 
     { /* No key_lc buffer: hwire MUST still parse successfully (lowercase
          conversion skipped) */
-        hwire_callbacks_t cb_no_lc = cb;
-        cb_no_lc.key_lc.size       = 0;
-        buf                        = "; KEY=Val ";
-        pos                        = 0;
-        rv = hwire_parse_parameters(buf, strlen(buf), &pos, 100, 10, 0,
-                                    &cb_no_lc);
+        hwire_ctx_t cb_no_lc = cb;
+        cb_no_lc.key_lc.size = 0;
+        buf                  = "; KEY=Val ";
+        pos                  = 0;
+        rv = hwire_parse_parameters(&cb_no_lc, buf, strlen(buf), &pos, 100, 10,
+                                    0);
         ASSERT_OK(rv);
     }
 
     { /* MUST return HWIRE_ECALLBACK if param_cb returns non-zero (quoted-string
          value) */
-        hwire_callbacks_t cb_fail = cb;
-        cb_fail.param_cb          = mock_param_cb_fail;
-        buf                       = "; k=\"v\"";
-        pos                       = 0;
-        rv = hwire_parse_parameters(buf, strlen(buf), &pos, 100, 10, 0,
-                                    &cb_fail);
+        hwire_ctx_t cb_fail = cb;
+        cb_fail.param_cb    = mock_param_cb_fail;
+        buf                 = "; k=\"v\"";
+        pos                 = 0;
+        rv = hwire_parse_parameters(&cb_fail, buf, strlen(buf), &pos, 100, 10,
+                                    0);
         ASSERT_EQ(rv, HWIRE_ECALLBACK);
     }
 
@@ -101,53 +101,53 @@ void test_parse_parameters_invalid(void)
      * 1*tchar. Empty token value (';' immediately after '=') → HWIRE_EILSEQ */
     buf = "; k=;";
     pos = 0;
-    rv  = hwire_parse_parameters(buf, strlen(buf), &pos, 100, 10, 0, &cb);
+    rv  = hwire_parse_parameters(&cb, buf, strlen(buf), &pos, 100, 10, 0);
     ASSERT_EQ(rv, HWIRE_EILSEQ);
 
     /* OWS before first ";" exceeds maxlen → HWIRE_ELEN */
     buf = "   ;";
     pos = 0;
-    rv  = hwire_parse_parameters(buf, strlen(buf), &pos, 1, 10, 0, &cb);
+    rv  = hwire_parse_parameters(&cb, buf, strlen(buf), &pos, 1, 10, 0);
     ASSERT_EQ(rv, HWIRE_ELEN);
 
     /* OWS after ";" exceeds maxlen → HWIRE_ELEN */
     buf = ";   k=v";
     pos = 0;
-    rv  = hwire_parse_parameters(buf, strlen(buf), &pos, 2, 10, 0, &cb);
+    rv  = hwire_parse_parameters(&cb, buf, strlen(buf), &pos, 2, 10, 0);
     ASSERT_EQ(rv, HWIRE_ELEN);
 
     /* Valid parameter (sanity check) */
     buf = "; k=v";
     pos = 0;
-    rv  = hwire_parse_parameters(buf, strlen(buf), &pos, 100, 10, 0, &cb);
+    rv  = hwire_parse_parameters(&cb, buf, strlen(buf), &pos, 100, 10, 0);
     ASSERT_OK(rv);
 
     /* MUST return HWIRE_ENOBUFS if max parameter count is exceeded */
     buf = "; k1=v1; k2=v2";
     pos = 0;
-    rv  = hwire_parse_parameters(buf, strlen(buf), &pos, 100, 1, 0, &cb);
+    rv  = hwire_parse_parameters(&cb, buf, strlen(buf), &pos, 100, 1, 0);
     ASSERT_EQ(rv, HWIRE_ENOBUFS);
 
     { /* MUST return HWIRE_ECALLBACK if param_cb returns non-zero (token value)
        */
-        hwire_callbacks_t cb_fail = cb;
-        cb_fail.param_cb          = mock_param_cb_fail;
-        buf                       = "; k1=v1 ";
-        pos                       = 0;
-        rv = hwire_parse_parameters(buf, strlen(buf), &pos, 100, 10, 0,
-                                    &cb_fail);
+        hwire_ctx_t cb_fail = cb;
+        cb_fail.param_cb    = mock_param_cb_fail;
+        buf                 = "; k1=v1 ";
+        pos                 = 0;
+        rv = hwire_parse_parameters(&cb_fail, buf, strlen(buf), &pos, 100, 10,
+                                    0);
         ASSERT_EQ(rv, HWIRE_ECALLBACK);
     }
 
     { /* hwire: parameter-name key_lc.size exceeded → HWIRE_EKEYLEN */
         char small_key[3];
-        hwire_callbacks_t cb_small = cb;
-        cb_small.key_lc.buf        = small_key;
-        cb_small.key_lc.size       = sizeof(small_key);
-        buf                        = "; longkey=val";
-        pos                        = 0;
-        rv = hwire_parse_parameters(buf, strlen(buf), &pos, 100, 10, 0,
-                                    &cb_small);
+        hwire_ctx_t cb_small = cb;
+        cb_small.key_lc.buf  = small_key;
+        cb_small.key_lc.size = sizeof(small_key);
+        buf                  = "; longkey=val";
+        pos                  = 0;
+        rv = hwire_parse_parameters(&cb_small, buf, strlen(buf), &pos, 100, 10,
+                                    0);
         ASSERT_EQ(rv, HWIRE_EKEYLEN);
     }
 
@@ -173,7 +173,7 @@ void test_parse_parameters_edge_cases(void)
     TEST_START("test_parse_parameters_edge_cases");
 
     char key_storage[TEST_KEY_SIZE];
-    hwire_callbacks_t cb = {
+    hwire_ctx_t cb = {
         .key_lc   = {.buf = key_storage, .size = sizeof(key_storage), .len = 0},
         .param_cb = mock_param_cb
     };
@@ -184,27 +184,27 @@ void test_parse_parameters_edge_cases(void)
     /* Input ends at ";" with no parameter following → HWIRE_EAGAIN */
     buf = ";";
     pos = 0;
-    rv  = hwire_parse_parameters(buf, strlen(buf), &pos, 100, 10, 0, &cb);
+    rv  = hwire_parse_parameters(&cb, buf, strlen(buf), &pos, 100, 10, 0);
     ASSERT_EQ(rv, HWIRE_EAGAIN);
 
     /* Parameter value exceeds maxlen → HWIRE_ELEN */
     buf = "; key=value";
     pos = 0;
-    rv  = hwire_parse_parameters(buf, strlen(buf), &pos, 1, 10, 0, &cb);
+    rv  = hwire_parse_parameters(&cb, buf, strlen(buf), &pos, 1, 10, 0);
     ASSERT_EQ(rv, HWIRE_ELEN);
 
     /* Input ends immediately after "=" — key parsed but value not yet present
        → HWIRE_EAGAIN */
     buf = "; k=";
     pos = 0;
-    rv  = hwire_parse_parameters(buf, strlen(buf), &pos, 100, 10, 0, &cb);
+    rv  = hwire_parse_parameters(&cb, buf, strlen(buf), &pos, 100, 10, 0);
     ASSERT_EQ(rv, HWIRE_EAGAIN);
 
     /* parameter-name runs up to maxpos boundary (key "ab" pushes cur to
        maxpos=4) → HWIRE_ELEN */
     buf = "; ab=val";
     pos = 0;
-    rv  = hwire_parse_parameters(buf, strlen(buf), &pos, 4, 10, 0, &cb);
+    rv  = hwire_parse_parameters(&cb, buf, strlen(buf), &pos, 4, 10, 0);
     ASSERT_EQ(rv, HWIRE_ELEN);
 
     /* OOB fix: CHECK_NEXT_PARAM must not read ustr[cur] when cur >= len.
@@ -216,7 +216,7 @@ void test_parse_parameters_edge_cases(void)
     {
         char oob1[] = "; k=v ;phantom=x";
         pos         = 0;
-        rv          = hwire_parse_parameters(oob1, 6, &pos, 100, 10, 0, &cb);
+        rv          = hwire_parse_parameters(&cb, oob1, 6, &pos, 100, 10, 0);
         ASSERT_EQ(rv, HWIRE_OK);
         ASSERT_EQ(pos, 6);
     }
@@ -230,7 +230,7 @@ void test_parse_parameters_edge_cases(void)
     {
         char oob2[] = ";; ;x=y"; /* buf[3]=';', not NUL-terminated at len=3 */
         pos         = 0;
-        rv          = hwire_parse_parameters(oob2, 3, &pos, 100, 10, 0, &cb);
+        rv          = hwire_parse_parameters(&cb, oob2, 3, &pos, 100, 10, 0);
         ASSERT_EQ(rv, HWIRE_OK);
         ASSERT_EQ(pos, 3);
     }
@@ -250,7 +250,7 @@ void test_parse_parameters_rfc_compliance(void)
     TEST_START("test_parse_parameters_rfc_compliance");
 
     char key_storage[TEST_KEY_SIZE];
-    hwire_callbacks_t cb = {
+    hwire_ctx_t cb = {
         .key_lc   = {.buf = key_storage, .size = sizeof(key_storage), .len = 0},
         .param_cb = mock_param_cb
     };
@@ -261,14 +261,14 @@ void test_parse_parameters_rfc_compliance(void)
     /* RFC 9110 §5.6.6: empty parameter slot ";;" MUST be skipped */
     buf = ";; key=value";
     pos = 0;
-    rv  = hwire_parse_parameters(buf, strlen(buf), &pos, 1024, 10, 0, &cb);
+    rv  = hwire_parse_parameters(&cb, buf, strlen(buf), &pos, 1024, 10, 0);
     ASSERT_OK(rv);
     ASSERT_EQ(pos, strlen(buf));
 
     /* RFC 9110 §5.6.6: trailing empty parameter slots MUST be skipped */
     buf = "; key=value;; ";
     pos = 0;
-    rv  = hwire_parse_parameters(buf, strlen(buf), &pos, 1024, 10, 0, &cb);
+    rv  = hwire_parse_parameters(&cb, buf, strlen(buf), &pos, 1024, 10, 0);
     ASSERT_OK(rv);
     ASSERT_EQ(pos, strlen(buf));
 
@@ -276,7 +276,7 @@ void test_parse_parameters_rfc_compliance(void)
        accepted */
     buf = ";;;; ";
     pos = 0;
-    rv  = hwire_parse_parameters(buf, strlen(buf), &pos, 1024, 10, 0, &cb);
+    rv  = hwire_parse_parameters(&cb, buf, strlen(buf), &pos, 1024, 10, 0);
     ASSERT_OK(rv);
     ASSERT_EQ(pos, strlen(buf));
 
@@ -284,15 +284,15 @@ void test_parse_parameters_rfc_compliance(void)
        HWIRE_EILSEQ */
     buf = "; =value";
     pos = 0;
-    rv  = hwire_parse_parameters(buf, strlen(buf), &pos, 1024, 10, 0, &cb);
+    rv  = hwire_parse_parameters(&cb, buf, strlen(buf), &pos, 1024, 10, 0);
     ASSERT_EQ(rv, HWIRE_EILSEQ);
 
     TEST_END();
 }
 
-static int verify_param_content_cb(hwire_callbacks_t *cb, hwire_param_t *param)
+static int verify_param_content_cb(hwire_ctx_t *ctx, hwire_param_t *param)
 {
-    (void)cb;
+    (void)ctx;
     if (strncmp(param->key.ptr, "key", param->key.len) == 0 &&
         param->key.len == 3) {
         if (strncmp(param->value.ptr, "value", param->value.len) == 0 &&
@@ -313,13 +313,13 @@ void test_parse_parameters_content_verification(void)
     TEST_START("test_parse_parameters_content_verification");
 
     char key_storage[TEST_KEY_SIZE];
-    hwire_callbacks_t cb = {
+    hwire_ctx_t cb = {
         .key_lc   = {.buf = key_storage, .size = sizeof(key_storage), .len = 0},
         .param_cb = verify_param_content_cb
     };
     size_t pos      = 0;
     const char *buf = "; key=value";
-    int rv = hwire_parse_parameters(buf, strlen(buf), &pos, 1024, 10, 0, &cb);
+    int rv = hwire_parse_parameters(&cb, buf, strlen(buf), &pos, 1024, 10, 0);
     ASSERT_OK(rv);
 
     TEST_END();
