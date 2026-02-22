@@ -97,9 +97,9 @@ void test_parse_headers_fail(void)
         .key_lc = {.buf = key_storage, .size = sizeof(key_storage), .len = 0},
         .header_cb = mock_header_cb_fail
     };
-    size_t pos         = 0;
-    const char *buf    = "Key: Value\r\n\r\n";
-    int rv             = hwire_parse_headers(buf, strlen(buf), &pos, 1024, 10, &cb);
+    size_t pos      = 0;
+    const char *buf = "Key: Value\r\n\r\n";
+    int rv = hwire_parse_headers(buf, strlen(buf), &pos, 1024, 10, &cb);
     ASSERT_EQ(rv, HWIRE_ECALLBACK);
 
     TEST_END();
@@ -372,6 +372,218 @@ void test_parse_headers_rfc_compliance(void)
     TEST_END();
 }
 
+/*
+ * Covers: RFC 9110 §5.5  field-vchar = VCHAR / obs-text
+ *                        obs-text    = %x80-FF
+ * MUST: obs-text bytes (0x80-0xFF) MUST be accepted as field-vchar in
+ * field-value.  MUST: HTAB embedded between field-vchar characters MUST be
+ * accepted as part of field-content.
+ */
+void test_parse_headers_obstext(void)
+{
+    TEST_START("test_parse_headers_obstext");
+
+    char key_storage[TEST_KEY_SIZE];
+    hwire_callbacks_t cb = {
+        .key_lc = {.buf = key_storage, .size = sizeof(key_storage), .len = 0},
+        .header_cb = mock_header_cb
+    };
+    size_t pos = 0;
+    const char *buf;
+    int rv;
+
+    /* obs-text bytes as the entire field-value */
+    buf = "X-Obs: \x80\xff\xa5\r\n\r\n";
+    pos = 0;
+    rv  = hwire_parse_headers(buf, strlen(buf), &pos, 1024, 10, &cb);
+    ASSERT_OK(rv);
+
+    /* obs-text mixed with VCHAR */
+    buf = "X-Mix: abc\x80xyz\xff\r\n\r\n";
+    pos = 0;
+    rv  = hwire_parse_headers(buf, strlen(buf), &pos, 1024, 10, &cb);
+    ASSERT_OK(rv);
+
+    /* HTAB embedded between obs-text and VCHAR (field-content) */
+    buf = "X-Tab: \x80\tvalue\r\n\r\n";
+    pos = 0;
+    rv  = hwire_parse_headers(buf, strlen(buf), &pos, 1024, 10, &cb);
+    ASSERT_OK(rv);
+
+    TEST_END();
+}
+
+/*
+ * Covers: RFC 9110 §5.5  OWS = *( SP / HTAB )
+ * MUST: trailing OWS (SP / HTAB before CRLF) MUST be stripped; the
+ * field-value length reported via the callback MUST reflect the stripped
+ * length exactly.
+ */
+static size_t g_captured_value_len = 0;
+static int capture_header_value_len_cb(hwire_callbacks_t *cb,
+                                       hwire_header_t *header)
+{
+    (void)cb;
+    g_captured_value_len = header->value.len;
+    return 0;
+}
+
+void test_parse_headers_ows_exact(void)
+{
+    TEST_START("test_parse_headers_ows_exact");
+
+    char key_storage[TEST_KEY_SIZE];
+    hwire_callbacks_t cb = {
+        .key_lc = {.buf = key_storage, .size = sizeof(key_storage), .len = 0},
+        .header_cb = capture_header_value_len_cb
+    };
+    size_t pos = 0;
+    const char *buf;
+    int rv;
+
+    /* "value" (5 bytes) + 3 trailing SPs → stripped value.len MUST be 5 */
+    buf                  = "K: value   \r\n\r\n";
+    pos                  = 0;
+    g_captured_value_len = 0;
+    rv = hwire_parse_headers(buf, strlen(buf), &pos, 1024, 10, &cb);
+    ASSERT_OK(rv);
+    ASSERT_EQ(g_captured_value_len, 5);
+
+    /* "value" (5 bytes) + 1 trailing HTAB → stripped value.len MUST be 5 */
+    buf                  = "K: value\t\r\n\r\n";
+    pos                  = 0;
+    g_captured_value_len = 0;
+    rv = hwire_parse_headers(buf, strlen(buf), &pos, 1024, 10, &cb);
+    ASSERT_OK(rv);
+    ASSERT_EQ(g_captured_value_len, 5);
+
+    /* "value" (5 bytes) + mixed SP/HTAB trailing OWS → stripped value.len
+     * MUST be 5 */
+    buf                  = "K: value \t \r\n\r\n";
+    pos                  = 0;
+    g_captured_value_len = 0;
+    rv = hwire_parse_headers(buf, strlen(buf), &pos, 1024, 10, &cb);
+    ASSERT_OK(rv);
+    ASSERT_EQ(g_captured_value_len, 5);
+
+    TEST_END();
+}
+
+/*
+ * Covers: SIMD boundary behaviour in header name and value scanning.
+ * MUST: header names of exactly 15/16/17 tchar characters MUST be fully
+ * parsed.  MUST: field-values of 16/32 field-vchar characters MUST be fully
+ * consumed.  MUST: '|' (0x7C) and '~' (0x7E) — highest valid tchar — MUST be
+ * accepted in header names at boundary positions.
+ */
+void test_parse_headers_simd_boundary(void)
+{
+    TEST_START("test_parse_headers_simd_boundary");
+
+    char key_storage[TEST_KEY_SIZE];
+    hwire_callbacks_t cb = {
+        .key_lc = {.buf = key_storage, .size = sizeof(key_storage), .len = 0},
+        .header_cb = mock_header_cb
+    };
+    char buf[256];
+    size_t pos;
+    int rv;
+
+    /* Header names at SIMD boundary lengths: 15, 16, 17 bytes */
+    static const size_t name_lens[] = {15, 16, 17};
+    for (size_t i = 0; i < 3; i++) {
+        size_t nlen = name_lens[i];
+        memset(buf, 'a', nlen);
+        memcpy(buf + nlen, ": v\r\n\r\n", 7);
+        pos = 0;
+        rv  = hwire_parse_headers(buf, nlen + 7, &pos, 1024, 10, &cb);
+        if (rv != HWIRE_OK) {
+            fprintf(stderr, "FAILED: %s:%d: name_len=%zu gave rv=%d\n",
+                    __FILE__, __LINE__, nlen, rv);
+            g_tests_failed++;
+            return;
+        }
+    }
+
+    /* '|' and '~' in header name at SIMD boundary positions */
+    memset(buf, 'a', 17);
+    buf[7]  = '|'; /* mid-name */
+    buf[14] = '~'; /* last byte of 15-char chunk */
+    memcpy(buf + 17, ": v\r\n\r\n", 7);
+    pos = 0;
+    rv  = hwire_parse_headers(buf, 24, &pos, 1024, 10, &cb);
+    ASSERT_OK(rv);
+
+    /* Field-values at SIMD boundary lengths: 16, 32 bytes */
+    static const size_t val_lens[] = {16, 32};
+    for (size_t i = 0; i < 2; i++) {
+        size_t vlen = val_lens[i];
+        memcpy(buf, "K: ", 3);
+        memset(buf + 3, 'a', vlen);
+        memcpy(buf + 3 + vlen, "\r\n\r\n", 4);
+        pos = 0;
+        rv  = hwire_parse_headers(buf, 3 + vlen + 4, &pos, 1024, 10, &cb);
+        if (rv != HWIRE_OK) {
+            fprintf(stderr, "FAILED: %s:%d: val_len=%zu gave rv=%d\n", __FILE__,
+                    __LINE__, vlen, rv);
+            g_tests_failed++;
+            return;
+        }
+    }
+
+    TEST_END();
+}
+
+/*
+ * Covers: streaming / incremental delivery compatibility.
+ * MUST: hwire_parse_headers() MUST return HWIRE_EAGAIN for every prefix of a
+ * valid complete header block shorter than the full block.  MUST: return
+ * HWIRE_OK with pos == strlen(full) once the complete block is provided.
+ *
+ * Simulates a TCP receiver that accumulates bytes and re-presents the full
+ * buffer (pos=0) on each new arrival.  Uses the raw cumulative buffer without
+ * NUL-padding; correct behaviour relies on the len-bounded bounds checks fixed
+ * in hwire_parse_headers (RETRY len==0 guard, IS_OWS cur<len guard).
+ */
+void test_parse_headers_streaming(void)
+{
+    TEST_START("test_parse_headers_streaming");
+
+    const char *full = "Host: example.com\r\nContent-Length: 0\r\n\r\n";
+    size_t full_len  = strlen(full);
+    char key_storage[TEST_KEY_SIZE];
+    hwire_callbacks_t cb = {
+        .key_lc = {.buf = key_storage, .size = sizeof(key_storage), .len = 0},
+        .header_cb = mock_header_cb
+    };
+    size_t pos;
+    int rv;
+
+    /* Every prefix of length 1..full_len-1 MUST give HWIRE_EAGAIN */
+    for (size_t i = 1; i < full_len; i++) {
+        cb.key_lc.len = 0;
+        pos           = 0;
+        rv            = hwire_parse_headers(full, i, &pos, 1024, 10, &cb);
+        if (rv != HWIRE_EAGAIN) {
+            fprintf(stderr,
+                    "FAILED: %s:%d: expected HWIRE_EAGAIN at len=%zu, got "
+                    "%d\n",
+                    __FILE__, __LINE__, i, rv);
+            g_tests_failed++;
+            return;
+        }
+    }
+
+    /* Full block MUST succeed with pos == full_len */
+    cb.key_lc.len = 0;
+    pos           = 0;
+    rv            = hwire_parse_headers(full, full_len, &pos, 1024, 10, &cb);
+    ASSERT_OK(rv);
+    ASSERT_EQ(pos, full_len);
+
+    TEST_END();
+}
+
 int main(void)
 {
     test_parse_headers_valid();
@@ -384,6 +596,10 @@ int main(void)
     test_parse_headers_ows_maxlen();
     test_parse_headers_allows_empty_value();
     test_parse_headers_rfc_compliance();
+    test_parse_headers_obstext();
+    test_parse_headers_ows_exact();
+    test_parse_headers_simd_boundary();
+    test_parse_headers_streaming();
     print_test_summary();
     return g_tests_failed;
 }

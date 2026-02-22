@@ -35,7 +35,8 @@ void test_parse_parameters_valid(void)
     ASSERT_OK(rv);
     ASSERT_EQ(pos, strlen(buf));
 
-    /* skip_semicolon=1: bare "key=value" without leading ";" MUST be accepted */
+    /* skip_semicolon=1: bare "key=value" without leading ";" MUST be accepted
+     */
     buf = "key=value ";
     pos = 0;
     rv  = hwire_parse_parameters(buf, strlen(buf), &pos, 100, 10, 1, &cb);
@@ -127,7 +128,8 @@ void test_parse_parameters_invalid(void)
     rv  = hwire_parse_parameters(buf, strlen(buf), &pos, 100, 1, 0, &cb);
     ASSERT_EQ(rv, HWIRE_ENOBUFS);
 
-    { /* MUST return HWIRE_ECALLBACK if param_cb returns non-zero (token value) */
+    { /* MUST return HWIRE_ECALLBACK if param_cb returns non-zero (token value)
+       */
         hwire_callbacks_t cb_fail = cb;
         cb_fail.param_cb          = mock_param_cb_fail;
         buf                       = "; k1=v1 ";
@@ -157,6 +159,14 @@ void test_parse_parameters_invalid(void)
  * MUST return HWIRE_EAGAIN if input ends at ";" with no parameter following.
  * MUST return HWIRE_EAGAIN if input ends immediately after "=" (no value yet).
  * MUST return HWIRE_ELEN if parameter-name pushes position past maxlen.
+ * MUST return HWIRE_OK and pos==6 when buffer ends in trailing OWS
+ *   (CHECK_NEXT_PARAM bounds check: ustr[cur] MUST NOT be read when cur >= len;
+ *   without the fix a phantom ';' at buf[len] causes extra parameters to be
+ *   parsed beyond the declared length).
+ * MUST return HWIRE_OK and pos==3 when CHECK_PARAM sees cur==len after OWS
+ *   following a ';' (ustr[cur] MUST NOT be read when cur == len; without the
+ *   fix the phantom ';' at buf[len] causes strtchar to run with SIZE_MAX
+ *   length).
  */
 void test_parse_parameters_edge_cases(void)
 {
@@ -196,6 +206,34 @@ void test_parse_parameters_edge_cases(void)
     pos = 0;
     rv  = hwire_parse_parameters(buf, strlen(buf), &pos, 4, 10, 0, &cb);
     ASSERT_EQ(rv, HWIRE_ELEN);
+
+    /* OOB fix: CHECK_NEXT_PARAM must not read ustr[cur] when cur >= len.
+       Use a 16-byte string but declare only 6 bytes available so buf[6]=';'
+       (the phantom semicolon) is outside the declared buffer.  Without the
+       fix the parser reads buf[6]=';', then processes "phantom=x" past len=6
+       causing pos != 6.  With the fix cur >= len is detected first and
+       HWIRE_OK is returned with pos==6. */
+    {
+        char oob1[] = "; k=v ;phantom=x";
+        pos         = 0;
+        rv          = hwire_parse_parameters(oob1, 6, &pos, 100, 10, 0, &cb);
+        ASSERT_EQ(rv, HWIRE_OK);
+        ASSERT_EQ(pos, 6);
+    }
+
+    /* OOB fix: CHECK_PARAM must not read ustr[cur] when cur == len.
+       Use ";; ;x=y" but declare only 3 bytes (";; ") so buf[3]=';' is outside
+       the declared buffer.  Without the fix the parser reads buf[3]=';', then
+       tries to parse "x=y" past len=3 causing a size_t underflow in strtchar
+       (effectively SIZE_MAX length).  With the fix cur==len is detected first
+       and HWIRE_OK is returned with pos==3. */
+    {
+        char oob2[] = ";; ;x=y"; /* buf[3]=';', not NUL-terminated at len=3 */
+        pos         = 0;
+        rv          = hwire_parse_parameters(oob2, 3, &pos, 100, 10, 0, &cb);
+        ASSERT_EQ(rv, HWIRE_OK);
+        ASSERT_EQ(pos, 3);
+    }
 
     TEST_END();
 }
@@ -279,10 +317,9 @@ void test_parse_parameters_content_verification(void)
         .key_lc   = {.buf = key_storage, .size = sizeof(key_storage), .len = 0},
         .param_cb = verify_param_content_cb
     };
-    size_t pos     = 0;
+    size_t pos      = 0;
     const char *buf = "; key=value";
-    int rv          =
-        hwire_parse_parameters(buf, strlen(buf), &pos, 1024, 10, 0, &cb);
+    int rv = hwire_parse_parameters(buf, strlen(buf), &pos, 1024, 10, 0, &cb);
     ASSERT_OK(rv);
 
     TEST_END();

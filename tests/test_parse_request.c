@@ -17,9 +17,9 @@ void test_parse_request_valid(void)
         .request_cb = mock_request_cb,
         .header_cb  = mock_header_cb
     };
-    size_t pos     = 0;
+    size_t pos      = 0;
     const char *buf = "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n";
-    int rv          = hwire_parse_request(buf, strlen(buf), &pos, 1024, 10, &cb);
+    int rv = hwire_parse_request(buf, strlen(buf), &pos, 1024, 10, &cb);
     ASSERT_OK(rv);
     ASSERT_EQ(pos, strlen(buf));
 
@@ -41,9 +41,9 @@ void test_parse_request_cb_fail(void)
         .request_cb = mock_request_cb_fail,
         .header_cb  = mock_header_cb
     };
-    size_t pos     = 0;
+    size_t pos      = 0;
     const char *buf = "GET / HTTP/1.1\r\n\r\n";
-    int rv          = hwire_parse_request(buf, strlen(buf), &pos, 1024, 10, &cb);
+    int rv = hwire_parse_request(buf, strlen(buf), &pos, 1024, 10, &cb);
     ASSERT_EQ(rv, HWIRE_ECALLBACK);
 
     TEST_END();
@@ -324,7 +324,8 @@ void test_parse_request_uri_invalid_chars(void)
     int rv;
     const char *buf;
 
-    /* RFC 3986: 0x01 is a CTL, not a URI character → MUST reject: HWIRE_EURI. */
+    /* RFC 3986: 0x01 is a CTL, not a URI character → MUST reject: HWIRE_EURI.
+     */
     buf = "GET /p\x01 HTTP/1.1\r\n\r\n";
     pos = 0;
     rv  = hwire_parse_request(buf, strlen(buf), &pos, 1024, 10, &cb);
@@ -352,9 +353,91 @@ void test_parse_request_uri_invalid_chars(void)
 
     /* Long header value (SIMD coverage): 64 VCHAR characters */
     buf = "Long: "
-          "1234567890123456789012345678901234567890123456789012345678901234\r\n\r\n";
+          "1234567890123456789012345678901234567890123456789012345678901234\r\n"
+          "\r\n";
     pos = 0;
     rv  = hwire_parse_headers(buf, strlen(buf), &pos, 1024, 10, &cb);
+    ASSERT_OK(rv);
+
+    TEST_END();
+}
+
+/*
+ * Covers: RFC 9112 §2.2  line termination
+ *   A recipient MUST recognize a single LF as a line terminator (lenient).
+ * MUST accept: "GET / HTTP/1.1\n\r\n" (bare LF after version) → HWIRE_OK.
+ */
+void test_parse_request_lf_eol(void)
+{
+    TEST_START("test_parse_request_lf_eol");
+
+    char key_storage[TEST_KEY_SIZE];
+    hwire_callbacks_t cb = {
+        .key_lc = {.buf = key_storage, .size = sizeof(key_storage), .len = 0},
+        .request_cb = mock_request_cb,
+        .header_cb  = mock_header_cb
+    };
+    size_t pos      = 0;
+    const char *buf = "GET / HTTP/1.1\n\r\n";
+    int rv = hwire_parse_request(buf, strlen(buf), &pos, 1024, 10, &cb);
+    ASSERT_OK(rv);
+    ASSERT_EQ(pos, strlen(buf));
+
+    TEST_END();
+}
+
+/*
+ * Covers: RFC 3986 §2.3  unreserved = ALPHA / DIGIT / "-" / "." / "_" / "~"
+ *         RFC 9110 §9.1  method = token = 1*tchar
+ * MUST accept: '~' (0x7E, unreserved per RFC 3986 §2.3) in request-target.
+ * MUST reject: raw bytes > 0x7F (obs-text) in request-target → HWIRE_EURI
+ *   (RFC 3986 requires percent-encoding for non-ASCII bytes).
+ * MUST accept: non-alpha tchar characters ('!' '#' '$' etc.) as method chars,
+ *   since method = token = 1*tchar (RFC 9110 §9.1).
+ */
+void test_parse_request_uri_chars(void)
+{
+    TEST_START("test_parse_request_uri_chars");
+
+    char key_storage[TEST_KEY_SIZE];
+    hwire_callbacks_t cb = {
+        .key_lc = {.buf = key_storage, .size = sizeof(key_storage), .len = 0},
+        .request_cb = mock_request_cb,
+        .header_cb  = mock_header_cb
+    };
+    size_t pos;
+    int rv;
+    const char *buf;
+
+    /* RFC 3986 §2.3: '~' (0x7E) is an unreserved character — MUST accept */
+    buf = "GET /path~file HTTP/1.1\r\n\r\n";
+    pos = 0;
+    rv  = hwire_parse_request(buf, strlen(buf), &pos, 1024, 10, &cb);
+    ASSERT_OK(rv);
+
+    /* '~' at the start of the path — MUST accept */
+    buf = "GET /~user HTTP/1.1\r\n\r\n";
+    pos = 0;
+    rv  = hwire_parse_request(buf, strlen(buf), &pos, 1024, 10, &cb);
+    ASSERT_OK(rv);
+
+    /* RFC 3986: raw byte 0x80 (obs-text) is not a URI character; must be
+     * percent-encoded → MUST reject with HWIRE_EURI */
+    buf = "GET /\x80 HTTP/1.1\r\n\r\n";
+    pos = 0;
+    rv  = hwire_parse_request(buf, strlen(buf), &pos, 1024, 10, &cb);
+    ASSERT_EQ(rv, HWIRE_EURI);
+
+    /* RFC 9110 §9.1: method = token = 1*tchar; '!' is tchar → MUST accept */
+    buf = "!GET / HTTP/1.1\r\n\r\n";
+    pos = 0;
+    rv  = hwire_parse_request(buf, strlen(buf), &pos, 1024, 10, &cb);
+    ASSERT_OK(rv);
+
+    /* '#' is tchar → MUST accept as part of method */
+    buf = "#tag / HTTP/1.1\r\n\r\n";
+    pos = 0;
+    rv  = hwire_parse_request(buf, strlen(buf), &pos, 1024, 10, &cb);
     ASSERT_OK(rv);
 
     TEST_END();
@@ -371,6 +454,8 @@ int main(void)
     test_parse_request_header_errors();
     test_parse_request_uri_forms();
     test_parse_request_uri_invalid_chars();
+    test_parse_request_lf_eol();
+    test_parse_request_uri_chars();
     print_test_summary();
     return g_tests_failed;
 }
