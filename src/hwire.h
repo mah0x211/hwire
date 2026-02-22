@@ -374,9 +374,9 @@ int hwire_parse_quoted_string(const char *str, size_t len, size_t *pos,
  * @return HWIRE_ECALLBACK if callback returned non-zero
  * @return HWIRE_ENOBUFS if number of parameters exceeds maxnparams
  */
-int hwire_parse_parameters(char *str, size_t len, size_t *pos, size_t maxlen,
-                           uint8_t maxnparams, int skip_leading_semicolon,
-                           hwire_callbacks_t *cb);
+int hwire_parse_parameters(const char *str, size_t len, size_t *pos,
+                           size_t maxlen, uint8_t maxnparams,
+                           int skip_leading_semicolon, hwire_callbacks_t *cb);
 
 /** @} */ /* end of String Parsing Functions */
 
@@ -404,8 +404,9 @@ int hwire_parse_parameters(char *str, size_t len, size_t *pos, size_t maxlen,
  * @return HWIRE_ECALLBACK if callback returned non-zero
  * @return HWIRE_ENOBUFS if extension count exceeds maxexts
  */
-int hwire_parse_chunksize(char *str, size_t len, size_t *pos, size_t maxlen,
-                          uint8_t maxexts, hwire_callbacks_t *cb);
+int hwire_parse_chunksize(const char *str, size_t len, size_t *pos,
+                          size_t maxlen, uint8_t maxexts,
+                          hwire_callbacks_t *cb);
 
 /**
  * @brief Parse HTTP headers
@@ -429,7 +430,7 @@ int hwire_parse_chunksize(char *str, size_t len, size_t *pos, size_t maxlen,
  * @return HWIRE_EKEYLEN if key length exceeds cb->key_lc.size
  * @return HWIRE_ECALLBACK if callback returned non-zero
  */
-int hwire_parse_headers(char *str, size_t len, size_t *pos, size_t maxlen,
+int hwire_parse_headers(const char *str, size_t len, size_t *pos, size_t maxlen,
                         uint8_t maxnhdrs, hwire_callbacks_t *cb);
 
 /**
@@ -438,7 +439,7 @@ int hwire_parse_headers(char *str, size_t len, size_t *pos, size_t maxlen,
  * Parses request line and headers, calling request_cb after request line
  * and header_cb for each header.
  *
- * @param str String to parse (must be writable, must not be NULL)
+ * @param str String to parse (must not be NULL)
  * @param len Length of string
  * @param pos Input: start offset, Output: end offset (must not be NULL)
  * @param maxlen Maximum message length
@@ -453,7 +454,7 @@ int hwire_parse_headers(char *str, size_t len, size_t *pos, size_t maxlen,
  * @return HWIRE_ECALLBACK if callback returned non-zero
  * @return HWIRE_ENOBUFS if header count exceeds maxnhdrs
  */
-int hwire_parse_request(char *str, size_t len, size_t *pos, size_t maxlen,
+int hwire_parse_request(const char *str, size_t len, size_t *pos, size_t maxlen,
                         uint8_t maxnhdrs, hwire_callbacks_t *cb);
 
 /**
@@ -462,7 +463,7 @@ int hwire_parse_request(char *str, size_t len, size_t *pos, size_t maxlen,
  * Parses status line and headers, calling response_cb after status line
  * and header_cb for each header.
  *
- * @param str String to parse (must be writable, must not be NULL)
+ * @param str String to parse (must not be NULL)
  * @param len Length of string
  * @param pos Input: start offset, Output: end offset (must not be NULL)
  * @param maxlen Maximum message length
@@ -477,8 +478,9 @@ int hwire_parse_request(char *str, size_t len, size_t *pos, size_t maxlen,
  * @return HWIRE_ECALLBACK if callback returned non-zero
  * @return HWIRE_ENOBUFS if header count exceeds maxnhdrs
  */
-int hwire_parse_response(char *str, size_t len, size_t *pos, size_t maxlen,
-                         uint8_t maxnhdrs, hwire_callbacks_t *cb);
+int hwire_parse_response(const char *str, size_t len, size_t *pos,
+                         size_t maxlen, uint8_t maxnhdrs,
+                         hwire_callbacks_t *cb);
 
 /** @} */ /* end of HTTP Parsing Functions */
 
