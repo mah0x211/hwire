@@ -45,6 +45,8 @@
 # define ALIGNED(n) __attribute__((aligned(n)))
 #else
 # define ALIGNED(n)
+// Defensive: undefine all SIMD arch macros so that the header block below
+// falls through to #else and defines NO_SIMD automatically.
 # undef __AVX2__
 # undef __SSE4_2__
 # undef __SSSE3__
@@ -53,9 +55,10 @@
 # undef __ARM_NEON
 #endif
 
-// SIMD intrinsic headers (included once here for all SIMD paths below).
-// Each header transitively includes its prerequisites: AVX2 ⊃ SSE4.2 ⊃ SSSE3 ⊃
-// SSE2.
+// SIMD intrinsic headers.  Each x86 header transitively includes its
+// prerequisites: AVX2 ⊃ SSE4.2 ⊃ SSSE3 ⊃ SSE2.
+// NO_SIMD is defined when no known SIMD architecture is active, including
+// after the defensive undef-s above for unknown compilers.
 #if defined(__AVX2__)
 # include <immintrin.h>
 #elif defined(__SSE4_2__)
@@ -64,9 +67,44 @@
 # include <tmmintrin.h>
 #elif defined(__SSE2__)
 # include <emmintrin.h>
-#endif
-#if defined(__aarch64__) || (defined(__arm__) && defined(__ARM_NEON))
+#elif defined(__aarch64__) || (defined(__arm__) && defined(__ARM_NEON))
 # include <arm_neon.h>
+#else
+# define NO_SIMD
+#endif
+
+// ctz32/ctz64: count trailing zeros.
+// Defined only when the SIMD arch that uses each function is active.
+// <intrin.h> is guarded by NO_SIMD to avoid including it when SIMD is disabled.
+#if defined(_MSC_VER) && !defined(NO_SIMD)
+# include <intrin.h>
+#endif
+
+#if defined(__AVX2__) || defined(__SSE4_2__) || defined(__SSSE3__) ||          \
+    defined(__SSE2__)
+static inline int ctz32(unsigned int x)
+{
+# if defined(_MSC_VER)
+    unsigned long i;
+    _BitScanForward(&i, x);
+    return (int)i;
+# else
+    return __builtin_ctz(x);
+# endif
+}
+#endif
+
+#if defined(__aarch64__) || (defined(__arm__) && defined(__ARM_NEON))
+static inline int ctz64(unsigned long long x)
+{
+# if defined(_MSC_VER)
+    unsigned long i;
+    _BitScanForward64(&i, x);
+    return (int)i;
+# else
+    return __builtin_ctzll(x);
+# endif
+}
 #endif
 
 // Sign-flip trick: (byte ^ 0x80) maps unsigned bytes to signed, enabling
@@ -458,7 +496,7 @@ static inline size_t strtchar_cmp_lc(const unsigned char *str, size_t len,
             // store 32 bytes (safe: pos+32 <= limit <= lc->size)
             _mm256_storeu_si256((__m256i *)(void *)(buf + pos), lc_out);
             if (mask) {
-                pos += (size_t)__builtin_ctz((unsigned)mask);
+                pos += (size_t)ctz32((unsigned)mask);
                 lc->len = pos;
                 return pos;
             }
@@ -492,7 +530,7 @@ static inline size_t strtchar_cmp_lc(const unsigned char *str, size_t len,
             // store 16 bytes (safe: pos+16 <= limit <= lc->size)
             _mm_storeu_si128((__m128i *)(void *)(buf + pos), lc_out);
             if (mask) {
-                pos += (size_t)__builtin_ctz((unsigned)mask);
+                pos += (size_t)ctz32((unsigned)mask);
                 lc->len = pos;
                 return pos;
             }
@@ -562,7 +600,7 @@ static inline size_t strtchar_cmp(const unsigned char *str, size_t len)
             int mask = _mm256_movemask_epi8(_mm256_cmpeq_epi8(
                 _mm256_and_si256(lo_v, hi_v), _mm256_setzero_si256()));
             if (mask)
-                return pos + (size_t)__builtin_ctz((unsigned)mask);
+                return pos + (size_t)ctz32((unsigned)mask);
             pos += 32;
         } while (pos + 32 <= len);
     }
@@ -583,7 +621,7 @@ static inline size_t strtchar_cmp(const unsigned char *str, size_t len)
             int mask = _mm_movemask_epi8(
                 _mm_cmpeq_epi8(_mm_and_si128(lo_v, hi_v), _mm_setzero_si128()));
             if (mask)
-                return pos + (size_t)__builtin_ctz((unsigned)mask);
+                return pos + (size_t)ctz32((unsigned)mask);
             pos += 16;
         } while (pos + 16 <= len);
     }
@@ -772,14 +810,14 @@ static inline size_t strvchar_neon(const unsigned char *str, size_t len,
 
         uint64_t mask1 = vgetq_lane_u64(qdata, 0);
         if (mask1) {
-            size_t first = (size_t)(__builtin_ctzll(mask1) >> 3);
+            size_t first = (size_t)(ctz64(mask1) >> 3);
             *endc        = str[pos + first]; // L1 hit: data was just loaded
             return pos + first;
         }
 
         uint64_t mask2 = vgetq_lane_u64(qdata, 1);
         if (mask2) {
-            size_t first = 8 + (size_t)(__builtin_ctzll(mask2) >> 3);
+            size_t first = 8 + (size_t)(ctz64(mask2) >> 3);
             *endc        = str[pos + first]; // L1 hit: data was just loaded
             return pos + first;
         }
@@ -856,7 +894,7 @@ static inline size_t strvchar_sse2(const unsigned char *str, size_t len,
         // Create 16-bit mask: bit i is 1 if byte i is invalid
         int mask = _mm_movemask_epi8(is_invalid);
         if (mask) {
-            int first = __builtin_ctz((unsigned int)mask);
+            int first = ctz32((unsigned int)mask);
             // L1 hit: data was just loaded from str+pos
             *endc     = str[pos + (size_t)first];
             return pos + (size_t)first;
@@ -980,7 +1018,7 @@ static inline size_t strvchar_avx2(const unsigned char *str, size_t len,
 
         int mask = _mm256_movemask_epi8(is_invalid);
         if (mask) {
-            int first    = __builtin_ctz((unsigned int)mask);
+            int first    = ctz32((unsigned int)mask);
             // Use VEXTRACTI128 + PSHUFB to extract data[first] from the loaded
             // register — avoids str[pos+first] memory address dependency on
             // 'first'
