@@ -361,6 +361,8 @@ int hwire_parse_parameters(hwire_ctx_t *ctx, const char *str, size_t len,
  * @return HWIRE_EAGAIN if more data needed
  * @return HWIRE_ELEN if length exceeds maxlen
  * @return HWIRE_ERANGE if chunk size exceeds maxsize
+ * @return HWIRE_EILSEQ if byte sequence is illegal
+ * @return HWIRE_EEOL if end-of-line terminator is invalid
  * @return HWIRE_EEXTNAME for invalid extension key
  * @return HWIRE_EEXTVAL for invalid extension value or missing EOL
  * @return HWIRE_ECALLBACK if callback returned non-zero
@@ -388,6 +390,7 @@ int hwire_parse_chunksize(hwire_ctx_t *ctx, const char *str, size_t len,
  * @return HWIRE_EHDRNAME for invalid header name
  * @return HWIRE_EHDRVALUE for invalid header value
  * @return HWIRE_EHDRLEN if header length exceeds maxlen
+ * @return HWIRE_EEOL if end-of-line in header value is invalid (CR without LF)
  * @return HWIRE_ENOBUFS if header count exceeds maxnhdrs
  * @return HWIRE_EKEYLEN if key length exceeds ctx->key_lc.size
  * @return HWIRE_ECALLBACK if callback returned non-zero
@@ -409,10 +412,15 @@ int hwire_parse_headers(hwire_ctx_t *ctx, const char *str, size_t len,
  * @param ctx Parser context (request_cb and header_cb must not be NULL)
  * @return HWIRE_OK on success
  * @return HWIRE_EAGAIN if more data needed
- * @return HWIRE_EILSEQ for invalid method (not tchar)
+ * @return HWIRE_EMETHOD for invalid method (not tchar or missing SP)
  * @return HWIRE_EVERSION for invalid HTTP version
  * @return HWIRE_EEOL for invalid end-of-line
  * @return HWIRE_ELEN if length exceeds maxlen
+ * @return HWIRE_EURI for invalid URI character
+ * @return HWIRE_EHDRNAME for invalid header field name
+ * @return HWIRE_EHDRVALUE for invalid header field value
+ * @return HWIRE_EHDRLEN if header length exceeds maxlen
+ * @return HWIRE_EKEYLEN if key length exceeds ctx->key_lc.size
  * @return HWIRE_ECALLBACK if callback returned non-zero
  * @return HWIRE_ENOBUFS if header count exceeds maxnhdrs
  */
@@ -436,7 +444,12 @@ int hwire_parse_request(hwire_ctx_t *ctx, const char *str, size_t len,
  * @return HWIRE_ESTATUS for invalid status code
  * @return HWIRE_EVERSION for invalid HTTP version
  * @return HWIRE_EEOL for invalid end-of-line
+ * @return HWIRE_EILSEQ for invalid character in reason phrase
  * @return HWIRE_ELEN if length exceeds maxlen
+ * @return HWIRE_EHDRNAME for invalid header field name
+ * @return HWIRE_EHDRVALUE for invalid header field value
+ * @return HWIRE_EHDRLEN if header length exceeds maxlen
+ * @return HWIRE_EKEYLEN if key length exceeds ctx->key_lc.size
  * @return HWIRE_ECALLBACK if callback returned non-zero
  * @return HWIRE_ENOBUFS if header count exceeds maxnhdrs
  */
