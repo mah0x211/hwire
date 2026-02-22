@@ -27,8 +27,8 @@ static void bench_hwire(const unsigned char *data, size_t len)
     cb.key_lc.size = 0;
     cb.header_cb   = dummy_header_cb;
     cb.request_cb  = dummy_request_cb;
-    hwire_parse_request(&cb, (const char *)data, len, &pos, HWIRE_MAX_MSGLEN,
-                        HWIRE_MAX_NHDRS);
+    hwire_parse_request(&cb, (const char *)data, len, &pos, UINT16_MAX,
+                        UINT8_MAX);
 }
 
 static void bench_hwire_lc(const unsigned char *data, size_t len)
@@ -40,8 +40,8 @@ static void bench_hwire_lc(const unsigned char *data, size_t len)
     cb.key_lc.size = sizeof(key_buf);
     cb.header_cb   = dummy_header_cb;
     cb.request_cb  = dummy_request_cb;
-    hwire_parse_request(&cb, (const char *)data, len, &pos, HWIRE_MAX_MSGLEN,
-                        HWIRE_MAX_NHDRS);
+    hwire_parse_request(&cb, (const char *)data, len, &pos, UINT16_MAX,
+                        UINT8_MAX);
 }
 
 TEST_CASE("Header Count, 8 Headers", "[req][header-count][8-headers]")
