@@ -13,7 +13,7 @@ void test_parse_response_valid(void)
     TEST_START("test_parse_response_valid");
 
     char key_storage[TEST_KEY_SIZE];
-    hwire_callbacks_t cb = {
+    hwire_ctx_t cb = {
         .key_lc = {.buf = key_storage, .size = sizeof(key_storage), .len = 0},
         .response_cb = mock_response_cb,
         .header_cb   = mock_header_cb
@@ -25,48 +25,48 @@ void test_parse_response_valid(void)
     /* Standard response with status-code, reason-phrase, and a header */
     buf = "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n";
     pos = 0;
-    rv  = hwire_parse_response(buf, strlen(buf), &pos, 1024, 10, &cb);
+    rv  = hwire_parse_response(&cb, buf, strlen(buf), &pos, 1024, 10);
     ASSERT_OK(rv);
     ASSERT_EQ(pos, strlen(buf));
 
     /* MUST accept: HTTP/1.0 (RFC 9112 §2.3: hwire accepts 1.0 and 1.1) */
     buf = "HTTP/1.0 200 OK\r\n\r\n";
     pos = 0;
-    rv  = hwire_parse_response(buf, strlen(buf), &pos, 1024, 10, &cb);
+    rv  = hwire_parse_response(&cb, buf, strlen(buf), &pos, 1024, 10);
     ASSERT_OK(rv);
 
     /* RFC 9112 §4: reason-phrase is optional (zero characters after mandatory
        SP) */
     buf = "HTTP/1.1 200 \r\n\r\n";
     pos = 0;
-    rv  = hwire_parse_response(buf, strlen(buf), &pos, 1024, 10, &cb);
+    rv  = hwire_parse_response(&cb, buf, strlen(buf), &pos, 1024, 10);
     ASSERT_OK(rv);
 
     /* RFC 9112 §4: SP is required after HTTP-version; non-SP character →
        HWIRE_EVERSION */
     buf = "HTTP/1.1X";
     pos = 0;
-    rv  = hwire_parse_response(buf, strlen(buf), &pos, 1024, 10, &cb);
+    rv  = hwire_parse_response(&cb, buf, strlen(buf), &pos, 1024, 10);
     ASSERT_EQ(rv, HWIRE_EVERSION);
 
     /* RFC 9112 §4: version string not matching HTTP/1.1 or HTTP/1.0 →
        HWIRE_EVERSION returned from parse_version */
     buf = "HTTP/2.0 200 OK\r\n\r\n";
     pos = 0;
-    rv  = hwire_parse_response(buf, strlen(buf), &pos, 1024, 10, &cb);
+    rv  = hwire_parse_response(&cb, buf, strlen(buf), &pos, 1024, 10);
     ASSERT_EQ(rv, HWIRE_EVERSION);
 
     /* EAGAIN (empty) */
     buf = "";
     pos = 0;
-    rv  = hwire_parse_response(buf, 0, &pos, 1024, 10, &cb);
+    rv  = hwire_parse_response(&cb, buf, 0, &pos, 1024, 10);
     ASSERT_EQ(rv, HWIRE_EAGAIN);
 
     /* hwire: first digit of status-code restricted to '1'-'5'; '9' →
        HWIRE_ESTATUS */
     buf = "HTTP/1.1 999 OK\r\n\r\n";
     pos = 0;
-    rv  = hwire_parse_response(buf, strlen(buf), &pos, 1024, 10, &cb);
+    rv  = hwire_parse_response(&cb, buf, strlen(buf), &pos, 1024, 10);
     ASSERT_EQ(rv, HWIRE_ESTATUS);
 
     TEST_END();
@@ -82,14 +82,14 @@ void test_parse_response_cb_fail(void)
     TEST_START("test_parse_response_cb_fail");
 
     char key_storage[TEST_KEY_SIZE];
-    hwire_callbacks_t cb = {
+    hwire_ctx_t cb = {
         .key_lc = {.buf = key_storage, .size = sizeof(key_storage), .len = 0},
         .response_cb = mock_response_cb_fail,
         .header_cb   = mock_header_cb
     };
     size_t pos      = 0;
     const char *buf = "HTTP/1.1 200 OK\r\n\r\n";
-    int rv = hwire_parse_response(buf, strlen(buf), &pos, 1024, 10, &cb);
+    int rv = hwire_parse_response(&cb, buf, strlen(buf), &pos, 1024, 10);
     ASSERT_EQ(rv, HWIRE_ECALLBACK);
 
     TEST_END();
@@ -110,7 +110,7 @@ void test_parse_response_reason_phrase(void)
     TEST_START("test_parse_response_reason_phrase");
 
     char key_storage[TEST_KEY_SIZE];
-    hwire_callbacks_t cb = {
+    hwire_ctx_t cb = {
         .key_lc = {.buf = key_storage, .size = sizeof(key_storage), .len = 0},
         .response_cb = mock_response_cb,
         .header_cb   = mock_header_cb
@@ -123,55 +123,55 @@ void test_parse_response_reason_phrase(void)
        obs-text ) */
     buf = "HTTP/1.1 200 OK  Text\r\n\r\n";
     pos = 0;
-    rv  = hwire_parse_response(buf, strlen(buf), &pos, 1024, 10, &cb);
+    rv  = hwire_parse_response(&cb, buf, strlen(buf), &pos, 1024, 10);
     ASSERT_OK(rv);
 
     /* RFC 9112 §4: HTAB is valid in reason-phrase = *( HTAB / SP / VCHAR /
        obs-text ) */
     buf = "HTTP/1.1 200 OK\tText\r\n\r\n";
     pos = 0;
-    rv  = hwire_parse_response(buf, strlen(buf), &pos, 1024, 10, &cb);
+    rv  = hwire_parse_response(&cb, buf, strlen(buf), &pos, 1024, 10);
     ASSERT_OK(rv);
 
     /* MUST return HWIRE_EAGAIN: CR received but LF not yet present
        (incomplete CRLF) */
     buf = "HTTP/1.1 200 OK\r";
     pos = 0;
-    rv  = hwire_parse_response(buf, strlen(buf), &pos, 1024, 10, &cb);
+    rv  = hwire_parse_response(&cb, buf, strlen(buf), &pos, 1024, 10);
     ASSERT_EQ(rv, HWIRE_EAGAIN);
 
     /* RFC 9112 §2.2: CR MUST be followed by LF; bare CR with non-LF →
        HWIRE_EEOL */
     buf = "HTTP/1.1 200 OK\rX";
     pos = 0;
-    rv  = hwire_parse_response(buf, strlen(buf), &pos, 1024, 10, &cb);
+    rv  = hwire_parse_response(&cb, buf, strlen(buf), &pos, 1024, 10);
     ASSERT_EQ(rv, HWIRE_EEOL);
 
     /* RFC 9112 §4: 0x01 is not HTAB, SP, VCHAR, or obs-text → HWIRE_EILSEQ */
     buf = "HTTP/1.1 200 \x01\r\n\r\n";
     pos = 0;
-    rv  = hwire_parse_response(buf, strlen(buf), &pos, 1024, 10, &cb);
+    rv  = hwire_parse_response(&cb, buf, strlen(buf), &pos, 1024, 10);
     ASSERT_EQ(rv, HWIRE_EILSEQ);
 
     /* hwire: reason-phrase length limited by maxlen parameter → HWIRE_ELEN if
        exceeded */
     buf = "HTTP/1.1 200 OKThis is a very long reason phrase\r\n\r\n";
     pos = 0;
-    rv  = hwire_parse_response(buf, strlen(buf), &pos, 20, 10, &cb);
+    rv  = hwire_parse_response(&cb, buf, strlen(buf), &pos, 20, 10);
     ASSERT_EQ(rv, HWIRE_ELEN);
 
     /* MUST return HWIRE_EAGAIN: no CRLF yet received (incomplete status-line)
      */
     buf = "HTTP/1.1 200 OK";
     pos = 0;
-    rv  = hwire_parse_response(buf, strlen(buf), &pos, 1024, 10, &cb);
+    rv  = hwire_parse_response(&cb, buf, strlen(buf), &pos, 1024, 10);
     ASSERT_EQ(rv, HWIRE_EAGAIN);
 
     /* hwire: bare LF accepted as reason-phrase line terminator (lenient;
        RFC 9112 §2.2 SHOULD accept bare LF) */
     buf = "HTTP/1.1 200 OK\n\r\n";
     pos = 0;
-    rv  = hwire_parse_response(buf, strlen(buf), &pos, 1024, 10, &cb);
+    rv  = hwire_parse_response(&cb, buf, strlen(buf), &pos, 1024, 10);
     ASSERT_OK(rv);
 
     /* OOB fix: NUL byte in reason-phrase MUST return HWIRE_EILSEQ, not
@@ -182,8 +182,8 @@ void test_parse_response_reason_phrase(void)
     {
         const char nul_buf[] = "HTTP/1.1 200 OK \x00\r\n\r\n";
         pos                  = 0;
-        rv = hwire_parse_response(nul_buf, sizeof(nul_buf) - 1, &pos, 1024, 10,
-                                  &cb);
+        rv = hwire_parse_response(&cb, nul_buf, sizeof(nul_buf) - 1, &pos, 1024,
+                                  10);
         ASSERT_EQ(rv, HWIRE_EILSEQ);
     }
 
@@ -202,7 +202,7 @@ void test_parse_response_status_errors(void)
     TEST_START("test_parse_response_status_errors");
 
     char key_storage[TEST_KEY_SIZE];
-    hwire_callbacks_t cb = {
+    hwire_ctx_t cb = {
         .key_lc = {.buf = key_storage, .size = sizeof(key_storage), .len = 0},
         .response_cb = mock_response_cb,
         .header_cb   = mock_header_cb
@@ -215,14 +215,14 @@ void test_parse_response_status_errors(void)
        input) */
     buf = "HTTP/1.1 200";
     pos = 0;
-    rv  = hwire_parse_response(buf, strlen(buf), &pos, 1024, 10, &cb);
+    rv  = hwire_parse_response(&cb, buf, strlen(buf), &pos, 1024, 10);
     ASSERT_EQ(rv, HWIRE_EAGAIN);
 
     /* RFC 9112 §4: SP is required after status-code; 'X' instead of SP →
        HWIRE_ESTATUS */
     buf = "HTTP/1.1 200X OK\r\n\r\n";
     pos = 0;
-    rv  = hwire_parse_response(buf, strlen(buf), &pos, 1024, 10, &cb);
+    rv  = hwire_parse_response(&cb, buf, strlen(buf), &pos, 1024, 10);
     ASSERT_EQ(rv, HWIRE_ESTATUS);
 
     TEST_END();
@@ -240,7 +240,7 @@ void test_parse_response_edge_cases(void)
     TEST_START("test_parse_response_edge_cases");
 
     char key_storage[TEST_KEY_SIZE];
-    hwire_callbacks_t cb = {
+    hwire_ctx_t cb = {
         .key_lc = {.buf = key_storage, .size = sizeof(key_storage), .len = 0},
         .response_cb = mock_response_cb,
         .header_cb   = mock_header_cb
@@ -252,27 +252,27 @@ void test_parse_response_edge_cases(void)
     /* MUST return HWIRE_EAGAIN: empty input, nothing to parse */
     buf = "";
     pos = 0;
-    rv  = hwire_parse_response(buf, 0, &pos, 1024, 10, &cb);
+    rv  = hwire_parse_response(&cb, buf, 0, &pos, 1024, 10);
     ASSERT_EQ(rv, HWIRE_EAGAIN);
 
     /* RFC 9112 §2.2: leading CRLF before status-line MUST be ignored */
     buf = "\r\nHTTP/1.1 200 OK\r\n\r\n";
     pos = 0;
-    rv  = hwire_parse_response(buf, strlen(buf), &pos, 1024, 10, &cb);
+    rv  = hwire_parse_response(&cb, buf, strlen(buf), &pos, 1024, 10);
     ASSERT_OK(rv);
 
     /* MUST return HWIRE_EAGAIN: version string complete but SP not yet
        received */
     buf = "HTTP/1.1";
     pos = 0;
-    rv  = hwire_parse_response(buf, strlen(buf), &pos, 1024, 10, &cb);
+    rv  = hwire_parse_response(&cb, buf, strlen(buf), &pos, 1024, 10);
     ASSERT_EQ(rv, HWIRE_EAGAIN);
 
     /* MUST return HWIRE_EAGAIN: version string incomplete (fewer than 8 bytes
        available) */
     buf = "HTTP/1.";
     pos = 0;
-    rv  = hwire_parse_response(buf, strlen(buf), &pos, 1024, 10, &cb);
+    rv  = hwire_parse_response(&cb, buf, strlen(buf), &pos, 1024, 10);
     ASSERT_EQ(rv, HWIRE_EAGAIN);
 
     // RFC 9112 §4: no SP after version → HWIRE_EVERSION (covered in
@@ -285,7 +285,7 @@ void test_parse_response_edge_cases(void)
        hwire_parse_headers() → HWIRE_EHDRNAME */
     buf = "HTTP/1.1 200 OK\r\n@Invalid: value\r\n\r\n";
     pos = 0;
-    rv  = hwire_parse_response(buf, strlen(buf), &pos, 1024, 10, &cb);
+    rv  = hwire_parse_response(&cb, buf, strlen(buf), &pos, 1024, 10);
     ASSERT_EQ(rv, HWIRE_EHDRNAME);
 
     TEST_END();
@@ -301,7 +301,7 @@ void test_parse_response_reason_obstext(void)
     TEST_START("test_parse_response_reason_obstext");
 
     char key_storage[TEST_KEY_SIZE];
-    hwire_callbacks_t cb = {
+    hwire_ctx_t cb = {
         .key_lc = {.buf = key_storage, .size = sizeof(key_storage), .len = 0},
         .response_cb = mock_response_cb,
         .header_cb   = mock_header_cb
@@ -313,13 +313,13 @@ void test_parse_response_reason_obstext(void)
     /* obs-text bytes appended to a normal reason phrase */
     buf = "HTTP/1.1 200 OK \x80\xff\r\n\r\n";
     pos = 0;
-    rv  = hwire_parse_response(buf, strlen(buf), &pos, 1024, 10, &cb);
+    rv  = hwire_parse_response(&cb, buf, strlen(buf), &pos, 1024, 10);
     ASSERT_OK(rv);
 
     /* reason-phrase consisting entirely of obs-text */
     buf = "HTTP/1.1 200 \x80\xa5\xff\r\n\r\n";
     pos = 0;
-    rv  = hwire_parse_response(buf, strlen(buf), &pos, 1024, 10, &cb);
+    rv  = hwire_parse_response(&cb, buf, strlen(buf), &pos, 1024, 10);
     ASSERT_OK(rv);
 
     TEST_END();
@@ -337,7 +337,7 @@ void test_parse_response_status_boundaries(void)
     TEST_START("test_parse_response_status_boundaries");
 
     char key_storage[TEST_KEY_SIZE];
-    hwire_callbacks_t cb = {
+    hwire_ctx_t cb = {
         .key_lc = {.buf = key_storage, .size = sizeof(key_storage), .len = 0},
         .response_cb = mock_response_cb,
         .header_cb   = mock_header_cb
@@ -349,32 +349,32 @@ void test_parse_response_status_boundaries(void)
     /* 100 — lowest accepted status code (first digit '1') */
     buf = "HTTP/1.1 100 Continue\r\n\r\n";
     pos = 0;
-    rv  = hwire_parse_response(buf, strlen(buf), &pos, 1024, 10, &cb);
+    rv  = hwire_parse_response(&cb, buf, strlen(buf), &pos, 1024, 10);
     ASSERT_OK(rv);
     ASSERT_EQ(pos, strlen(buf));
 
     /* 599 — highest accepted status code (first digit '5') */
     buf = "HTTP/1.1 599 \r\n\r\n";
     pos = 0;
-    rv  = hwire_parse_response(buf, strlen(buf), &pos, 1024, 10, &cb);
+    rv  = hwire_parse_response(&cb, buf, strlen(buf), &pos, 1024, 10);
     ASSERT_OK(rv);
 
     /* 600 — first digit '6', not in '1'-'5' → MUST reject */
     buf = "HTTP/1.1 600 \r\n\r\n";
     pos = 0;
-    rv  = hwire_parse_response(buf, strlen(buf), &pos, 1024, 10, &cb);
+    rv  = hwire_parse_response(&cb, buf, strlen(buf), &pos, 1024, 10);
     ASSERT_EQ(rv, HWIRE_ESTATUS);
 
     /* 099 — first digit '0', not in '1'-'5' → MUST reject */
     buf = "HTTP/1.1 099 \r\n\r\n";
     pos = 0;
-    rv  = hwire_parse_response(buf, strlen(buf), &pos, 1024, 10, &cb);
+    rv  = hwire_parse_response(&cb, buf, strlen(buf), &pos, 1024, 10);
     ASSERT_EQ(rv, HWIRE_ESTATUS);
 
     /* pos exactness: multi-header response pos MUST equal full input length */
     buf = "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nX-Hdr: val\r\n\r\n";
     pos = 0;
-    rv  = hwire_parse_response(buf, strlen(buf), &pos, 1024, 10, &cb);
+    rv  = hwire_parse_response(&cb, buf, strlen(buf), &pos, 1024, 10);
     ASSERT_OK(rv);
     ASSERT_EQ(pos, strlen(buf));
 
