@@ -297,10 +297,11 @@ static const unsigned char HEXDIGIT[256] = {
  *
  * @param str String containing hexadecimal digits
  * @param len Maximum length of string
- * @param cur Updated to point to the first non-hex character
- * @param maxsize Maximum allowed ssize_t value to prevent overflow
- * @return Converted value on success
- * @return HWIRE_ERANGE if value exceeds SSIZE_MAX
+ * @param cur Output: set to first non-hex character position (0-based)
+ * @param maxsize Maximum allowed value; returns HWIRE_ERANGE if exceeded
+ * @return Converted value on success (0 if no hex digits found, *cur unchanged)
+ * @return HWIRE_ERANGE if value exceeds maxsize (HWIRE_MAX_CHUNKSIZE =
+ * UINT32_MAX)
  *
  * @note This function is used by hwire_parse_chunksize to parse the chunk-size
  * field.
@@ -1209,11 +1210,11 @@ int hwire_parse_quoted_string(const char *str, size_t len, size_t *pos,
 static int parse_parameter(const char *str, size_t len, size_t *pos,
                            size_t maxpos, hwire_callbacks_t *cb)
 {
-    hwire_param_t param = {0};
+    hwire_param_t param       = {0};
     const unsigned char *ustr = (const unsigned char *)str;
-    size_t cur          = *pos;
-    size_t head         = cur;
-    size_t tail         = maxpos;
+    size_t cur                = *pos;
+    size_t head               = cur;
+    size_t tail               = maxpos;
 
     if (tail > len) {
         // adjust tail if exceeds length
@@ -1307,8 +1308,8 @@ static int parse_parameter(const char *str, size_t len, size_t *pos,
  *
  *  parameters = *( OWS ";" OWS [ parameter ] )
  *
- * Caller must check the character after the last parameter for CRLF or
- * end of string (NULL-terminator).
+ * Caller must inspect the byte at *pos (e.g., for CRLF or end of data)
+ * after this function returns HWIRE_OK.
  *
  * @param str String to parse (must not be NULL)
  * @param len Maximum length of string
@@ -1334,10 +1335,10 @@ int hwire_parse_parameters(const char *str, size_t len, size_t *pos,
     assert(cb != NULL);
     assert(cb->param_cb != NULL);
     const unsigned char *ustr = (const unsigned char *)str;
-    size_t cur          = *pos;
-    size_t maxpos       = cur + maxlen;
-    uint8_t nparams     = 0;
-    int rv              = HWIRE_OK;
+    size_t cur                = *pos;
+    size_t maxpos             = cur + maxlen;
+    uint8_t nparams           = 0;
+    int rv                    = HWIRE_OK;
 
     if (skip_leading_semicolon) {
         // skip leading semicolon if present
@@ -1352,10 +1353,14 @@ CHECK_NEXT_PARAM:
     }
 
     *pos = cur;
+    if (cur >= len) {
+        // buffer exhausted: no ';' found, no more parameters
+        return HWIRE_OK;
+    }
     if (ustr[cur] != SEMICOLON) {
         // no more parameters
-        // NOTE: user must check a last character after this function.
-        // E.g., for CRLF or end of string (NULL-terminator).
+        // NOTE: caller must inspect the byte at *pos for CRLF or other
+        // terminator after this function returns HWIRE_OK.
         return HWIRE_OK;
     }
 
@@ -1387,19 +1392,19 @@ CHECK_PARAM:
     // reset key_lc.len before parsing each parameter
     cb->key_lc.len = 0;
 
-    // parse one parameter
-    // RFC 9110 5.6.6: parameters = *( OWS ";" OWS [ parameter ] )
-    if (ustr[cur] == SEMICOLON) {
-        // empty parameter, skip
-        goto SKIP_SEMICOLON;
-    }
-
     // Checking for end of string is required because we might have
     // consumed a semicolon (empty parameter) and reached EOS.
     // In this case, we have a valid empty parameter at the end, so return OK.
     if (cur == len) {
         *pos = cur;
         return HWIRE_OK;
+    }
+
+    // parse one parameter
+    // RFC 9110 5.6.6: parameters = *( OWS ";" OWS [ parameter ] )
+    if (ustr[cur] == SEMICOLON) {
+        // empty parameter, skip
+        goto SKIP_SEMICOLON;
     }
 
     rv = parse_parameter(str, len, &cur, maxpos, cb);
@@ -1420,8 +1425,6 @@ CHECK_PARAM:
  * @{
  */
 
-#include <stdio.h>
-
 /**
  * @brief Parse chunk-size and optional chunk-extensions from a chunk-size line
  *
@@ -1431,9 +1434,11 @@ CHECK_PARAM:
  *   ext-name = token
  *   ext-val = token / quoted-string
  *
- * @param str Input string containing the chunk-size line
+ * @param str Input string containing the chunk-size line (must start at
+ * chunk-size)
  * @param len Length of input string
- * @param pos Input: start offset, Output: end offset (must not be NULL)
+ * @param pos Output: bytes consumed from str[0] (must not be NULL; must be 0 on
+ * entry)
  * @param maxlen Maximum allowed length for parsing
  * @param maxexts Maximum number of chunk-extensions to parse
  * @param cb Callback context (must not be NULL)
@@ -1459,14 +1464,14 @@ int hwire_parse_chunksize(const char *str, size_t len, size_t *pos,
     assert(cb != NULL);
     assert(cb->chunksize_cb != NULL);
     const unsigned char *ustr = (const unsigned char *)str;
-    size_t cur          = *pos;
-    size_t head         = 0;
-    const unsigned char *key  = NULL;
-    size_t klen         = 0;
-    const unsigned char *val  = NULL;
-    size_t vlen         = 0;
-    int64_t size        = 0;
-    uint8_t nexts       = 0;
+    size_t cur  = 0; // hex2size always scans from str[0]; *pos is output-only
+    size_t head = 0;
+    const unsigned char *key = NULL;
+    size_t klen              = 0;
+    const unsigned char *val = NULL;
+    size_t vlen              = 0;
+    int64_t size             = 0;
+    uint8_t nexts            = 0;
 
     if (!len) {
         // need more bytes
@@ -1480,7 +1485,7 @@ int hwire_parse_chunksize(const char *str, size_t len, size_t *pos,
     if (size < 0) {
         // chunk size exceeds maximum allowed size or invalid
         return (int)size;
-    } else if (cur == *pos) {
+    } else if (cur == 0) {
         // no hexadecimal digits found
         return HWIRE_EILSEQ;
     }
@@ -1514,8 +1519,8 @@ CHECK_EOL:
     do {                                                                       \
         if (skip_ws(ustr, len, &cur, maxlen) != HWIRE_OK) {                    \
             return HWIRE_ELEN;                                                 \
-        } else if (ustr[cur] == 0) {                                           \
-            /* more bytes need */                                              \
+        } else if (cur >= len) {                                               \
+            /* more bytes needed */                                            \
             return HWIRE_EAGAIN;                                               \
         }                                                                      \
     } while (0)
@@ -1531,8 +1536,8 @@ CHECK_EOL:
     // found tail
     case CR:
         cur++;
-        if (!ustr[cur]) {
-            // more bytes need
+        if (cur >= len) {
+            // more bytes needed
             return HWIRE_EAGAIN;
         } else if (ustr[cur] != LF) {
             // invalid end-of-line terminator
@@ -1752,21 +1757,24 @@ int hwire_parse_headers(const char *str, size_t len, size_t *pos, size_t maxlen,
     const unsigned char *ustr = (const unsigned char *)str;
     const unsigned char *top  = ustr;
     const unsigned char *head = 0;
-    uint8_t nhdr        = 0;
-    size_t cur          = 0;
-    int rv              = 0;
-    size_t klen         = 0;
-    size_t vlen         = 0;
+    uint8_t nhdr              = 0;
+    size_t cur                = 0;
+    int rv                    = 0;
+    size_t klen               = 0;
+    size_t vlen               = 0;
     hwire_header_t header;
 
 RETRY:
-    // End-of-headers (CR/LF) or incomplete data (0) — happens once per request,
+    // End-of-headers (CR/LF) or incomplete data — happens once per request,
     // not once per header. Use unlikely to keep the hot header-parsing path
     // as a straight-line fall-through.
+    if (unlikely(len == 0)) {
+        return HWIRE_EAGAIN;
+    }
     if (unlikely(*ustr <= CR)) {
         // Most common: CRLF end-of-headers (browsers always send CRLF)
         if (likely(*ustr == CR)) {
-            if (unlikely(!ustr[1])) {
+            if (unlikely(len < 2)) {
                 return HWIRE_EAGAIN;
             } else if (likely(ustr[1] == LF)) {
                 ustr += 2;
@@ -1778,8 +1786,6 @@ RETRY:
             ustr++;
             *pos = (size_t)(ustr - top);
             return HWIRE_OK;
-        } else if (*ustr == 0) {
-            return HWIRE_EAGAIN;
         }
         // Any other control char ≤ CR: fall through → parse_hkey rejects
     }
@@ -1803,13 +1809,9 @@ RETRY:
     }
 
     // skip OWS
-#define IS_OWS() (ustr[cur] == SP || ustr[cur] == HT)
-    if (likely(IS_OWS())) {
-        do {
-            cur++;
-        } while (IS_OWS());
+    while (cur < len && (ustr[cur] == SP || ustr[cur] == HT)) {
+        cur++;
     }
-#undef IS_OWS
 
     // re-check maximum header length constraint
     if (unlikely(cur > maxlen)) {
@@ -1982,11 +1984,10 @@ int hwire_parse_request(const char *str, size_t len, size_t *pos, size_t maxlen,
     int rv     = 0;
 
 SKIP_NEXT_CRLF:
-    switch (*ustr) {
-    // need more bytes
-    case 0:
+    if (unlikely(len == 0)) {
         return HWIRE_EAGAIN;
-
+    }
+    switch (*ustr) {
     case CR:
     case LF:
         ustr++;
@@ -2023,17 +2024,15 @@ SKIP_NEXT_CRLF:
     }
 
     // check end-of-line after version
-    switch (ustr[cur]) {
-    case 0:
+    if (unlikely(cur >= len)) {
         return HWIRE_EAGAIN;
-
+    }
+    switch (ustr[cur]) {
     case CR:
-        // null-terminated
-        if (!ustr[cur + 1]) {
+        if (cur + 1 >= len) {
             return HWIRE_EAGAIN;
-        }
-        // invalid end-of-line terminator
-        else if (ustr[cur + 1] != LF) {
+        } else if (ustr[cur + 1] != LF) {
+            // invalid end-of-line terminator
             return HWIRE_EEOL;
         }
         cur++;
@@ -2056,7 +2055,8 @@ SKIP_NEXT_CRLF:
 
     // parse headers
     cur = 0;
-    rv  = hwire_parse_headers((const char *)ustr, len, &cur, maxlen, maxnhdrs, cb);
+    rv  = hwire_parse_headers((const char *)ustr, len, &cur, maxlen, maxnhdrs,
+                              cb);
     if (rv != HWIRE_OK) {
         return rv;
     }
@@ -2102,10 +2102,8 @@ static int parse_reason(const unsigned char *str, size_t len, size_t *cur,
             *maxlen = n;
             return HWIRE_OK;
         } else if (unlikely(endc != CR)) {
-            if (unlikely(endc)) {
-                return HWIRE_EILSEQ;
-            }
-            // endc == 0: NUL byte found, need more data
+            // invalid character (including NUL) in reason-phrase
+            return HWIRE_EILSEQ;
         } else if (unlikely(n + 1 != len)) {
             // CR found but next byte is not LF
             return HWIRE_EEOL;
@@ -2177,11 +2175,10 @@ int hwire_parse_response(const char *str, size_t len, size_t *pos,
     int rv     = 0;
 
 SKIP_NEXT_CRLF:
-    switch (*ustr) {
-    // need more bytes
-    case 0:
+    if (unlikely(len == 0)) {
         return HWIRE_EAGAIN;
-
+    }
+    switch (*ustr) {
     case CR:
     case LF:
         ustr++;
@@ -2196,7 +2193,7 @@ SKIP_NEXT_CRLF:
     rv = parse_version(ustr, len, &cur, &rsp.version);
     if (rv != HWIRE_OK) {
         return rv;
-    } else if (!ustr[cur]) {
+    } else if (cur >= len) {
         return HWIRE_EAGAIN;
     } else if (ustr[cur] != SP) {
         return HWIRE_EVERSION;
@@ -2233,7 +2230,8 @@ SKIP_NEXT_CRLF:
 
     // parse headers
     cur = 0;
-    rv  = hwire_parse_headers((const char *)ustr, len, &cur, maxlen, maxnhdrs, cb);
+    rv  = hwire_parse_headers((const char *)ustr, len, &cur, maxlen, maxnhdrs,
+                              cb);
     if (rv != HWIRE_OK) {
         return rv;
     }
