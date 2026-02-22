@@ -1656,7 +1656,7 @@ static int parse_hval(const unsigned char *str, size_t len, size_t *cur,
     if (pos < max) {
         // Stopped at non-field-content; use endc (already set) instead of
         // str[pos]
-        if (likely(endc == CR && pos + 1 < max && str[pos + 1] == LF)) {
+        if (likely(endc == CR && pos + 1 < len && str[pos + 1] == LF)) {
             // valid end of header value, continue to trim OWS and check CRLF
             // set tail position after CRLF and trim trailing OWS
             *cur = pos + 2; // skip CRLF
