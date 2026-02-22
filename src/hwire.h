@@ -51,25 +51,23 @@ extern "C" {
  */
 typedef enum {
     HWIRE_OK        = 0,   /**< Success */
-    HWIRE_HAS_NEXT  = 1,   /**< More items available (e.g., parameters) */
     HWIRE_EAGAIN    = -1,  /**< More data needed */
-    HWIRE_EMSG      = -2,  /**< Invalid message */
-    HWIRE_ELEN      = -3,  /**< Length exceeded */
-    HWIRE_EMETHOD   = -4,  /**< Unimplemented method */
-    HWIRE_EVERSION  = -5,  /**< Unsupported HTTP version */
-    HWIRE_EEOL      = -6,  /**< Invalid end-of-line */
-    HWIRE_EHDRNAME  = -7,  /**< Invalid header name */
-    HWIRE_EHDRVALUE = -8,  /**< Invalid header value */
-    HWIRE_EHDRLEN   = -9,  /**< Header length exceeded */
-    HWIRE_ESTATUS   = -10, /**< Invalid status code */
-    HWIRE_EILSEQ    = -11, /**< Invalid byte sequence */
-    HWIRE_ERANGE    = -12, /**< Value out of range */
-    HWIRE_EEXTNAME  = -13, /**< Invalid extension name */
-    HWIRE_EEXTVAL   = -14, /**< Invalid extension value or missing EOL */
-    HWIRE_ENOBUFS   = -15, /**< Buffer overflow (e.g., max_exts exceeded) */
-    HWIRE_EKEYLEN   = -16, /**< Key length exceeds buffer size */
-    HWIRE_ECALLBACK = -17, /**< Callback returned non-zero */
-    HWIRE_EURI      = -18  /**< Invalid URI character */
+    HWIRE_ELEN      = -2,  /**< Length exceeded */
+    HWIRE_EMETHOD   = -3,  /**< Unimplemented method */
+    HWIRE_EVERSION  = -4,  /**< Unsupported HTTP version */
+    HWIRE_EEOL      = -5,  /**< Invalid end-of-line */
+    HWIRE_EHDRNAME  = -6,  /**< Invalid header name */
+    HWIRE_EHDRVALUE = -7,  /**< Invalid header value */
+    HWIRE_EHDRLEN   = -8,  /**< Header length exceeded */
+    HWIRE_ESTATUS   = -9,  /**< Invalid status code */
+    HWIRE_EILSEQ    = -10, /**< Invalid byte sequence */
+    HWIRE_ERANGE    = -11, /**< Value out of range */
+    HWIRE_EEXTNAME  = -12, /**< Invalid extension name */
+    HWIRE_EEXTVAL   = -13, /**< Invalid extension value or missing EOL */
+    HWIRE_ENOBUFS   = -14, /**< Buffer overflow (e.g., max_exts exceeded) */
+    HWIRE_EKEYLEN   = -15, /**< Key length exceeds buffer size */
+    HWIRE_ECALLBACK = -16, /**< Callback returned non-zero */
+    HWIRE_EURI      = -17  /**< Invalid URI character */
 } hwire_code_t;
 
 /** @} */ /* end of Error Codes */
@@ -79,12 +77,7 @@ typedef enum {
  * @{
  */
 
-#define HWIRE_MAX_STRLEN    4096
-#define HWIRE_MAX_HDRLEN    UINT16_MAX
-#define HWIRE_MAX_MSGLEN    UINT16_MAX
-#define HWIRE_MAX_NHDRS     UINT8_MAX
 #define HWIRE_MAX_CHUNKSIZE UINT32_MAX
-#define HWIRE_MAX_NEXTS     UINT8_MAX
 
 /** @} */ /* end of Maximum Values */
 
@@ -361,7 +354,7 @@ int hwire_parse_parameters(hwire_ctx_t *ctx, const char *str, size_t len,
  * @param pos Output: bytes consumed from str[0] (after CRLF, must not be NULL;
  *            must be 0 on entry — str must point to the start of chunk-size
  * data)
- * @param maxlen Maximum string length (HWIRE_MAX_STRLEN)
+ * @param maxlen Maximum string length
  * @param maxexts Maximum number of extensions
  * @param ctx Parser context (must not be NULL)
  * @return HWIRE_OK on success, CRLF consumed
