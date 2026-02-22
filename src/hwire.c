@@ -1375,7 +1375,7 @@ static int parse_parameter(const char *str, size_t len, size_t *pos,
  * @param str String to parse (must not be NULL)
  * @param len Maximum length of string
  * @param pos Input: start offset, Output: end offset (must not be NULL)
- * @param maxlen Maximum length (default: HWIRE_MAX_STRLEN)
+ * @param maxlen Maximum length of the input string
  * @param maxnparams Maximum number of parameters
  * @param skip_leading_semicolon Non-zero to skip semicolon check for first
  * @param cb Callback context (must not be NULL)
