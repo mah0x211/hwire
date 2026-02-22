@@ -2085,45 +2085,33 @@ SKIP_NEXT_CRLF:
  * @return HWIRE_EEOL for invalid end-of-line
  * @return HWIRE_EILSEQ for invalid byte sequence
  */
-static int parse_reason_hwire(unsigned char *str, size_t len, size_t *cur,
-                              size_t *maxlen)
+static int parse_reason(unsigned char *str, size_t len, size_t *cur,
+                        size_t *maxlen)
 {
-    size_t pos   = 0;
-    size_t limit = (len > *maxlen) ? *maxlen : len;
+    size_t limit       = (len > *maxlen) ? *maxlen : len;
+    unsigned char endc = 0;
+    size_t n           = strfcchar(str, limit, &endc);
 
-CHECK_NEXT: {
-    size_t local_pos = 0;
-    size_t n =
-        hwire_parse_vchar((const char *)str + pos, limit - pos, &local_pos);
-    pos += n;
-}
-    if (pos < limit) {
-        unsigned char c = str[pos];
-        switch (c) {
-        case HT:
-        case SP:
-            // skip OWS
-            pos++;
-            while (pos < limit && (str[pos] == HT || str[pos] == SP)) {
-                pos++;
-            }
-            goto CHECK_NEXT;
-
-        case CR:
-            if (!str[pos + 1]) {
-                break;
-            }
-            if (str[pos + 1] != LF) {
-                return HWIRE_EEOL;
-            }
-        case LF:
-            *cur    = pos + 1 + (c == CR);
-            *maxlen = pos;
+    if (n < limit) {
+        if (likely(endc == CR && n + 1 < len && str[n + 1] == LF)) {
+            *maxlen = n;
+            *cur    = n + 2;
             return HWIRE_OK;
-
-        default:
-            return HWIRE_EILSEQ;
+        } else if (likely(endc == LF)) {
+            *cur    = n + 1;
+            *maxlen = n;
+            return HWIRE_OK;
+        } else if (unlikely(endc != CR)) {
+            if (unlikely(endc)) {
+                return HWIRE_EILSEQ;
+            }
+            // endc == 0: NUL byte found, need more data
+        } else if (unlikely(n + 1 != len)) {
+            // CR found but next byte is not LF
+            return HWIRE_EEOL;
         }
+        // CR at exact end of buffer: need more data
+        return HWIRE_EAGAIN;
     }
 
     // phrase-length too large
@@ -2145,8 +2133,8 @@ CHECK_NEXT: {
  * @return HWIRE_EAGAIN if more data needed
  * @return HWIRE_ESTATUS for invalid status code
  */
-static int parse_status_hwire(const unsigned char *str, size_t len, size_t *cur,
-                              uint16_t *status)
+static int parse_status(const unsigned char *str, size_t len, size_t *cur,
+                        uint16_t *status)
 {
 #define STATUS_LEN 3
 
@@ -2219,7 +2207,7 @@ SKIP_NEXT_CRLF:
     // parse status
     // status-code = 3DIGIT
     // RFC 7230 3.1.2 / RFC 9112 4: Status Code
-    rv = parse_status_hwire(ustr, len, &cur, &rsp.status);
+    rv = parse_status(ustr, len, &cur, &rsp.status);
     if (rv != HWIRE_OK) {
         return rv;
     }
@@ -2231,7 +2219,7 @@ SKIP_NEXT_CRLF:
     // RFC 7230 3.1.2 / RFC 9112 4: Reason Phrase
     rsp.reason.ptr = (const char *)ustr;
     rsp.reason.len = maxlen;
-    rv             = parse_reason_hwire(ustr, len, &cur, &rsp.reason.len);
+    rv             = parse_reason(ustr, len, &cur, &rsp.reason.len);
     if (rv != HWIRE_OK) {
         return rv;
     }
