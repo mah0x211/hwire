@@ -354,12 +354,12 @@ int hwire_parse_quoted_string(const char *str, size_t len, size_t *pos,
  *   parameters = *( OWS ";" OWS [ parameter ] )
  *   parameter = parameter-name "=" parameter-value
  *
- * Caller must check the character after the last parameter for CRLF or
- * end of string (NULL-terminator).
+ * Caller must inspect the byte at *pos (e.g., for CRLF or end of data)
+ * after this function returns HWIRE_OK.
  *
  * @param str String to parse (must not be NULL)
  * @param len Maximum length of string
- * @param pos Input: start offset, Output: end offset (must not be NULL)
+ * @param pos Output: bytes consumed from str[0] (must not be NULL)
  * @param maxlen Maximum length
  * @param maxnparams Maximum number of parameters
  * @param skip_leading_semicolon Non-zero to skip semicolon check for first
@@ -390,8 +390,9 @@ int hwire_parse_parameters(const char *str, size_t len, size_t *pos,
  *
  * @param str String to parse (must not be NULL)
  * @param len Maximum length of string
- * @param pos Input: start offset, Output: end offset (after CRLF, must not be
- * NULL)
+ * @param pos Output: bytes consumed from str[0] (after CRLF, must not be NULL;
+ *            must be 0 on entry — str must point to the start of chunk-size
+ * data)
  * @param maxlen Maximum string length (HWIRE_MAX_STRLEN)
  * @param maxexts Maximum number of extensions
  * @param cb Callback context (must not be NULL)
@@ -416,7 +417,8 @@ int hwire_parse_chunksize(const char *str, size_t len, size_t *pos,
  *
  * @param str String to parse (must not be NULL)
  * @param len Maximum length of string
- * @param pos Input: start offset, Output: end offset (after empty line CRLF)
+ * @param pos Output: bytes consumed from str[0] after empty-line CRLF (must not
+ * be NULL)
  * @param maxlen Maximum individual header length
  * @param maxnhdrs Maximum number of headers
  * @param cb Callback context (key_lc must be allocated, header_cb must not be
@@ -441,7 +443,7 @@ int hwire_parse_headers(const char *str, size_t len, size_t *pos, size_t maxlen,
  *
  * @param str String to parse (must not be NULL)
  * @param len Length of string
- * @param pos Input: start offset, Output: end offset (must not be NULL)
+ * @param pos Output: bytes consumed from str[0] (must not be NULL)
  * @param maxlen Maximum message length
  * @param maxnhdrs Maximum number of headers
  * @param cb Callback context (request_cb and header_cb must not be NULL)
@@ -465,7 +467,7 @@ int hwire_parse_request(const char *str, size_t len, size_t *pos, size_t maxlen,
  *
  * @param str String to parse (must not be NULL)
  * @param len Length of string
- * @param pos Input: start offset, Output: end offset (must not be NULL)
+ * @param pos Output: bytes consumed from str[0] (must not be NULL)
  * @param maxlen Maximum message length
  * @param maxnhdrs Maximum number of headers
  * @param cb Callback context (response_cb and header_cb must not be NULL)
