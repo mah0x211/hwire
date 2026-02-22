@@ -307,7 +307,7 @@ static const unsigned char HEXDIGIT[256] = {
  * @note HEXDIGIT table is used for fast digit lookup (1-16 for valid hex
  * digits).
  */
-static int64_t hex2size(unsigned char *str, size_t len, size_t *cur,
+static int64_t hex2size(const unsigned char *str, size_t len, size_t *cur,
                         uint32_t maxsize)
 {
     assert(str != NULL);
@@ -613,7 +613,7 @@ static inline size_t strtchar(const unsigned char *str, size_t len,
  * parsing.
  * @note Only SP and HT are considered whitespace (per RFC 7230).
  */
-static inline int skip_ws(unsigned char *str, size_t len, size_t *pos,
+static inline int skip_ws(const unsigned char *str, size_t len, size_t *pos,
                           size_t maxpos)
 {
     assert(str != NULL);
@@ -1206,11 +1206,11 @@ int hwire_parse_quoted_string(const char *str, size_t len, size_t *pos,
  * @see RFC 7231 Section 3.1.1.1 Parameter
  * @see RFC 9110 Section 5.6.6 Parameters
  */
-static int parse_parameter(char *str, size_t len, size_t *pos, size_t maxpos,
-                           hwire_callbacks_t *cb)
+static int parse_parameter(const char *str, size_t len, size_t *pos,
+                           size_t maxpos, hwire_callbacks_t *cb)
 {
     hwire_param_t param = {0};
-    unsigned char *ustr = (unsigned char *)str;
+    const unsigned char *ustr = (const unsigned char *)str;
     size_t cur          = *pos;
     size_t head         = cur;
     size_t tail         = maxpos;
@@ -1325,15 +1325,15 @@ static int parse_parameter(char *str, size_t len, size_t *pos, size_t maxpos,
  * @return HWIRE_ECALLBACK if callback returned non-zero
  * @return HWIRE_ENOBUFS if number of parameters exceeds maxnparams
  */
-int hwire_parse_parameters(char *str, size_t len, size_t *pos, size_t maxlen,
-                           uint8_t maxnparams, int skip_leading_semicolon,
-                           hwire_callbacks_t *cb)
+int hwire_parse_parameters(const char *str, size_t len, size_t *pos,
+                           size_t maxlen, uint8_t maxnparams,
+                           int skip_leading_semicolon, hwire_callbacks_t *cb)
 {
     assert(str != NULL);
     assert(pos != NULL);
     assert(cb != NULL);
     assert(cb->param_cb != NULL);
-    unsigned char *ustr = (unsigned char *)str;
+    const unsigned char *ustr = (const unsigned char *)str;
     size_t cur          = *pos;
     size_t maxpos       = cur + maxlen;
     uint8_t nparams     = 0;
@@ -1451,19 +1451,19 @@ CHECK_PARAM:
  * @note This function requires CRLF (\\r\\n) as the line terminator.
  * @note Extensions with no value have empty string as value (ptr="" len=0).
  */
-int hwire_parse_chunksize(char *str, size_t len, size_t *pos, size_t maxlen,
-                          uint8_t maxexts, hwire_callbacks_t *cb)
+int hwire_parse_chunksize(const char *str, size_t len, size_t *pos,
+                          size_t maxlen, uint8_t maxexts, hwire_callbacks_t *cb)
 {
     assert(str != NULL);
     assert(pos != NULL);
     assert(cb != NULL);
     assert(cb->chunksize_cb != NULL);
-    unsigned char *ustr = (unsigned char *)str;
+    const unsigned char *ustr = (const unsigned char *)str;
     size_t cur          = *pos;
     size_t head         = 0;
-    unsigned char *key  = NULL;
+    const unsigned char *key  = NULL;
     size_t klen         = 0;
-    unsigned char *val  = NULL;
+    const unsigned char *val  = NULL;
     size_t vlen         = 0;
     int64_t size        = 0;
     uint8_t nexts       = 0;
@@ -1636,7 +1636,7 @@ CHECK_EOL:
  *
  * Ported from parse.c:parse_hval
  */
-static int parse_hval(unsigned char *str, size_t len, size_t *cur,
+static int parse_hval(const unsigned char *str, size_t len, size_t *cur,
                       size_t *maxlen)
 {
     size_t max = (len > *maxlen) ? *maxlen : len;
@@ -1696,7 +1696,7 @@ REMOVE_OWS:
  *
  * Ported from parse.c:parse_hkey
  */
-static int parse_hkey(unsigned char *str, size_t len, size_t *cur,
+static int parse_hkey(const unsigned char *str, size_t len, size_t *cur,
                       size_t *maxlen, hwire_callbacks_t *cb)
 {
     size_t max       = (len > *maxlen) ? *maxlen : len;
@@ -1742,16 +1742,16 @@ static int parse_hkey(unsigned char *str, size_t len, size_t *cur,
  *
  * Ported from parse.c:parse_header
  */
-int hwire_parse_headers(char *str, size_t len, size_t *pos, size_t maxlen,
+int hwire_parse_headers(const char *str, size_t len, size_t *pos, size_t maxlen,
                         uint8_t maxnhdrs, hwire_callbacks_t *cb)
 {
     assert(str != NULL);
     assert(pos != NULL);
     assert(cb != NULL);
     assert(cb->header_cb != NULL);
-    unsigned char *ustr = (unsigned char *)str;
-    unsigned char *top  = ustr;
-    unsigned char *head = 0;
+    const unsigned char *ustr = (const unsigned char *)str;
+    const unsigned char *top  = ustr;
+    const unsigned char *head = 0;
     uint8_t nhdr        = 0;
     size_t cur          = 0;
     int rv              = 0;
@@ -1937,7 +1937,7 @@ static int parse_uri(const unsigned char *str, size_t len, size_t *pos,
  * @return HWIRE_EAGAIN if more data needed
  * @return HWIRE_EMETHOD for invalid method (not tchar or no SP)
  */
-static int parse_method(unsigned char *str, size_t len, size_t *pos,
+static int parse_method(const unsigned char *str, size_t len, size_t *pos,
                         hwire_str_t *method)
 {
     size_t cur  = 0;
@@ -1967,7 +1967,7 @@ static int parse_method(unsigned char *str, size_t len, size_t *pos,
 /**
  * @brief Parse request line
  */
-int hwire_parse_request(char *str, size_t len, size_t *pos, size_t maxlen,
+int hwire_parse_request(const char *str, size_t len, size_t *pos, size_t maxlen,
                         uint8_t maxnhdrs, hwire_callbacks_t *cb)
 {
     assert(str != NULL);
@@ -1975,8 +1975,8 @@ int hwire_parse_request(char *str, size_t len, size_t *pos, size_t maxlen,
     assert(cb != NULL);
     assert(cb->request_cb != NULL);
     assert(cb->header_cb != NULL);
-    unsigned char *ustr = (unsigned char *)str;
-    unsigned char *top  = ustr;
+    const unsigned char *ustr = (const unsigned char *)str;
+    const unsigned char *top  = ustr;
     hwire_request_t req;
     size_t cur = 0;
     int rv     = 0;
@@ -2056,7 +2056,7 @@ SKIP_NEXT_CRLF:
 
     // parse headers
     cur = 0;
-    rv  = hwire_parse_headers((char *)ustr, len, &cur, maxlen, maxnhdrs, cb);
+    rv  = hwire_parse_headers((const char *)ustr, len, &cur, maxlen, maxnhdrs, cb);
     if (rv != HWIRE_OK) {
         return rv;
     }
@@ -2085,7 +2085,7 @@ SKIP_NEXT_CRLF:
  * @return HWIRE_EEOL for invalid end-of-line
  * @return HWIRE_EILSEQ for invalid byte sequence
  */
-static int parse_reason(unsigned char *str, size_t len, size_t *cur,
+static int parse_reason(const unsigned char *str, size_t len, size_t *cur,
                         size_t *maxlen)
 {
     size_t limit       = (len > *maxlen) ? *maxlen : len;
@@ -2162,16 +2162,16 @@ static int parse_status(const unsigned char *str, size_t len, size_t *cur,
  * Parses status line and headers, calling response_cb after status line
  * and header_cb for each header.
  */
-int hwire_parse_response(char *str, size_t len, size_t *pos, size_t maxlen,
-                         uint8_t maxnhdrs, hwire_callbacks_t *cb)
+int hwire_parse_response(const char *str, size_t len, size_t *pos,
+                         size_t maxlen, uint8_t maxnhdrs, hwire_callbacks_t *cb)
 {
     assert(str != NULL);
     assert(pos != NULL);
     assert(cb != NULL);
     assert(cb->response_cb != NULL);
     assert(cb->header_cb != NULL);
-    unsigned char *ustr = (unsigned char *)str;
-    unsigned char *top  = ustr;
+    const unsigned char *ustr = (const unsigned char *)str;
+    const unsigned char *top  = ustr;
     hwire_response_t rsp;
     size_t cur = 0;
     int rv     = 0;
@@ -2233,7 +2233,7 @@ SKIP_NEXT_CRLF:
 
     // parse headers
     cur = 0;
-    rv  = hwire_parse_headers((char *)ustr, len, &cur, maxlen, maxnhdrs, cb);
+    rv  = hwire_parse_headers((const char *)ustr, len, &cur, maxlen, maxnhdrs, cb);
     if (rv != HWIRE_OK) {
         return rv;
     }
