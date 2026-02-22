@@ -163,12 +163,44 @@ void test_parse_quoted_string_rfc_invalid(void)
     TEST_END();
 }
 
+/*
+ * Covers: exact pos advancement for hwire_parse_quoted_string.
+ * MUST: pos MUST equal the total byte count of the quoted-string including
+ * both DQUOTE delimiters. MUST: a quoted-pair inside the string MUST count
+ * as 2 bytes (backslash + target char) toward pos.
+ */
+void test_parse_quoted_string_content_verification(void)
+{
+    TEST_START("test_parse_quoted_string_content_verification");
+
+    size_t pos;
+    int rv;
+
+    /* "hello" → 1 + 5 + 1 = 7 bytes → pos=7 */
+    const char *str1 = "\"hello\"";
+    pos              = 0;
+    rv               = hwire_parse_quoted_string(str1, strlen(str1), &pos, 100);
+    ASSERT_OK(rv);
+    ASSERT_EQ(pos, 7);
+
+    /* "he\"llo" with quoted-pair: " + h + e + \ + " + l + l + o + " = 9 bytes
+     */
+    const char *str2 = "\"he\\\"llo\"";
+    pos              = 0;
+    rv               = hwire_parse_quoted_string(str2, strlen(str2), &pos, 100);
+    ASSERT_OK(rv);
+    ASSERT_EQ(pos, 9);
+
+    TEST_END();
+}
+
 int main(void)
 {
     test_parse_quoted_string_valid();
     test_parse_quoted_string_invalid();
     test_parse_quoted_string_rfc_compliance();
     test_parse_quoted_string_rfc_invalid();
+    test_parse_quoted_string_content_verification();
     print_test_summary();
     return g_tests_failed;
 }

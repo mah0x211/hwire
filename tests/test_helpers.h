@@ -72,6 +72,14 @@ int mock_param_cb_fail(hwire_ctx_t *ctx, hwire_param_t *param);
 int mock_chunksize_cb_fail(hwire_ctx_t *ctx, uint32_t size);
 int mock_chunksize_ext_cb_fail(hwire_ctx_t *ctx, hwire_chunksize_ext_t *ext);
 
+/* Verify that a hwire_str_t slice is within [buf, buf+buf_len). */
+static inline int str_in_buf(hwire_str_t s, const char *buf, size_t buf_len)
+{
+    if (s.len == 0)
+        return 1; /* empty slice: ptr irrelevant */
+    return s.ptr >= buf && s.ptr + s.len <= buf + buf_len;
+}
+
 /* Helper to print summary */
 void print_test_summary(void);
 
