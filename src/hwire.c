@@ -1202,13 +1202,13 @@ int hwire_parse_quoted_string(const char *str, size_t len, size_t *pos,
  * @return HWIRE_EAGAIN if more data needed
  * @return HWIRE_EILSEQ for invalid byte sequence
  * @return HWIRE_ELEN if length exceeds maxlen
- * @return HWIRE_EKEYLEN if key length exceeds cb->key_lc.size
+ * @return HWIRE_EKEYLEN if key length exceeds ctx->key_lc.size
  * @return HWIRE_ECALLBACK if callback returned non-zero
  * @see RFC 7231 Section 3.1.1.1 Parameter
  * @see RFC 9110 Section 5.6.6 Parameters
  */
 static int parse_parameter(const char *str, size_t len, size_t *pos,
-                           size_t maxpos, hwire_callbacks_t *cb)
+                           size_t maxpos, hwire_ctx_t *ctx)
 {
     hwire_param_t param       = {0};
     const unsigned char *ustr = (const unsigned char *)str;
@@ -1232,8 +1232,8 @@ static int parse_parameter(const char *str, size_t len, size_t *pos,
     }
 
     // parse parameter-name (token)
-    if (cb->key_lc.size > 0) {
-        size_t n = strtchar(ustr + cur, tail - cur, &cb->key_lc);
+    if (ctx->key_lc.size > 0) {
+        size_t n = strtchar(ustr + cur, tail - cur, &ctx->key_lc);
         if (n == SIZE_MAX) {
             *pos = cur;
             return HWIRE_EKEYLEN;
@@ -1271,7 +1271,7 @@ static int parse_parameter(const char *str, size_t len, size_t *pos,
             param.value.len = cur - head - 2; // exclude quotes
 
             // call callback
-            if (cb->param_cb(cb, &param)) {
+            if (ctx->param_cb(ctx, &param)) {
                 return HWIRE_ECALLBACK;
             }
         }
@@ -1295,7 +1295,7 @@ static int parse_parameter(const char *str, size_t len, size_t *pos,
     *pos = cur;
 
     // call callback
-    if (cb->param_cb(cb, &param)) {
+    if (ctx->param_cb(ctx, &param)) {
         return HWIRE_ECALLBACK;
     }
     return HWIRE_OK;
@@ -1322,18 +1322,18 @@ static int parse_parameter(const char *str, size_t len, size_t *pos,
  * @return HWIRE_EAGAIN if more data needed
  * @return HWIRE_EILSEQ for invalid byte sequence
  * @return HWIRE_ELEN if length exceeds maxlen
- * @return HWIRE_EKEYLEN if key length exceeds cb->key_lc.size
+ * @return HWIRE_EKEYLEN if key length exceeds ctx->key_lc.size
  * @return HWIRE_ECALLBACK if callback returned non-zero
  * @return HWIRE_ENOBUFS if number of parameters exceeds maxnparams
  */
-int hwire_parse_parameters(const char *str, size_t len, size_t *pos,
-                           size_t maxlen, uint8_t maxnparams,
-                           int skip_leading_semicolon, hwire_callbacks_t *cb)
+int hwire_parse_parameters(hwire_ctx_t *ctx, const char *str, size_t len,
+                           size_t *pos, size_t maxlen, uint8_t maxnparams,
+                           int skip_leading_semicolon)
 {
     assert(str != NULL);
     assert(pos != NULL);
-    assert(cb != NULL);
-    assert(cb->param_cb != NULL);
+    assert(ctx != NULL);
+    assert(ctx->param_cb != NULL);
     const unsigned char *ustr = (const unsigned char *)str;
     size_t cur                = *pos;
     size_t maxpos             = cur + maxlen;
@@ -1390,7 +1390,7 @@ CHECK_PARAM:
     }
 
     // reset key_lc.len before parsing each parameter
-    cb->key_lc.len = 0;
+    ctx->key_lc.len = 0;
 
     // Checking for end of string is required because we might have
     // consumed a semicolon (empty parameter) and reached EOS.
@@ -1407,7 +1407,7 @@ CHECK_PARAM:
         goto SKIP_SEMICOLON;
     }
 
-    rv = parse_parameter(str, len, &cur, maxpos, cb);
+    rv = parse_parameter(str, len, &cur, maxpos, ctx);
     if (rv == HWIRE_OK) {
         // parsed one parameter, continue to next
         nparams++;
@@ -1456,13 +1456,13 @@ CHECK_PARAM:
  * @note This function requires CRLF (\\r\\n) as the line terminator.
  * @note Extensions with no value have empty string as value (ptr="" len=0).
  */
-int hwire_parse_chunksize(const char *str, size_t len, size_t *pos,
-                          size_t maxlen, uint8_t maxexts, hwire_callbacks_t *cb)
+int hwire_parse_chunksize(hwire_ctx_t *ctx, const char *str, size_t len,
+                          size_t *pos, size_t maxlen, uint8_t maxexts)
 {
     assert(str != NULL);
     assert(pos != NULL);
-    assert(cb != NULL);
-    assert(cb->chunksize_cb != NULL);
+    assert(ctx != NULL);
+    assert(ctx->chunksize_cb != NULL);
     const unsigned char *ustr = (const unsigned char *)str;
     size_t cur  = 0; // hex2size always scans from str[0]; *pos is output-only
     size_t head = 0;
@@ -1491,7 +1491,7 @@ int hwire_parse_chunksize(const char *str, size_t len, size_t *pos,
     }
 
     // call chunksize callback
-    if (cb->chunksize_cb(cb, (uint32_t)size)) {
+    if (ctx->chunksize_cb(ctx, (uint32_t)size)) {
         return HWIRE_ECALLBACK;
     }
 
@@ -1550,7 +1550,7 @@ CHECK_EOL:
                 .key   = {.len = klen, .ptr = (const char *)key              },
                 .value = {.len = vlen, .ptr = (vlen) ? (const char *)val : ""}
             };
-            if (cb->chunksize_ext_cb(cb, &ext)) {
+            if (ctx->chunksize_ext_cb(ctx, &ext)) {
                 return HWIRE_ECALLBACK;
             }
         }
@@ -1576,7 +1576,7 @@ CHECK_EOL:
             .key   = {.len = klen, .ptr = (const char *)key              },
             .value = {.len = vlen, .ptr = (vlen) ? (const char *)val : ""}
         };
-        if (cb->chunksize_ext_cb(cb, &ext)) {
+        if (ctx->chunksize_ext_cb(ctx, &ext)) {
             return HWIRE_ECALLBACK;
         }
         nexts++;
@@ -1702,13 +1702,13 @@ REMOVE_OWS:
  * Ported from parse.c:parse_hkey
  */
 static int parse_hkey(const unsigned char *str, size_t len, size_t *cur,
-                      size_t *maxlen, hwire_callbacks_t *cb)
+                      size_t *maxlen, hwire_ctx_t *ctx)
 {
     size_t max       = (len > *maxlen) ? *maxlen : len;
     size_t tchar_len = 0;
 
-    if (cb->key_lc.size > 0) {
-        tchar_len = strtchar(str, max, &cb->key_lc);
+    if (ctx->key_lc.size > 0) {
+        tchar_len = strtchar(str, max, &ctx->key_lc);
         if (tchar_len == SIZE_MAX) {
             return HWIRE_EKEYLEN;
         }
@@ -1747,13 +1747,13 @@ static int parse_hkey(const unsigned char *str, size_t len, size_t *cur,
  *
  * Ported from parse.c:parse_header
  */
-int hwire_parse_headers(const char *str, size_t len, size_t *pos, size_t maxlen,
-                        uint8_t maxnhdrs, hwire_callbacks_t *cb)
+int hwire_parse_headers(hwire_ctx_t *ctx, const char *str, size_t len,
+                        size_t *pos, size_t maxlen, uint8_t maxnhdrs)
 {
     assert(str != NULL);
     assert(pos != NULL);
-    assert(cb != NULL);
-    assert(cb->header_cb != NULL);
+    assert(ctx != NULL);
+    assert(ctx->header_cb != NULL);
     const unsigned char *ustr = (const unsigned char *)str;
     const unsigned char *top  = ustr;
     const unsigned char *head = 0;
@@ -1796,14 +1796,14 @@ RETRY:
     }
     nhdr++;
 
-    head           = ustr;
-    klen           = maxlen;
-    cb->key_lc.len = 0;
+    head            = ustr;
+    klen            = maxlen;
+    ctx->key_lc.len = 0;
     // parse key and store lowercase in key_lc
     // header-field = field-name ":" OWS field-value OWS
     // field-name = token
     // RFC 7230 3.2 / RFC 9112 5.1: Field Names
-    rv             = parse_hkey(ustr, len, &cur, &klen, cb);
+    rv              = parse_hkey(ustr, len, &cur, &klen, ctx);
     if (unlikely(rv != HWIRE_OK)) {
         return rv;
     }
@@ -1838,7 +1838,7 @@ RETRY:
     header.value.len = vlen;
 
     // call callback
-    if (unlikely(cb->header_cb(cb, &header) != 0)) {
+    if (unlikely(ctx->header_cb(ctx, &header) != 0)) {
         return HWIRE_ECALLBACK;
     }
 
@@ -1969,14 +1969,14 @@ static int parse_method(const unsigned char *str, size_t len, size_t *pos,
 /**
  * @brief Parse request line
  */
-int hwire_parse_request(const char *str, size_t len, size_t *pos, size_t maxlen,
-                        uint8_t maxnhdrs, hwire_callbacks_t *cb)
+int hwire_parse_request(hwire_ctx_t *ctx, const char *str, size_t len,
+                        size_t *pos, size_t maxlen, uint8_t maxnhdrs)
 {
     assert(str != NULL);
     assert(pos != NULL);
-    assert(cb != NULL);
-    assert(cb->request_cb != NULL);
-    assert(cb->header_cb != NULL);
+    assert(ctx != NULL);
+    assert(ctx->request_cb != NULL);
+    assert(ctx->header_cb != NULL);
     const unsigned char *ustr = (const unsigned char *)str;
     const unsigned char *top  = ustr;
     hwire_request_t req;
@@ -2049,14 +2049,14 @@ SKIP_NEXT_CRLF:
     len -= cur;
 
     // call request callback
-    if (cb->request_cb(cb, &req) != 0) {
+    if (ctx->request_cb(ctx, &req) != 0) {
         return HWIRE_ECALLBACK;
     }
 
     // parse headers
     cur = 0;
-    rv  = hwire_parse_headers((const char *)ustr, len, &cur, maxlen, maxnhdrs,
-                              cb);
+    rv  = hwire_parse_headers(ctx, (const char *)ustr, len, &cur, maxlen,
+                              maxnhdrs);
     if (rv != HWIRE_OK) {
         return rv;
     }
@@ -2160,14 +2160,14 @@ static int parse_status(const unsigned char *str, size_t len, size_t *cur,
  * Parses status line and headers, calling response_cb after status line
  * and header_cb for each header.
  */
-int hwire_parse_response(const char *str, size_t len, size_t *pos,
-                         size_t maxlen, uint8_t maxnhdrs, hwire_callbacks_t *cb)
+int hwire_parse_response(hwire_ctx_t *ctx, const char *str, size_t len,
+                         size_t *pos, size_t maxlen, uint8_t maxnhdrs)
 {
     assert(str != NULL);
     assert(pos != NULL);
-    assert(cb != NULL);
-    assert(cb->response_cb != NULL);
-    assert(cb->header_cb != NULL);
+    assert(ctx != NULL);
+    assert(ctx->response_cb != NULL);
+    assert(ctx->header_cb != NULL);
     const unsigned char *ustr = (const unsigned char *)str;
     const unsigned char *top  = ustr;
     hwire_response_t rsp;
@@ -2224,14 +2224,14 @@ SKIP_NEXT_CRLF:
     len -= cur;
 
     // call response callback
-    if (cb->response_cb(cb, &rsp) != 0) {
+    if (ctx->response_cb(ctx, &rsp) != 0) {
         return HWIRE_ECALLBACK;
     }
 
     // parse headers
     cur = 0;
-    rv  = hwire_parse_headers((const char *)ustr, len, &cur, maxlen, maxnhdrs,
-                              cb);
+    rv  = hwire_parse_headers(ctx, (const char *)ustr, len, &cur, maxlen,
+                              maxnhdrs);
     if (rv != HWIRE_OK) {
         return rv;
     }

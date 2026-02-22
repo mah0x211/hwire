@@ -134,39 +134,9 @@ typedef struct {
 } hwire_kv_array_t;
 
 /**
- * @brief Callback context structure
- */
-typedef struct hwire_callbacks_t hwire_callbacks_t;
-
-/**
  * @brief Parameter (key-value pair alias)
  */
 typedef hwire_kv_pair_t hwire_param_t;
-
-/**
- * @brief Parameter callback function type
- *
- * Called for each parameter parsed by hwire_parse_parameters.
- *
- * @param cb Callback context (contains key_lc buffer with lowercase key)
- * @param param Parsed parameter (key.ptr references original input, value is
- * unchanged)
- * @return 0 to continue parsing
- * @return non-zero to stop parsing (HWIRE_ECALLBACK will be returned)
- */
-typedef int (*hwire_param_cb)(hwire_callbacks_t *cb, hwire_param_t *param);
-
-/**
- * @brief Chunk size callback function type
- *
- * Called after parsing chunk-size value.
- *
- * @param cb Callback context
- * @param size Parsed chunk size
- * @return 0 to continue parsing
- * @return non-zero to stop parsing (HWIRE_ECALLBACK will be returned)
- */
-typedef int (*hwire_chunksize_cb)(hwire_callbacks_t *cb, uint32_t size);
 
 /**
  * @brief Header field (key-value pair alias)
@@ -174,35 +144,9 @@ typedef int (*hwire_chunksize_cb)(hwire_callbacks_t *cb, uint32_t size);
 typedef hwire_kv_pair_t hwire_header_t;
 
 /**
- * @brief Header callback function type
- *
- * Called for each header parsed by hwire_parse_headers.
- *
- * @param cb Callback context (key_lc contains lowercase header name)
- * @param header Parsed header (key.ptr references original input,
- *               cb->key_lc.buf contains lowercase key)
- * @return 0 to continue parsing
- * @return non-zero to stop parsing (HWIRE_ECALLBACK will be returned)
- */
-typedef int (*hwire_header_cb)(hwire_callbacks_t *cb, hwire_header_t *header);
-
-/**
  * @brief Chunk extension (key-value pair alias)
  */
 typedef hwire_kv_pair_t hwire_chunksize_ext_t;
-
-/**
- * @brief Chunk extension callback function type
- *
- * Called for each extension parsed by hwire_parse_chunksize.
- *
- * @param cb Callback context
- * @param ext Parsed extension (key and value reference original input)
- * @return 0 to continue parsing
- * @return non-zero to stop parsing (HWIRE_ECALLBACK will be returned)
- */
-typedef int (*hwire_chunksize_ext_cb)(hwire_callbacks_t *cb,
-                                      hwire_chunksize_ext_t *ext);
 
 /**
  * @brief HTTP version enumeration
@@ -222,18 +166,6 @@ typedef struct {
 } hwire_request_t;
 
 /**
- * @brief Request callback function type
- *
- * Called after parsing the request line (method, uri, version).
- *
- * @param cb Callback context
- * @param req Parsed request (method, uri, version reference input buffer)
- * @return 0 to continue parsing
- * @return non-zero to stop parsing (HWIRE_ECALLBACK will be returned)
- */
-typedef int (*hwire_request_cb)(hwire_callbacks_t *cb, hwire_request_t *req);
-
-/**
  * @brief HTTP response
  */
 typedef struct {
@@ -243,30 +175,67 @@ typedef struct {
 } hwire_response_t;
 
 /**
- * @brief Response callback function type
+ * @brief Parser context
  *
- * Called after parsing the status line (version, status, reason).
- *
- * @param cb Callback context
- * @param rsp Parsed response (version, status, reason reference input buffer)
- * @return 0 to continue parsing
- * @return non-zero to stop parsing (HWIRE_ECALLBACK will be returned)
+ * Holds the user-context pointer, the lowercase-key buffer, and all callback
+ * functions. Allocate on the stack or heap, zero-initialize, then set the
+ * required callbacks and key_lc.buf/size before passing to parse functions.
  */
-typedef int (*hwire_response_cb)(hwire_callbacks_t *cb, hwire_response_t *rsp);
+typedef struct hwire_ctx_st {
+    void *uctx;         /**< User context pointer (not used by the library) */
+    hwire_buf_t key_lc; /**< Lowercase key buffer; caller must allocate
+                           key_lc.buf and set key_lc.size before parsing */
 
-/**
- * @brief Callback context structure
- */
-struct hwire_callbacks_t {
-    void *ctx;                               /**< User context */
-    hwire_buf_t key_lc;                      /**< Lowercase key buffer */
-    hwire_param_cb param_cb;                 /**< Parameter callback */
-    hwire_chunksize_cb chunksize_cb;         /**< Chunk size callback */
-    hwire_chunksize_ext_cb chunksize_ext_cb; /**< Chunk extension callback */
-    hwire_header_cb header_cb;               /**< Header callback */
-    hwire_request_cb request_cb;             /**< Request callback */
-    hwire_response_cb response_cb;           /**< Response callback */
-};
+    /**
+     * Called for each parameter parsed by hwire_parse_parameters.
+     * @param ctx  Parser context
+     * @param param Parsed parameter (key.ptr references input buffer)
+     * @return 0 to continue, non-zero to stop (HWIRE_ECALLBACK)
+     */
+    int (*param_cb)(struct hwire_ctx_st *ctx, hwire_param_t *param);
+
+    /**
+     * Called after parsing the chunk-size value.
+     * @param ctx  Parser context
+     * @param size Parsed chunk size (0 = last chunk)
+     * @return 0 to continue, non-zero to stop (HWIRE_ECALLBACK)
+     */
+    int (*chunksize_cb)(struct hwire_ctx_st *ctx, uint32_t size);
+
+    /**
+     * Called for each chunk extension parsed by hwire_parse_chunksize.
+     * @param ctx Parser context
+     * @param ext Parsed extension (key and value reference input buffer)
+     * @return 0 to continue, non-zero to stop (HWIRE_ECALLBACK)
+     */
+    int (*chunksize_ext_cb)(struct hwire_ctx_st *ctx,
+                            hwire_chunksize_ext_t *ext);
+
+    /**
+     * Called for each header field parsed by hwire_parse_headers.
+     * @param ctx    Parser context (key_lc.buf contains lowercase field name)
+     * @param header Parsed header (key.ptr references input buffer)
+     * @return 0 to continue, non-zero to stop (HWIRE_ECALLBACK)
+     */
+    int (*header_cb)(struct hwire_ctx_st *ctx, hwire_header_t *header);
+
+    /**
+     * Called after parsing the request line.
+     * @param ctx Parser context
+     * @param req Parsed request (method, uri, version reference input buffer)
+     * @return 0 to continue, non-zero to stop (HWIRE_ECALLBACK)
+     */
+    int (*request_cb)(struct hwire_ctx_st *ctx, hwire_request_t *req);
+
+    /**
+     * Called after parsing the status line.
+     * @param ctx Parser context
+     * @param rsp Parsed response (version, status, reason reference input
+     * buffer)
+     * @return 0 to continue, non-zero to stop (HWIRE_ECALLBACK)
+     */
+    int (*response_cb)(struct hwire_ctx_st *ctx, hwire_response_t *rsp);
+} hwire_ctx_t;
 
 /** @} */ /* end of Data Structures */
 
@@ -365,18 +334,17 @@ int hwire_parse_quoted_string(const char *str, size_t len, size_t *pos,
  * @param skip_leading_semicolon Non-zero to skip semicolon check for first
  * parameter (0: require leading semicolon, 1: allow first param without
  * semicolon)
- * @param cb Callback context (must not be NULL, key_lc.size must be > 0)
  * @return HWIRE_OK on success
  * @return HWIRE_EAGAIN if more data needed
  * @return HWIRE_EILSEQ for invalid byte sequence
  * @return HWIRE_ELEN if length exceeds maxlen
- * @return HWIRE_EKEYLEN if key length exceeds cb->key_lc.size
+ * @return HWIRE_EKEYLEN if key length exceeds ctx->key_lc.size
  * @return HWIRE_ECALLBACK if callback returned non-zero
  * @return HWIRE_ENOBUFS if number of parameters exceeds maxnparams
  */
-int hwire_parse_parameters(const char *str, size_t len, size_t *pos,
-                           size_t maxlen, uint8_t maxnparams,
-                           int skip_leading_semicolon, hwire_callbacks_t *cb);
+int hwire_parse_parameters(hwire_ctx_t *ctx, const char *str, size_t len,
+                           size_t *pos, size_t maxlen, uint8_t maxnparams,
+                           int skip_leading_semicolon);
 
 /** @} */ /* end of String Parsing Functions */
 
@@ -395,7 +363,7 @@ int hwire_parse_parameters(const char *str, size_t len, size_t *pos,
  * data)
  * @param maxlen Maximum string length (HWIRE_MAX_STRLEN)
  * @param maxexts Maximum number of extensions
- * @param cb Callback context (must not be NULL)
+ * @param ctx Parser context (must not be NULL)
  * @return HWIRE_OK on success, CRLF consumed
  * @return HWIRE_EAGAIN if more data needed
  * @return HWIRE_ELEN if length exceeds maxlen
@@ -405,9 +373,8 @@ int hwire_parse_parameters(const char *str, size_t len, size_t *pos,
  * @return HWIRE_ECALLBACK if callback returned non-zero
  * @return HWIRE_ENOBUFS if extension count exceeds maxexts
  */
-int hwire_parse_chunksize(const char *str, size_t len, size_t *pos,
-                          size_t maxlen, uint8_t maxexts,
-                          hwire_callbacks_t *cb);
+int hwire_parse_chunksize(hwire_ctx_t *ctx, const char *str, size_t len,
+                          size_t *pos, size_t maxlen, uint8_t maxexts);
 
 /**
  * @brief Parse HTTP headers
@@ -421,7 +388,7 @@ int hwire_parse_chunksize(const char *str, size_t len, size_t *pos,
  * be NULL)
  * @param maxlen Maximum individual header length
  * @param maxnhdrs Maximum number of headers
- * @param cb Callback context (key_lc must be allocated, header_cb must not be
+ * @param ctx Parser context (key_lc must be allocated, header_cb must not be
  * NULL)
  * @return HWIRE_OK on success, empty line consumed
  * @return HWIRE_EAGAIN if more data needed
@@ -429,11 +396,11 @@ int hwire_parse_chunksize(const char *str, size_t len, size_t *pos,
  * @return HWIRE_EHDRVALUE for invalid header value
  * @return HWIRE_EHDRLEN if header length exceeds maxlen
  * @return HWIRE_ENOBUFS if header count exceeds maxnhdrs
- * @return HWIRE_EKEYLEN if key length exceeds cb->key_lc.size
+ * @return HWIRE_EKEYLEN if key length exceeds ctx->key_lc.size
  * @return HWIRE_ECALLBACK if callback returned non-zero
  */
-int hwire_parse_headers(const char *str, size_t len, size_t *pos, size_t maxlen,
-                        uint8_t maxnhdrs, hwire_callbacks_t *cb);
+int hwire_parse_headers(hwire_ctx_t *ctx, const char *str, size_t len,
+                        size_t *pos, size_t maxlen, uint8_t maxnhdrs);
 
 /**
  * @brief Parse HTTP request
@@ -446,7 +413,7 @@ int hwire_parse_headers(const char *str, size_t len, size_t *pos, size_t maxlen,
  * @param pos Output: bytes consumed from str[0] (must not be NULL)
  * @param maxlen Maximum message length
  * @param maxnhdrs Maximum number of headers
- * @param cb Callback context (request_cb and header_cb must not be NULL)
+ * @param ctx Parser context (request_cb and header_cb must not be NULL)
  * @return HWIRE_OK on success
  * @return HWIRE_EAGAIN if more data needed
  * @return HWIRE_EILSEQ for invalid method (not tchar)
@@ -456,8 +423,8 @@ int hwire_parse_headers(const char *str, size_t len, size_t *pos, size_t maxlen,
  * @return HWIRE_ECALLBACK if callback returned non-zero
  * @return HWIRE_ENOBUFS if header count exceeds maxnhdrs
  */
-int hwire_parse_request(const char *str, size_t len, size_t *pos, size_t maxlen,
-                        uint8_t maxnhdrs, hwire_callbacks_t *cb);
+int hwire_parse_request(hwire_ctx_t *ctx, const char *str, size_t len,
+                        size_t *pos, size_t maxlen, uint8_t maxnhdrs);
 
 /**
  * @brief Parse HTTP response
@@ -470,7 +437,7 @@ int hwire_parse_request(const char *str, size_t len, size_t *pos, size_t maxlen,
  * @param pos Output: bytes consumed from str[0] (must not be NULL)
  * @param maxlen Maximum message length
  * @param maxnhdrs Maximum number of headers
- * @param cb Callback context (response_cb and header_cb must not be NULL)
+ * @param ctx Parser context (response_cb and header_cb must not be NULL)
  * @return HWIRE_OK on success
  * @return HWIRE_EAGAIN if more data needed
  * @return HWIRE_ESTATUS for invalid status code
@@ -480,9 +447,8 @@ int hwire_parse_request(const char *str, size_t len, size_t *pos, size_t maxlen,
  * @return HWIRE_ECALLBACK if callback returned non-zero
  * @return HWIRE_ENOBUFS if header count exceeds maxnhdrs
  */
-int hwire_parse_response(const char *str, size_t len, size_t *pos,
-                         size_t maxlen, uint8_t maxnhdrs,
-                         hwire_callbacks_t *cb);
+int hwire_parse_response(hwire_ctx_t *ctx, const char *str, size_t len,
+                         size_t *pos, size_t maxlen, uint8_t maxnhdrs);
 
 /** @} */ /* end of HTTP Parsing Functions */
 
