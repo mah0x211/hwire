@@ -634,6 +634,129 @@ void test_parse_headers_streaming(void)
     TEST_END();
 }
 
+typedef struct {
+    const char *name;
+    size_t name_len;
+    const char *value;
+    size_t value_len;
+    const char *key_lc_str;
+    const char *buf;
+    size_t buf_len;
+    int called;
+    int failed;
+} hdr_verify_expect_t;
+
+static int verify_hdr_content_cb(hwire_ctx_t *ctx, hwire_header_t *header)
+{
+    hdr_verify_expect_t *e = (hdr_verify_expect_t *)ctx->uctx;
+    e->called++;
+    if (!str_in_buf(header->key, e->buf, e->buf_len)) {
+        fprintf(stderr, "header key: ptr out of range\n");
+        e->failed = 1;
+    }
+    if (!str_in_buf(header->value, e->buf, e->buf_len)) {
+        fprintf(stderr, "header value: ptr out of range\n");
+        e->failed = 1;
+    }
+    if (header->key.len != e->name_len ||
+        strncmp(header->key.ptr, e->name, e->name_len) != 0) {
+        fprintf(stderr, "header name: expected '%.*s'(%zu), got '%.*s'(%zu)\n",
+                (int)e->name_len, e->name, e->name_len, (int)header->key.len,
+                header->key.ptr, header->key.len);
+        e->failed = 1;
+    }
+    if (header->value.len != e->value_len ||
+        strncmp(header->value.ptr, e->value, e->value_len) != 0) {
+        fprintf(stderr, "header value: expected '%.*s'(%zu), got '%.*s'(%zu)\n",
+                (int)e->value_len, e->value, e->value_len,
+                (int)header->value.len, header->value.ptr, header->value.len);
+        e->failed = 1;
+    }
+    if (e->key_lc_str != NULL) {
+        size_t lc_len = strlen(e->key_lc_str);
+        if (ctx->key_lc.len != lc_len ||
+            strncmp(ctx->key_lc.buf, e->key_lc_str, lc_len) != 0) {
+            fprintf(stderr, "key_lc: expected '%s', got '%.*s'\n",
+                    e->key_lc_str, (int)ctx->key_lc.len, ctx->key_lc.buf);
+            e->failed = 1;
+        }
+    }
+    return 0;
+}
+
+/*
+ * Covers: exact content of parsed header field-name and field-value.
+ * MUST: key.ptr/len MUST reference the original input bytes.
+ * MUST: value.ptr/len MUST reflect the OWS-stripped value.
+ * MUST: key_lc.buf MUST contain the lowercase header name.
+ */
+void test_parse_headers_content_verification(void)
+{
+    TEST_START("test_parse_headers_content_verification");
+
+    char key_storage[TEST_KEY_SIZE];
+
+    /* Case 1: Content-Type: text/html → key_lc="content-type" */
+    {
+        hdr_verify_expect_t exp = {
+            "Content-Type", 12, "text/html", 9, "content-type", NULL, 0, 0, 0};
+        hwire_ctx_t cb = {
+            .uctx      = &exp,
+            .key_lc    = {.buf = key_storage, .size = sizeof(key_storage)},
+            .header_cb = verify_hdr_content_cb
+        };
+        size_t pos      = 0;
+        const char *buf = "Content-Type: text/html\r\n\r\n";
+        exp.buf         = buf;
+        exp.buf_len     = strlen(buf);
+        int rv = hwire_parse_headers(&cb, buf, strlen(buf), &pos, 1024, 10);
+        ASSERT_OK(rv);
+        ASSERT_EQ(exp.called, 1);
+        ASSERT_EQ(exp.failed, 0);
+    }
+
+    /* Case 2: X-Custom: hello world */
+    {
+        hdr_verify_expect_t exp = {
+            "X-Custom", 8, "hello world", 11, NULL, NULL, 0, 0, 0};
+        hwire_ctx_t cb = {
+            .uctx      = &exp,
+            .key_lc    = {.buf = key_storage, .size = sizeof(key_storage)},
+            .header_cb = verify_hdr_content_cb
+        };
+        size_t pos      = 0;
+        const char *buf = "X-Custom: hello world\r\n\r\n";
+        exp.buf         = buf;
+        exp.buf_len     = strlen(buf);
+        int rv = hwire_parse_headers(&cb, buf, strlen(buf), &pos, 1024, 10);
+        ASSERT_OK(rv);
+        ASSERT_EQ(exp.called, 1);
+        ASSERT_EQ(exp.failed, 0);
+    }
+
+    /* Case 3: OWS-Key:   trimmed   → leading+trailing OWS stripped → "trimmed"
+     */
+    {
+        hdr_verify_expect_t exp = {"OWS-Key", 7, "trimmed", 7, NULL,
+                                   NULL,      0, 0,         0};
+        hwire_ctx_t cb          = {
+                     .uctx      = &exp,
+                     .key_lc    = {.buf = key_storage, .size = sizeof(key_storage)},
+                     .header_cb = verify_hdr_content_cb
+        };
+        size_t pos      = 0;
+        const char *buf = "OWS-Key:   trimmed   \r\n\r\n";
+        exp.buf         = buf;
+        exp.buf_len     = strlen(buf);
+        int rv = hwire_parse_headers(&cb, buf, strlen(buf), &pos, 1024, 10);
+        ASSERT_OK(rv);
+        ASSERT_EQ(exp.called, 1);
+        ASSERT_EQ(exp.failed, 0);
+    }
+
+    TEST_END();
+}
+
 int main(void)
 {
     test_parse_headers_valid();
@@ -651,6 +774,7 @@ int main(void)
     test_parse_headers_ows_exact();
     test_parse_headers_simd_boundary();
     test_parse_headers_streaming();
+    test_parse_headers_content_verification();
     print_test_summary();
     return g_tests_failed;
 }
