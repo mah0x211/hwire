@@ -1,9 +1,18 @@
 #include "test_helpers.h"
 
-void test_is_vchar(void) {
+/*
+ * Covers: RFC 5234 §B.1   VCHAR    = %x21-7E (visible printing characters)
+ *         RFC 9110 §5.5   field-vchar = VCHAR / obs-text
+ *                         obs-text    = %x80-FF
+ * MUST: hwire_is_vchar() returns true for VCHAR (0x21-0x7E) and obs-text
+ * (0x80-0xFF). MUST: returns false for NUL (0x00), SP (0x20), DEL (0x7F), HTAB
+ * (0x09), and all CTLs.
+ */
+void test_is_vchar(void)
+{
     TEST_START("test_is_vchar");
 
-    // VCHAR: 0x21 - 0x7E
+    // MUST accept: VCHAR = %x21-7E (RFC 5234 §B.1)
     for (int c = 0x21; c <= 0x7E; c++) {
         if (!hwire_is_vchar((unsigned char)c)) {
             fprintf(stderr, "Failed vchar check for: 0x%02X\n", c);
@@ -11,32 +20,41 @@ void test_is_vchar(void) {
         }
     }
 
-    // obs-text: 0x80 - 0xFF
+    // MUST accept: obs-text = %x80-FF (RFC 9110 §5.5 field-vchar)
     for (int c = 0x80; c <= 0xFF; c++) {
         if (!hwire_is_vchar((unsigned char)c)) {
-             fprintf(stderr, "Failed obs-text check for: 0x%02X\n", c);
-             g_tests_failed++;
+            fprintf(stderr, "Failed obs-text check for: 0x%02X\n", c);
+            g_tests_failed++;
         }
     }
 
-    // Invalid vchars
-    ASSERT(!hwire_is_vchar(0x00)); // Null
-    ASSERT(!hwire_is_vchar(0x20)); // SP
-    ASSERT(!hwire_is_vchar(0x7F)); // DEL
-    ASSERT(!hwire_is_vchar('\t')); // HT
+    // MUST reject: not field-vchar (RFC 9110 §5.5)
+    ASSERT(!hwire_is_vchar(0x00)); // NUL  (0x00): CTL
+    ASSERT(!hwire_is_vchar(0x20)); // SP   (0x20): not field-vchar
+    ASSERT(!hwire_is_vchar(0x7F)); // DEL  (0x7F): CTL
+    ASSERT(!hwire_is_vchar(
+        '\t')); // HTAB (0x09): valid only as OWS, not field-vchar
 
     TEST_END();
 }
 
-void test_parse_vchar(void) {
+/*
+ * Covers: RFC 9110 §5.5  field-vchar = VCHAR / obs-text
+ * hwire_parse_vchar() scans field-vchar characters and stops at the first
+ * non-field-vchar character (SP, HTAB, CTL, DEL, NUL); pos advances past
+ * consumed chars. Note: HTAB terminates scanning — it is valid as OWS in
+ * field-value, not as field-vchar.
+ */
+void test_parse_vchar(void)
+{
     TEST_START("test_parse_vchar");
 
-    // "Value\tKey"
-    // VCHAR include everything except SP, HT, DEL, CTLs
+    // "Value\tKey": HTAB (0x09) terminates field-vchar scanning (HTAB is OWS,
+    // not field-vchar)
     const char *str = "Value\tKey";
-    size_t len = strlen(str);
-    size_t pos = 0;
-    size_t n = 0;
+    size_t len      = strlen(str);
+    size_t pos      = 0;
+    size_t n        = 0;
 
     // "Value"
     n = hwire_parse_vchar(str, len, &pos);
@@ -51,7 +69,8 @@ void test_parse_vchar(void) {
     TEST_END();
 }
 
-int main(void) {
+int main(void)
+{
     test_is_vchar();
     test_parse_vchar();
     print_test_summary();
