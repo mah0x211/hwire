@@ -69,10 +69,58 @@ void test_parse_vchar(void)
     TEST_END();
 }
 
+/*
+ * Covers: RFC 9110 §5.5  field-vchar = VCHAR / obs-text
+ *                        obs-text    = %x80-FF
+ * MUST: hwire_parse_vchar() MUST consume obs-text bytes (0x80-0xFF) as
+ * field-vchar.  MUST: tokens containing obs-text at SIMD chunk boundaries
+ * (positions 15, 16, 17, 31, 32) MUST be fully consumed.
+ */
+void test_parse_vchar_obstext_and_boundary(void)
+{
+    TEST_START("test_parse_vchar_obstext_and_boundary");
+
+    /* Pure obs-text bytes */
+    const char *obs = "\x80\x95\xff"; /* 3 obs-text bytes */
+    size_t pos      = 0;
+    size_t n        = hwire_parse_vchar(obs, 3, &pos);
+    ASSERT_EQ(n, 3);
+    ASSERT_EQ(pos, 3);
+
+    /* obs-text mixed with VCHAR */
+    const char *mixed = "abc\x80xyz\xff"; /* 8 bytes, all field-vchar */
+    pos               = 0;
+    n                 = hwire_parse_vchar(mixed, 8, &pos);
+    ASSERT_EQ(n, 8);
+    ASSERT_EQ(pos, 8);
+
+    /* SIMD boundary: 33-byte string with obs-text at boundary positions 15 and
+     * 16 */
+    char buf[34];
+    memset(buf, 'a', 33);
+    buf[15] = '\x80'; /* obs-text at end of first SIMD chunk */
+    buf[16] = '\xff'; /* obs-text at start of second SIMD chunk */
+
+    pos = 0;
+    n   = hwire_parse_vchar(buf, 33, &pos);
+    ASSERT_EQ(n, 33);
+    ASSERT_EQ(pos, 33);
+
+    /* MUST stop at SP (0x20) even after obs-text bytes */
+    buf[20] = ' ';
+    pos     = 0;
+    n       = hwire_parse_vchar(buf, 33, &pos);
+    ASSERT_EQ(n, 20); /* stops at SP */
+    ASSERT_EQ(pos, 20);
+
+    TEST_END();
+}
+
 int main(void)
 {
     test_is_vchar();
     test_parse_vchar();
+    test_parse_vchar_obstext_and_boundary();
     print_test_summary();
     return g_tests_failed;
 }
