@@ -423,6 +423,11 @@ static inline int is_vchar(unsigned char c)
     return VCHAR[c] == 1;
 }
 
+static inline int is_fcchar(unsigned char c)
+{
+    return FCVCHAR[c] == 1;
+}
+
 // TCHAR_NIBBLE_LO / TCHAR_NIBBLE_HI: nibble-split lookup tables for tchar
 // validation.
 //
@@ -1111,6 +1116,11 @@ int hwire_is_tchar(unsigned char c)
 int hwire_is_vchar(unsigned char c)
 {
     return is_vchar(c);
+}
+
+int hwire_is_fcchar(unsigned char c)
+{
+    return is_fcchar(c);
 }
 
 /**

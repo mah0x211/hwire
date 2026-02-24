@@ -258,6 +258,18 @@ int hwire_is_tchar(unsigned char c);
 int hwire_is_vchar(unsigned char c);
 
 /**
+ * @brief Check if a single character is fcchar (field-content character
+ *        including optional whitespace)
+ *
+ * Returns 1 if `c` is a field-content character: VCHAR (`0x21–0x7E`),
+ * obs-text (`0x80–0xFF`), SP (`0x20`), or HTAB (`0x09`).
+ *
+ * @param c Character to check
+ * @return 1 if character is fcchar, 0 otherwise
+ */
+int hwire_is_fcchar(unsigned char c);
+
+/**
  * @brief Count consecutive tchar characters
  *
  * Counts the number of consecutive tchar (token) characters from the
