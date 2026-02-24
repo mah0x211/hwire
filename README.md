@@ -328,6 +328,7 @@ Returns `1` if `c` is a [tchar](https://www.rfc-editor.org/rfc/rfc9110#section-5
 
 - `c` — character to test.
 
+
 #### `hwire_is_vchar`
 
 ```c
@@ -335,6 +336,19 @@ int hwire_is_vchar(unsigned char c);
 ```
 
 Returns `1` if `c` is a visible ASCII character (`0x21–0x7E`) or an `obs-text` byte (`0x80–0xFF`), `0` otherwise.
+
+**Parameters**
+
+- `c` — character to test.
+
+
+#### `hwire_is_fcchar`
+
+```c
+int hwire_is_fcchar(unsigned char c);
+```
+
+Returns `1` if `c` is a field-content character: VCHAR (`0x21–0x7E`), obs-text (`0x80–0xFF`), SP (`0x20`), or HTAB (`0x09`). Returns `0` otherwise.
 
 **Parameters**
 
@@ -367,6 +381,23 @@ Same as `hwire_parse_tchar` but for vchar (visible ASCII + obs-text).
 - `str` — input string (must not be NULL).
 - `len` — total bytes in `str`.
 - `pos` — in/out: start offset on entry, first non-vchar offset on return (must not be NULL).
+
+
+#### `hwire_parse_fcchar`
+
+```c
+size_t hwire_parse_fcchar(const char *str, size_t len, size_t *pos);
+```
+
+Advances `*pos` past consecutive field-content characters (VCHAR, obs-text, SP, HTAB) starting at `str[*pos]`. Returns the number of characters consumed (`0` if `str[*pos]` is not fcchar). Stops at CR, LF, NUL, DEL, or any other CTL.
+
+This is the superset of `hwire_parse_vchar`: it additionally accepts SP and HTAB, which are valid within an HTTP field-value per **RFC 9110 §5.5**.
+
+**Parameters**
+
+- `str` — input string (must not be NULL).
+- `len` — total bytes in `str`.
+- `pos` — in/out: start offset on entry, first non-fcchar offset on return (must not be NULL).
 
 ---
 
