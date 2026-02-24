@@ -423,6 +423,11 @@ static inline int is_vchar(unsigned char c)
     return VCHAR[c] == 1;
 }
 
+static inline int is_fcchar(unsigned char c)
+{
+    return FCVCHAR[c] == 1;
+}
+
 // TCHAR_NIBBLE_LO / TCHAR_NIBBLE_HI: nibble-split lookup tables for tchar
 // validation.
 //
@@ -1113,6 +1118,11 @@ int hwire_is_vchar(unsigned char c)
     return is_vchar(c);
 }
 
+int hwire_is_fcchar(unsigned char c)
+{
+    return is_fcchar(c);
+}
+
 /**
  * @brief Count consecutive tchar characters
  *
@@ -1161,6 +1171,32 @@ size_t hwire_parse_vchar(const char *str, size_t len, size_t *pos)
     size_t cur                = *pos;
     const unsigned char *ustr = (const unsigned char *)str + cur;
     size_t n                  = strvchar(ustr, len - cur);
+    *pos += n;
+    return n;
+}
+
+/**
+ * @brief Count consecutive fcchar characters
+ *
+ * Counts the number of consecutive field-content characters (VCHAR, obs-text,
+ * SP, HTAB) from str, starting at offset *pos. Updates *pos to the position
+ * after the matched characters.
+ *
+ * @param str String to parse (must not be NULL)
+ * @param len Maximum length of string
+ * @param pos Input: start offset, Output: end offset (must not be NULL)
+ * @return Number of consecutive fcchar characters matched (0 if first char is
+ * not fcchar)
+ * @see RFC 9110 Section 5.5 Field Values
+ */
+size_t hwire_parse_fcchar(const char *str, size_t len, size_t *pos)
+{
+    assert(str != NULL);
+    assert(pos != NULL);
+    size_t cur                = *pos;
+    const unsigned char *ustr = (const unsigned char *)str + cur;
+    unsigned char endc        = 0; /* discarded; caller uses str[*pos] */
+    size_t n                  = strfcchar(ustr, len - cur, &endc);
     *pos += n;
     return n;
 }

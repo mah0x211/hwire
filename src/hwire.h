@@ -258,6 +258,18 @@ int hwire_is_tchar(unsigned char c);
 int hwire_is_vchar(unsigned char c);
 
 /**
+ * @brief Check if a single character is fcchar (field-content character
+ *        including optional whitespace)
+ *
+ * Returns 1 if `c` is a field-content character: VCHAR (`0x21–0x7E`),
+ * obs-text (`0x80–0xFF`), SP (`0x20`), or HTAB (`0x09`).
+ *
+ * @param c Character to check
+ * @return 1 if character is fcchar, 0 otherwise
+ */
+int hwire_is_fcchar(unsigned char c);
+
+/**
  * @brief Count consecutive tchar characters
  *
  * Counts the number of consecutive tchar (token) characters from the
@@ -286,6 +298,21 @@ size_t hwire_parse_tchar(const char *str, size_t len, size_t *pos);
  * not vchar)
  */
 size_t hwire_parse_vchar(const char *str, size_t len, size_t *pos);
+
+/**
+ * @brief Count consecutive fcchar characters
+ *
+ * Advances `*pos` past consecutive field-content characters (VCHAR, obs-text,
+ * SP, HTAB) starting at `str[*pos]`. Returns the number of characters
+ * consumed (`0` if `str[*pos]` is not fcchar).
+ *
+ * @param str String to parse (must not be NULL)
+ * @param len Maximum length of string
+ * @param pos Input: start offset, Output: end offset (must not be NULL)
+ * @return Number of consecutive fcchar characters matched (0 if first char is
+ * not fcchar)
+ */
+size_t hwire_parse_fcchar(const char *str, size_t len, size_t *pos);
 
 /** @} */ /* end of Character Validation Functions */
 
