@@ -70,10 +70,16 @@ void test_parse_quoted_string_invalid(void)
     rv  = hwire_parse_quoted_string(str, strlen(str), &pos, 100);
     ASSERT_EQ(rv, HWIRE_EILSEQ);
 
-    /* MUST return HWIRE_ELEN: content length exceeds maxlen parameter */
-    str = "\"too long\"";
+    /* MUST return HWIRE_ELEN: total wire length (10) exceeds maxlen (5) */
+    str = "\"too long\""; /* total wire = 10 bytes */
     pos = 0;
     rv  = hwire_parse_quoted_string(str, strlen(str), &pos, 5);
+    ASSERT_EQ(rv, HWIRE_ELEN);
+
+    /* MUST return HWIRE_ELEN: total wire length (7) exceeds maxlen (4) */
+    str = "\"hello\""; /* total wire = 7 bytes */
+    pos = 0;
+    rv  = hwire_parse_quoted_string(str, strlen(str), &pos, 4);
     ASSERT_EQ(rv, HWIRE_ELEN);
 
     /* MUST return HWIRE_EAGAIN: pos >= len (no input remaining at start) */
@@ -168,6 +174,10 @@ void test_parse_quoted_string_rfc_invalid(void)
  * MUST: pos MUST equal the total byte count of the quoted-string including
  * both DQUOTE delimiters. MUST: a quoted-pair inside the string MUST count
  * as 2 bytes (backslash + target char) toward pos.
+ * MUST: non-zero initial pos MUST be correctly offset.
+ * MUST: maxlen is the total wire length (including both DQUOTE delimiters).
+ *       maxlen exactly equal to wire length MUST succeed (not HWIRE_ELEN).
+ *       maxlen one less than wire length MUST return HWIRE_ELEN.
  */
 void test_parse_quoted_string_content_verification(void)
 {
@@ -190,6 +200,38 @@ void test_parse_quoted_string_content_verification(void)
     rv               = hwire_parse_quoted_string(str2, strlen(str2), &pos, 100);
     ASSERT_OK(rv);
     ASSERT_EQ(pos, 9);
+
+    /* maxlen boundary: maxlen == total wire length (4) MUST return HWIRE_OK */
+    const char *str3 = "\"ab\""; /* total wire = 4 bytes */
+    pos              = 0;
+    rv               = hwire_parse_quoted_string(str3, strlen(str3), &pos, 4);
+    ASSERT_OK(rv);
+    ASSERT_EQ(pos, 4);
+
+    /* maxlen one short (3) for a 4-byte wire string MUST return HWIRE_ELEN */
+    pos = 0;
+    rv  = hwire_parse_quoted_string(str3, strlen(str3), &pos, 3);
+    ASSERT_EQ(rv, HWIRE_ELEN);
+
+    /* non-zero initial pos: x"ab" starting at pos=1 */
+    const char *str4 = "x\"ab\"";
+    pos              = 1;
+    rv               = hwire_parse_quoted_string(str4, strlen(str4), &pos, 100);
+    ASSERT_OK(rv);
+    ASSERT_EQ(pos, 5); /* consumed 4 bytes from pos=1 */
+
+    /* quoted-pair "\a" = 4 total wire bytes (`"`, `\`, `a`, `"`);
+     * maxlen=4 MUST return HWIRE_OK */
+    const char *str5 = "\"\\a\"";
+    pos              = 0;
+    rv               = hwire_parse_quoted_string(str5, strlen(str5), &pos, 4);
+    ASSERT_OK(rv);
+    ASSERT_EQ(pos, 4);
+
+    /* maxlen=3 for same 4-byte string MUST return HWIRE_ELEN */
+    pos = 0;
+    rv  = hwire_parse_quoted_string(str5, strlen(str5), &pos, 3);
+    ASSERT_EQ(rv, HWIRE_ELEN);
 
     TEST_END();
 }

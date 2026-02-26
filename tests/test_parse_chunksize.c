@@ -118,6 +118,18 @@ void test_parse_chunksize_valid(void)
     rv  = hwire_parse_chunksize(&cb, buf, strlen(buf), &pos, 100, 10);
     ASSERT_OK(rv);
 
+    /* MUST return HWIRE_ELEN: quoted-string ext-val exceeds maxlen budget.
+     * "1A;e=\"12345678\"\r\n" = 17 bytes. Opening DQUOTE is at position 5.
+     * quoted-string "12345678" = 10 wire bytes (pos 5..14). maxlen=12:
+     * remaining budget at the DQUOTE = maxlen - pos = 12 - 5 = 7 bytes,
+     * but the quoted-string needs 10 → ELEN.
+     * (With the bug vlen=maxlen=12: tail=5+12=17=len, closing DQUOTE at
+     * pos 14 is found inside the scan → incorrectly returns HWIRE_OK.) */
+    buf = "1A;e=\"12345678\"\r\n";
+    pos = 0;
+    rv  = hwire_parse_chunksize(&cb, buf, strlen(buf), &pos, 12, 10);
+    ASSERT_EQ(rv, HWIRE_ELEN);
+
     /* MUST return HWIRE_ENOBUFS if max extension count is exceeded */
     buf = "1A; e1; e2; x";
     pos = 0;
