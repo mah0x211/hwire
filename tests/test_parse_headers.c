@@ -160,6 +160,30 @@ void test_parse_headers_cr_handling(void)
     rv  = hwire_parse_headers(&cb, buf, strlen(buf), &pos, 1024, 10);
     ASSERT_EQ(rv, HWIRE_EAGAIN);
 
+    /* bare LF as field-value terminator: pos MUST consume the entire input
+     * including the LF and the following CRLF end-of-headers marker */
+    buf = "Key: value\n\r\n";
+    pos = 0;
+    rv  = hwire_parse_headers(&cb, buf, strlen(buf), &pos, 1024, 10);
+    ASSERT_OK(rv);
+    ASSERT_EQ(pos, strlen(buf)); /* all 13 bytes consumed */
+
+    /* bare LF as field-value terminator: pos MUST consume the entire input
+     * when end-of-headers is also a bare LF */
+    buf = "Key: value\n\n";
+    pos = 0;
+    rv  = hwire_parse_headers(&cb, buf, strlen(buf), &pos, 1024, 10);
+    ASSERT_OK(rv);
+    ASSERT_EQ(pos, strlen(buf)); /* all 12 bytes consumed */
+
+    /* multiple headers separated by bare LF: all headers MUST be parsed
+     * correctly and pos MUST equal the full input length */
+    buf = "Key1: v1\nKey2: v2\n\r\n";
+    pos = 0;
+    rv  = hwire_parse_headers(&cb, buf, strlen(buf), &pos, 1024, 10);
+    ASSERT_OK(rv);
+    ASSERT_EQ(pos, strlen(buf)); /* all 20 bytes consumed */
+
     TEST_END();
 }
 

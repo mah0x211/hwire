@@ -1775,6 +1775,7 @@ REMOVE_OWS:
         } else if (likely(endc == LF)) {
             // only LF found - valid end of header value, continue to trim OWS
             // and check LF
+            *cur = pos + 1; // skip LF
             goto REMOVE_OWS;
         } else if (unlikely(endc != CR)) {
             // invalid character in header value
