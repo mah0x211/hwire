@@ -388,8 +388,8 @@ static int64_t hex2size(const unsigned char *str, size_t len, size_t *cur,
         dec = (dec << 4) | (c - 1);
 
         if (dec > (int64_t)maxsize) {
-            // result too large
-            // limit to max value of 32bit (0x7FFFFFFF)
+            // result too large: exceeds maxsize (HWIRE_MAX_CHUNKSIZE =
+            // UINT32_MAX)
             return HWIRE_ERANGE;
         }
     }
