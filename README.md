@@ -76,6 +76,8 @@ cc -std=c99 -Isrc -o myapp myapp.c src/hwire.c  # C11 or later also works
 
 `SIMD` code paths are selected automatically at compile time based on the target architecture. To force a specific instruction set, pass the appropriate compiler flag (e.g., `-mavx2` for `AVX2` on `x86-64`); scalar fallback is used when no supported `SIMD` macro is defined.
 
+Define `HWIRE_NO_SIMD` (e.g. `-DHWIRE_NO_SIMD`) to force the portable scalar implementation on any target, regardless of the detected architecture. `make test-nosimd` builds and runs the test suite in this configuration.
+
 To run the test suite:
 
 ```sh

@@ -55,6 +55,22 @@
 # undef __ARM_NEON
 #endif
 
+// HWIRE_NO_SIMD: force the portable scalar implementation regardless of the
+// target architecture (used by `make test-nosimd` and by callers that want to
+// avoid SIMD). Undefine every architecture/feature macro the SIMD paths key
+// off so the block below falls through to the scalar (#else -> NO_SIMD) branch.
+// System headers were already included above, so clearing these compiler
+// builtins here only affects hwire's own SIMD selection.
+#if defined(HWIRE_NO_SIMD)
+# undef __AVX2__
+# undef __SSE4_2__
+# undef __SSSE3__
+# undef __SSE2__
+# undef __aarch64__
+# undef __ARM_NEON
+# undef __arm__
+#endif
+
 // SIMD intrinsic headers.  Each x86 header transitively includes its
 // prerequisites: AVX2 ⊃ SSE4.2 ⊃ SSSE3 ⊃ SSE2.
 // NO_SIMD is defined when no known SIMD architecture is active, including
