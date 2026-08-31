@@ -411,6 +411,58 @@ void test_parse_chunksize_content_verification(void)
     TEST_END();
 }
 
+/* Counts chunk-extension callback invocations via ctx->uctx (int *). */
+static int count_ext_cb(hwire_ctx_t *ctx, hwire_chunksize_ext_t *ext)
+{
+    (void)ext;
+    (*(int *)ctx->uctx)++;
+    return 0;
+}
+
+/*
+ * Covers: RFC 9112 §7.1.1 chunk-extension count limit (maxexts).
+ * MUST: chunksize_ext_cb fires at most `maxexts` times. A chunk-size line
+ * carrying more than `maxexts` extensions MUST return HWIRE_ENOBUFS without
+ * delivering the over-limit extension — parity with maxnhdrs / maxnparams.
+ * Regression: previously the final extension (and an off-by-one in the loop
+ * check) allowed maxexts+1 extensions to be delivered.
+ */
+void test_parse_chunksize_maxexts_limit(void)
+{
+    TEST_START("test_parse_chunksize_maxexts_limit");
+
+    static const struct {
+        const char *buf;
+        uint8_t maxexts;
+        int expect_rv;
+        int expect_calls;
+    } cases[] = {
+        {"0;a\r\n",        1, HWIRE_OK,      1}, /* exactly maxexts */
+        {"0;a;b\r\n",      1, HWIRE_ENOBUFS, 1}, /* maxexts+1 → ENOBUFS */
+        {"0;a;b\r\n",      2, HWIRE_OK,      2},
+        {"0;a;b;c\r\n",    2, HWIRE_ENOBUFS, 2},
+        {"0;a=1;b=2\r\n",  1, HWIRE_ENOBUFS, 1},
+        {"0;a=1;b=2\r\n",  2, HWIRE_OK,      2},
+        {"0;a\r\n",        0, HWIRE_ENOBUFS, 0}, /* no extensions allowed */
+        {"0\r\n",          0, HWIRE_OK,      0}, /* no extensions present */
+    };
+
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        int calls      = 0;
+        hwire_ctx_t cb = {.uctx             = &calls,
+                          .chunksize_cb     = mock_chunksize_cb,
+                          .chunksize_ext_cb = count_ext_cb};
+        size_t pos     = 0;
+        int rv         = hwire_parse_chunksize(&cb, cases[i].buf,
+                                               strlen(cases[i].buf), &pos, 100,
+                                               cases[i].maxexts);
+        ASSERT_EQ(rv, cases[i].expect_rv);
+        ASSERT_EQ(calls, cases[i].expect_calls);
+    }
+
+    TEST_END();
+}
+
 int main(void)
 {
     test_parse_chunksize_valid();
@@ -419,6 +471,7 @@ int main(void)
     test_parse_chunksize_ext_callback_errors();
     test_parse_chunksize_ext_value_errors();
     test_parse_chunksize_content_verification();
+    test_parse_chunksize_maxexts_limit();
     print_test_summary();
     return g_tests_failed;
 }
