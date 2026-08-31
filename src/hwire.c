@@ -1643,6 +1643,10 @@ CHECK_EOL:
     case LF:
         // call extension callback for last extension
         if (klen) {
+            // enforce maxexts before delivering the final extension
+            if (nexts >= maxexts) {
+                return HWIRE_ENOBUFS;
+            }
             hwire_chunksize_ext_t ext = {
                 .key   = {.len = klen, .ptr = (const char *)key              },
                 .value = {.len = vlen, .ptr = (vlen) ? (const char *)val : ""}
@@ -1662,13 +1666,13 @@ CHECK_EOL:
     }
 
     // parse chunk-extensions
-    if (nexts >= maxexts) {
-        // exceeded maximum number of extensions
-        return HWIRE_ENOBUFS;
-    }
-
     // call extension callback for previous extension
     if (klen) {
+        // enforce maxexts before delivering the previous extension
+        if (nexts >= maxexts) {
+            // exceeded maximum number of extensions
+            return HWIRE_ENOBUFS;
+        }
         hwire_chunksize_ext_t ext = {
             .key   = {.len = klen, .ptr = (const char *)key              },
             .value = {.len = vlen, .ptr = (vlen) ? (const char *)val : ""}
