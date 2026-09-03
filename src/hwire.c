@@ -71,13 +71,23 @@
 # undef __arm__
 #endif
 
+// Normalize the x86 feature macros once, up front: MSVC under /arch:AVX2
+// defines only __AVX2__ and none of the implied-level macros that GCC and
+// clang define. With the levels filled in here, the rest of the file (and
+// the include chain below) can key off the standard level macros alone.
+// AVX2 builds take the SSE4.2 paths: a 256-bit scanner was found slower
+// for typical header traffic than the PCMPESTRI paths.
+#if defined(__AVX2__) && !defined(__SSE4_2__)
+# define __SSE4_2__ 1
+# define __SSSE3__ 1
+# define __SSE2__ 1
+#endif
+
 // SIMD intrinsic headers.  Each x86 header transitively includes its
-// prerequisites: AVX2 ⊃ SSE4.2 ⊃ SSSE3 ⊃ SSE2.
+// prerequisites: SSE4.2 ⊃ SSSE3 ⊃ SSE2.
 // NO_SIMD is defined when no known SIMD architecture is active, including
 // after the defensive undef-s above for unknown compilers.
-#if defined(__AVX2__)
-# include <immintrin.h>
-#elif defined(__SSE4_2__)
+#if defined(__SSE4_2__)
 # include <nmmintrin.h>
 #elif defined(__SSSE3__)
 # include <tmmintrin.h>
@@ -96,8 +106,7 @@
 # include <intrin.h>
 #endif
 
-#if defined(__AVX2__) || defined(__SSE4_2__) || defined(__SSSE3__) ||          \
-    defined(__SSE2__)
+#if defined(__SSE4_2__) || defined(__SSSE3__) || defined(__SSE2__)
 static inline int ctz32(unsigned int x)
 {
 # if defined(_MSC_VER)
@@ -461,7 +470,7 @@ static inline int is_fcchar(unsigned char c)
 //
 // Bit assignment in TCHAR_NIBBLE_HI: hi=2→bit0, hi=3→bit1, hi=4→bit2,
 //   hi=5→bit3, hi=6→bit4, hi=7→bit5. hi=0,1,8-F map to 0 (all invalid).
-#if defined(__AVX2__) || defined(__SSSE3__)
+#if defined(__SSSE3__)
 static const int8_t ALIGNED(16) TCHAR_NIBBLE_LO[16] = {
     // lo:   0x0   0x1   0x2   0x3   0x4   0x5   0x6   0x7
     0x3A, 0x3F, 0x3E, 0x3F, 0x3F, 0x3F, 0x3F, 0x3F,
@@ -480,10 +489,10 @@ static const int8_t ALIGNED(16) TCHAR_NIBBLE_HI[16] = {
  * Counts the number of consecutive tchar (token) characters from the
  * beginning of str, writing the lowercase-converted characters into lc->buf.
  *
- * Uses AVX2 (32B/iter) or SSSE3 (16B/iter) for validation and lowercasing
- * when available.  For typical HTTP header names (4-15 chars) the SIMD path
- * completes in a single iteration.  A scalar 4-char-unrolled fallback handles
- * any remaining bytes.
+ * Uses the SSSE3 (16B/iter) nibble-trick when available.  For typical HTTP
+ * header names (4-15 chars) the SIMD path completes in a single iteration.
+ * A scalar 4-char-unrolled fallback handles any remaining bytes.  AVX2
+ * builds also take the 128-bit path (see strtchar_cmp).
  *
  * @param str   String to parse (must not be NULL)
  * @param len   Maximum length of string
@@ -498,42 +507,7 @@ static inline size_t strtchar_cmp_lc(const unsigned char *str, size_t len,
     unsigned char *buf = (unsigned char *)lc->buf;
     size_t limit       = (len < lc->size) ? len : lc->size;
 
-#if defined(__AVX2__)
-    if (likely(pos + 32 <= limit)) {
-        const __m256i lo_lut = _mm256_broadcastsi128_si256(
-            _mm_loadu_si128((const __m128i *)(const void *)TCHAR_NIBBLE_LO));
-        const __m256i hi_lut = _mm256_broadcastsi128_si256(
-            _mm_loadu_si128((const __m128i *)(const void *)TCHAR_NIBBLE_HI));
-        const __m256i nibble  = _mm256_set1_epi8(0x0F);
-        const __m256i at_char = _mm256_set1_epi8(0x40); // '@' (0x41-1)
-        const __m256i bkt     = _mm256_set1_epi8(0x5B); // '[' (0x5A+1)
-        const __m256i bit5    = _mm256_set1_epi8(0x20);
-        do {
-            __m256i data =
-                _mm256_loadu_si256((const __m256i *)(const void *)(str + pos));
-            __m256i lo_v =
-                _mm256_shuffle_epi8(lo_lut, _mm256_and_si256(data, nibble));
-            __m256i hi_v = _mm256_shuffle_epi8(
-                hi_lut, _mm256_and_si256(_mm256_srli_epi16(data, 4), nibble));
-            int mask = _mm256_movemask_epi8(_mm256_cmpeq_epi8(
-                _mm256_and_si256(lo_v, hi_v), _mm256_setzero_si256()));
-            // lowercase: A-Z (0x41-0x5A) -> set bit5
-            __m256i is_upper =
-                _mm256_and_si256(_mm256_cmpgt_epi8(data, at_char), // c > '@'
-                                 _mm256_cmpgt_epi8(bkt, data));    // '[' > c
-            __m256i lc_out =
-                _mm256_or_si256(data, _mm256_and_si256(is_upper, bit5));
-            // store 32 bytes (safe: pos+32 <= limit <= lc->size)
-            _mm256_storeu_si256((__m256i *)(void *)(buf + pos), lc_out);
-            if (mask) {
-                pos += (size_t)ctz32((unsigned)mask);
-                lc->len = pos;
-                return pos;
-            }
-            pos += 32;
-        } while (pos + 32 <= limit);
-    }
-#elif defined(__SSSE3__)
+#if defined(__SSSE3__)
     if (pos + 16 <= limit) {
         const __m128i lo_lut =
             _mm_loadu_si128((const __m128i *)(const void *)TCHAR_NIBBLE_LO);
@@ -601,9 +575,11 @@ static inline size_t strtchar_cmp_lc(const unsigned char *str, size_t len,
 /**
  * @brief Count consecutive tchar characters (no lowercase conversion)
  *
- * Uses AVX2 (32B/iter) or SSSE3 (16B/iter) nibble-trick when available,
- * with scalar fallback for tail bytes.  For typical HTTP header names
- * (6-15 chars) the AVX2/SSSE3 path completes in a single iteration.
+ * Uses the SSSE3 (16B/iter) nibble-trick when available, with a scalar
+ * fallback for tail bytes. For typical HTTP header names (6-15 chars) the
+ * SIMD path completes in a single iteration. AVX2 builds also take this
+ * 128-bit path: the 256-bit variant's per-call register construction
+ * (vinserti128/broadcast) costs more than it saves for name-sized scans.
  *
  * @param str String to parse (must not be NULL)
  * @param len Maximum length of string
@@ -613,28 +589,7 @@ static inline size_t strtchar_cmp(const unsigned char *str, size_t len)
 {
     size_t pos = 0;
 
-#if defined(__AVX2__)
-    if (likely(pos + 32 <= len)) {
-        const __m256i lo_lut = _mm256_broadcastsi128_si256(
-            _mm_loadu_si128((const __m128i *)(const void *)TCHAR_NIBBLE_LO));
-        const __m256i hi_lut = _mm256_broadcastsi128_si256(
-            _mm_loadu_si128((const __m128i *)(const void *)TCHAR_NIBBLE_HI));
-        const __m256i nibble = _mm256_set1_epi8(0x0F);
-        do {
-            __m256i data =
-                _mm256_loadu_si256((const __m256i *)(const void *)(str + pos));
-            __m256i lo_v =
-                _mm256_shuffle_epi8(lo_lut, _mm256_and_si256(data, nibble));
-            __m256i hi_v = _mm256_shuffle_epi8(
-                hi_lut, _mm256_and_si256(_mm256_srli_epi16(data, 4), nibble));
-            int mask = _mm256_movemask_epi8(_mm256_cmpeq_epi8(
-                _mm256_and_si256(lo_v, hi_v), _mm256_setzero_si256()));
-            if (mask)
-                return pos + (size_t)ctz32((unsigned)mask);
-            pos += 32;
-        } while (pos + 32 <= len);
-    }
-#elif defined(__SSSE3__)
+#if defined(__SSSE3__)
     if (pos + 16 <= len) {
         const __m128i lo_lut =
             _mm_loadu_si128((const __m128i *)(const void *)TCHAR_NIBBLE_LO);
@@ -915,9 +870,13 @@ static inline size_t strurichar_neon(const unsigned char *str, size_t len)
 
 #if defined(__SSE2__)
 
-// strvchar_sse2: SSE2 optimized implementation (16 bytes)
+// The SSE2 16-byte scanners below (strvchar_sse2, in_range_sse2, and
+// strurichar_sse2) are referenced only when the PCMPESTRI path is
+// unavailable: the dispatchers prefer the SSE4.2 implementation whenever
+// __SSE4_2__ is defined. Guard them out otherwise to avoid
+// -Wunused-function under -Werror.
 //
-// Algorithm: Blacklist approach using comparison and movemask
+// strvchar_sse2 algorithm: Blacklist approach using comparison and movemask
 // - Invalid: 0x00-0x20 (control chars + SP) or 0x7F (DEL)
 // - Valid:   0x21-0x7E (VCHAR) or 0x80-0xFF (obs-text)
 //
@@ -929,11 +888,11 @@ static inline size_t strurichar_neon(const unsigned char *str, size_t len)
 //
 // _mm_movemask_epi8 creates a 16-bit mask where each bit represents
 // whether the corresponding byte is invalid (1) or valid (0).
-// strvchar_sse2: SSE2 optimized implementation (16 bytes)
 //
 // Parameters:
 // - is_field_vchar: non-zero if field-vchar is allowed, 0x00 otherwise
 // - endc: set to the first invalid byte (non-NULL assumed)
+#if !defined(__SSE4_2__)
 static inline size_t strvchar_sse2(const unsigned char *str, size_t len,
                                    int8_t is_field_vchar, unsigned char *endc)
 {
@@ -988,12 +947,6 @@ static inline size_t strvchar_sse2(const unsigned char *str, size_t len,
 
     return pos + strvchar_cmp(str + pos, len - pos, is_field_vchar, endc);
 }
-
-// in_range_sse2 / strurichar_sse2: the strurichar dispatcher prefers the
-// PCMPESTRI path whenever SSE4.2 is available (including AVX2 builds, where
-// __SSE4_2__ is defined), so these are referenced only in SSE2-only builds.
-// Guard them out otherwise to avoid -Wunused-function under -Werror.
-#if !defined(__SSE4_2__)
 
 // in_range_sse2: lanes set to 0xFF where lo <= data <= hi (unsigned),
 // computed on sign-flipped data with signed compares. `lo` and `hi` are
@@ -1149,76 +1102,6 @@ static inline size_t strurichar_sse42(const unsigned char *str, size_t len)
 
 #endif
 
-#if defined(__AVX2__)
-
-// strvchar_avx2: AVX2 optimized implementation (32 bytes)
-//
-// Algorithm: Blacklist approach using 256-bit SIMD
-// - Invalid: characters < threshold (except HT if allowed) or character == 0x7F
-// (DEL)
-//
-// Parameters:
-// - is_field_vchar: non-zero if field-vchar is allowed, 0x00 otherwise
-// - endc: set to the first invalid byte (non-NULL assumed)
-//
-// AVX2 implies SSSE3, so _mm_shuffle_epi8 (PSHUFB) is available.
-// We extract the stopped byte from the already-loaded 256-bit 'data' register
-// using VEXTRACTI128 + PSHUFB, avoiding str[pos+first] address dependency.
-static inline size_t strvchar_avx2(const unsigned char *str, size_t len,
-                                   int8_t is_field_vchar, unsigned char *endc)
-{
-    size_t pos              = 0;
-    // Pre-compute constants (compile-time if arguments are constant)
-    const __m256i sign_flip = _mm256_set1_epi8(SIMD_SIGN_FLIP);
-    const __m256i first_cmp =
-        _mm256_set1_epi8((is_field_vchar ? 0x20 : 0x21) ^ SIMD_SIGN_FLIP);
-    const __m256i del_char = _mm256_set1_epi8(0x7F);
-    const __m256i ht_char  = _mm256_set1_epi8(0x09);
-    const __m256i allow_ht = _mm256_set1_epi8(-(is_field_vchar != 0));
-
-    // Process 32 bytes at a time
-    while (pos + 32 <= len) {
-        __m256i data =
-            _mm256_loadu_si256((const __m256i *)(const void *)(str + pos));
-        __m256i data_shifted = _mm256_xor_si256(data, sign_flip);
-
-        // Check 1: Characters less than firstc (after sign flip) are
-        // invalid (data ^ 0x80) < (firstc ^ 0x80)
-        __m256i is_before_first = _mm256_cmpgt_epi8(first_cmp, data_shifted);
-
-        // Check2: HT exception logic - if allow_ht, then HT (0x09) is valid
-        // even if < firstc
-        __m256i is_ht         = _mm256_cmpeq_epi8(data, ht_char);
-        __m256i is_allowed_ht = _mm256_and_si256(is_ht, allow_ht);
-        is_before_first = _mm256_andnot_si256(is_allowed_ht, is_before_first);
-
-        // Check3: DEL (0x7F) is always invalid
-        __m256i is_del = _mm256_cmpeq_epi8(data, del_char);
-
-        // Combine invalid conditions
-        __m256i is_invalid = _mm256_or_si256(is_before_first, is_del);
-
-        int mask = _mm256_movemask_epi8(is_invalid);
-        if (mask) {
-            int first    = ctz32((unsigned int)mask);
-            // Use VEXTRACTI128 + PSHUFB to extract data[first] from the loaded
-            // register — avoids str[pos+first] memory address dependency on
-            // 'first'
-            __m128i half = first < 16 ? _mm256_castsi256_si128(data) :
-                                        _mm256_extracti128_si256(data, 1);
-            *endc        = (unsigned char)_mm_cvtsi128_si32(
-                _mm_shuffle_epi8(half, _mm_set1_epi8((int8_t)(first & 15))));
-            return pos + (size_t)first;
-        }
-        pos += 32;
-    }
-
-    // Fall back to SSE2 for remaining bytes (< 32 bytes)
-    return pos + strvchar_sse2(str + pos, len - pos, is_field_vchar, endc);
-}
-
-#endif
-
 // strvchar: count consecutive field-content characters (VCHAR or obs-text)
 // Returns the number of consecutive characters from the beginning of str
 // that are field-content (VCHAR or obs-text)
@@ -1230,12 +1113,6 @@ static inline size_t strvchar_avx2(const unsigned char *str, size_t len,
 static inline size_t strvchar(const unsigned char *str, size_t len)
 {
     unsigned char endc = 0; // discarded; compiler optimizes away
-#if defined(__AVX2__)
-    if (likely(len >= 32)) {
-        return strvchar_avx2(str, len, 0, &endc);
-    }
-#endif
-
 #if defined(__SSE4_2__)
     if (likely(len >= 16)) {
         return strvchar_sse42(str, len, 0, &endc);
@@ -1253,9 +1130,8 @@ static inline size_t strvchar(const unsigned char *str, size_t len)
 }
 
 // strurichar: count consecutive URI characters (RFC 3986 whitelist).
-// Dispatches to the SIMD implementation for len >= 16; AVX2 builds reuse
-// the SSE4.2 path (implied by __AVX2__), which measures at least as fast
-// as a 256-bit compare chain for realistic URI lengths.
+// Dispatches to the SIMD implementation for len >= 16. AVX2 builds
+// define __SSE4_2__ and therefore take the SSE4.2 path as well.
 static inline size_t strurichar(const unsigned char *str, size_t len)
 {
 #if defined(__SSE4_2__)
@@ -1277,12 +1153,6 @@ static inline size_t strurichar(const unsigned char *str, size_t len)
 static inline size_t strfcchar(const unsigned char *str, size_t len,
                                unsigned char *endc)
 {
-#if defined(__AVX2__)
-    if (likely(len >= 32)) {
-        return strvchar_avx2(str, len, 1, endc);
-    }
-#endif
-
 #if defined(__SSE4_2__)
     if (likely(len >= 16)) {
         return strvchar_sse42(str, len, 1, endc);
