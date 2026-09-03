@@ -240,7 +240,7 @@ static const unsigned char URI_CHAR[256] = {
     // pct-encoded. So raw UTF-8 bytes > 127 are invalid in URI.
     0};
 
-static inline size_t strurichar(const unsigned char *str, size_t len)
+static inline size_t strurichar_cmp(const unsigned char *str, size_t len)
 {
     size_t i = 0;
 
@@ -271,6 +271,15 @@ static inline size_t strurichar(const unsigned char *str, size_t len)
     }
     return i;
 }
+
+/**
+ * @brief Count consecutive URI characters (scalar reference)
+ *
+ * Returns the number of consecutive bytes from the beginning of str that
+ * belong to the URI_CHAR whitelist. SIMD implementations (strurichar_sse2,
+ * strurichar_sse42, strurichar_neon) must return identical results; the
+ * whitelist is defined by URI_CHAR above.
+ */
 
 /**
  * @brief QDTEXT lookup table for quoted-string validation
@@ -850,6 +859,58 @@ static inline size_t strvchar_neon(const unsigned char *str, size_t len,
     return pos + strvchar_cmp(str + pos, len - pos, is_field_vchar, endc);
 }
 
+// strurichar_neon: NEON optimized implementation (16 bytes)
+//
+// Algorithm: Whitelist approach mirroring URI_CHAR — a byte is valid iff
+// 0x21 <= c <= 0x7E and c is not one of the excluded bytes
+// { 0x22-0x23, 0x3C, 0x3E, 0x5B-0x5E, 0x60, 0x7B-0x7D }.
+// Each result lane is 0xFF (invalid) or 0x00 (valid); the first invalid
+// byte is located via the same two-lane ctz64 extraction as strvchar_neon.
+static inline size_t strurichar_neon(const unsigned char *str, size_t len)
+{
+    size_t pos                = 0;
+    const uint8x16_t first_ok = vdupq_n_u8(0x21);
+    const uint8x16_t last_ok  = vdupq_n_u8(0x7E);
+
+    while (pos + 16 <= len) {
+        uint8x16_t data = vld1q_u8(str + pos);
+
+        // outside the printable whitelist bounds
+        uint8x16_t is_out =
+            vorrq_u8(vcltq_u8(data, first_ok), vcgtq_u8(data, last_ok));
+
+        // excluded bytes within the bounds
+        uint8x16_t in_2223 = vandq_u8(vcgeq_u8(data, vdupq_n_u8(0x22)),
+                                      vcleq_u8(data, vdupq_n_u8(0x23)));
+        uint8x16_t in_5b5e = vandq_u8(vcgeq_u8(data, vdupq_n_u8(0x5B)),
+                                      vcleq_u8(data, vdupq_n_u8(0x5E)));
+        uint8x16_t in_7b7d = vandq_u8(vcgeq_u8(data, vdupq_n_u8(0x7B)),
+                                      vcleq_u8(data, vdupq_n_u8(0x7D)));
+        uint8x16_t is_excl = vorrq_u8(
+            vorrq_u8(in_2223, in_5b5e),
+            vorrq_u8(in_7b7d,
+                     vorrq_u8(vorrq_u8(vceqq_u8(data, vdupq_n_u8(0x3C)),
+                                       vceqq_u8(data, vdupq_n_u8(0x3E))),
+                              vceqq_u8(data, vdupq_n_u8(0x60)))));
+
+        uint8x16_t is_invalid = vorrq_u8(is_out, is_excl);
+
+        uint64x2_t qdata = vreinterpretq_u64_u8(is_invalid);
+        uint64_t mask1   = vgetq_lane_u64(qdata, 0);
+        if (mask1) {
+            return pos + (size_t)(ctz64(mask1) >> 3);
+        }
+        uint64_t mask2 = vgetq_lane_u64(qdata, 1);
+        if (mask2) {
+            return pos + 8 + (size_t)(ctz64(mask2) >> 3);
+        }
+        pos += 16;
+    }
+
+    // Fall back for remaining bytes (< 16 bytes)
+    return pos + strurichar_cmp(str + pos, len - pos);
+}
+
 #endif
 
 #if defined(__SSE2__)
@@ -928,7 +989,74 @@ static inline size_t strvchar_sse2(const unsigned char *str, size_t len,
     return pos + strvchar_cmp(str + pos, len - pos, is_field_vchar, endc);
 }
 
-#endif
+// in_range_sse2 / strurichar_sse2: the strurichar dispatcher prefers the
+// PCMPESTRI path whenever SSE4.2 is available (including AVX2 builds, where
+// __SSE4_2__ is defined), so these are referenced only in SSE2-only builds.
+// Guard them out otherwise to avoid -Wunused-function under -Werror.
+#if !defined(__SSE4_2__)
+
+// in_range_sse2: lanes set to 0xFF where lo <= data <= hi (unsigned),
+// computed on sign-flipped data with signed compares. `lo` and `hi` are
+// raw (unflipped) byte values; both are flipped here.
+static inline __m128i in_range_sse2(__m128i data_shifted, int lo, int hi)
+{
+    const __m128i below = _mm_cmpgt_epi8(
+        _mm_set1_epi8((char)(lo ^ SIMD_SIGN_FLIP)), data_shifted);
+    const __m128i above = _mm_cmpgt_epi8(
+        data_shifted, _mm_set1_epi8((char)(hi ^ SIMD_SIGN_FLIP)));
+    return _mm_cmpeq_epi8(_mm_or_si128(below, above), _mm_setzero_si128());
+}
+
+// strurichar_sse2: SSE2 optimized implementation (16 bytes)
+//
+// Algorithm: Whitelist approach mirroring URI_CHAR — a byte is valid iff
+// 0x21 <= c <= 0x7E and c is not one of the excluded bytes
+// { 0x22-0x23, 0x3C, 0x3E, 0x5B-0x5E, 0x60, 0x7B-0x7D }.
+// Unsigned range tests use the sign-flip (XOR 0x80) technique documented in
+// strvchar_sse2. The first invalid byte is located via movemask + ctz32.
+static inline size_t strurichar_sse2(const unsigned char *str, size_t len)
+{
+    size_t pos              = 0;
+    const __m128i sign_flip = _mm_set1_epi8(SIMD_SIGN_FLIP);
+    const __m128i first_cmp = _mm_set1_epi8(0x21 ^ SIMD_SIGN_FLIP);
+    const __m128i last_cmp  = _mm_set1_epi8(0x7E ^ SIMD_SIGN_FLIP);
+
+    while (pos + 16 <= len) {
+        __m128i data =
+            _mm_loadu_si128((const __m128i *)(const void *)(str + pos));
+        __m128i data_shifted = _mm_xor_si128(data, sign_flip);
+
+        // outside the printable whitelist bounds (unsigned via sign flip)
+        __m128i is_before = _mm_cmpgt_epi8(first_cmp, data_shifted);
+        __m128i is_after  = _mm_cmpgt_epi8(data_shifted, last_cmp);
+
+        // excluded bytes within the bounds
+        __m128i eq_3c = _mm_cmpeq_epi8(data, _mm_set1_epi8(0x3C));
+        __m128i eq_3e = _mm_cmpeq_epi8(data, _mm_set1_epi8(0x3E));
+        __m128i eq_60 = _mm_cmpeq_epi8(data, _mm_set1_epi8(0x60));
+
+        __m128i is_invalid = _mm_or_si128(
+            _mm_or_si128(is_before, is_after),
+            _mm_or_si128(
+                _mm_or_si128(eq_3c, _mm_or_si128(eq_3e, eq_60)),
+                _mm_or_si128(
+                    in_range_sse2(data_shifted, 0x22, 0x23),
+                    _mm_or_si128(in_range_sse2(data_shifted, 0x5B, 0x5E),
+                                 in_range_sse2(data_shifted, 0x7B, 0x7D)))));
+
+        int mask = _mm_movemask_epi8(is_invalid);
+        if (mask) {
+            return pos + (size_t)ctz32((unsigned int)mask);
+        }
+        pos += 16;
+    }
+
+    return pos + strurichar_cmp(str + pos, len - pos);
+}
+
+#endif /* !defined(__SSE4_2__) */
+
+#endif /* defined(__SSE2__) */
 
 #if defined(__SSE4_2__)
 
@@ -984,6 +1112,39 @@ static inline size_t strvchar_sse42(const unsigned char *str, size_t len,
     }
 
     return pos + strvchar_cmp(str + pos, len - pos, is_field_vchar, endc);
+}
+
+// strurichar_sse42: SSE4.2 optimized implementation using PCMPESTRI
+//
+// Algorithm: Whitelist approach — the URI_CHAR whitelist decomposes into
+// 7 ranges (0x21, 0x24-0x3B, 0x3D, 0x3F-0x5A, 0x5F, 0x61-0x7A, 0x7E = 14
+// bytes of range data, within the 8-range PCMPESTRI limit). Negative
+// polarity inverts the per-byte result so the instruction returns the
+// index of the first byte NOT in any allowed range (= first invalid byte).
+static inline size_t strurichar_sse42(const unsigned char *str, size_t len)
+{
+    size_t pos = 0;
+    static const char ALIGNED(16) URI_RANGES[16] =
+        "\x21\x21\x24\x3b\x3d\x3d\x3f\x5a\x5f\x5f\x61\x7a\x7e\x7e";
+
+    const __m128i ranges =
+        _mm_loadu_si128((const __m128i *)(const void *)URI_RANGES);
+
+    while (pos + 16 <= len) {
+        __m128i data =
+            _mm_loadu_si128((const __m128i *)(const void *)(str + pos));
+
+        int idx =
+            _mm_cmpestri(ranges, 14, data, 16,
+                         _SIDD_LEAST_SIGNIFICANT | _SIDD_CMP_RANGES |
+                             _SIDD_UBYTE_OPS | _SIDD_MASKED_NEGATIVE_POLARITY);
+        if (idx != 16) {
+            return pos + (size_t)idx;
+        }
+        pos += 16;
+    }
+
+    return pos + strurichar_cmp(str + pos, len - pos);
 }
 
 #endif
@@ -1089,6 +1250,28 @@ static inline size_t strvchar(const unsigned char *str, size_t len)
     }
 #endif
     return strvchar_cmp(str, len, 0, &endc);
+}
+
+// strurichar: count consecutive URI characters (RFC 3986 whitelist).
+// Dispatches to the SIMD implementation for len >= 16; AVX2 builds reuse
+// the SSE4.2 path (implied by __AVX2__), which measures at least as fast
+// as a 256-bit compare chain for realistic URI lengths.
+static inline size_t strurichar(const unsigned char *str, size_t len)
+{
+#if defined(__SSE4_2__)
+    if (likely(len >= 16)) {
+        return strurichar_sse42(str, len);
+    }
+#elif defined(__SSE2__)
+    if (likely(len >= 16)) {
+        return strurichar_sse2(str, len);
+    }
+#elif defined(__aarch64__) || (defined(__arm__) && defined(__ARM_NEON))
+    if (likely(len >= 16)) {
+        return strurichar_neon(str, len);
+    }
+#endif
+    return strurichar_cmp(str, len);
 }
 
 static inline size_t strfcchar(const unsigned char *str, size_t len,
