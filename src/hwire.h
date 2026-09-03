@@ -434,7 +434,9 @@ int hwire_parse_headers(hwire_ctx_t *ctx, const char *str, size_t len,
  * @param str String to parse (must not be NULL)
  * @param len Length of string
  * @param pos Output: bytes consumed from str[0] (must not be NULL)
- * @param maxlen Maximum message length
+ * @param maxlen Maximum total byte length of the message (request-line +
+ * header fields, all delimiters included; the terminating empty line is
+ * excluded)
  * @param maxnhdrs Maximum number of headers
  * @param ctx Parser context (request_cb and header_cb must not be NULL)
  * @return HWIRE_OK on success
@@ -463,7 +465,9 @@ int hwire_parse_request(hwire_ctx_t *ctx, const char *str, size_t len,
  * @param str String to parse (must not be NULL)
  * @param len Length of string
  * @param pos Output: bytes consumed from str[0] (must not be NULL)
- * @param maxlen Maximum message length
+ * @param maxlen Maximum total byte length of the message (status-line +
+ * header fields, all delimiters included; the terminating empty line is
+ * excluded)
  * @param maxnhdrs Maximum number of headers
  * @param ctx Parser context (response_cb and header_cb must not be NULL)
  * @return HWIRE_OK on success

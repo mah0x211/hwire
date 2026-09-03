@@ -1861,12 +1861,20 @@ static int parse_hkey(const unsigned char *str, size_t len, size_t *cur,
 }
 
 /**
- * @brief Parse HTTP headers
+ * @brief Parse HTTP headers (shared implementation)
  *
- * Ported from parse.c:parse_header
+ * maxhdrlen bounds each individual header field (the public hwire_parse_headers
+ * per-field contract). maxlen bounds the whole header block cumulatively: after
+ * each field the absolute cursor must stay within str + maxlen (delimiters and
+ * CRLF included), else HWIRE_EHDRLEN; the terminating empty line is not
+ * counted. The tail is clamped to the buffer so the pointer never overflows and
+ * a budget larger than the available data defers to HWIRE_EAGAIN.
+ * hwire_parse_headers passes SIZE_MAX to disable the block cap;
+ * request/response pass the remaining message budget as both arguments.
  */
-int hwire_parse_headers(hwire_ctx_t *ctx, const char *str, size_t len,
-                        size_t *pos, size_t maxlen, uint8_t maxnhdrs)
+static int parse_headers(hwire_ctx_t *ctx, const char *str, size_t len,
+                         size_t *pos, size_t maxhdrlen, uint8_t maxnhdrs,
+                         size_t maxlen)
 {
     assert(str != NULL);
     assert(pos != NULL);
@@ -1880,6 +1888,10 @@ int hwire_parse_headers(hwire_ctx_t *ctx, const char *str, size_t len,
     int rv                    = 0;
     size_t klen               = 0;
     size_t vlen               = 0;
+    // absolute end of the header block within the maxlen budget, clamped to the
+    // buffer (len) so the sum never overflows and a budget larger than the data
+    // defers to HWIRE_EAGAIN rather than a spurious length error
+    const uintptr_t tail = (uintptr_t)str + (len >= maxlen ? maxlen : len + 1);
     hwire_header_t header;
 
 RETRY:
@@ -1915,7 +1927,7 @@ RETRY:
     nhdr++;
 
     head            = ustr;
-    klen            = maxlen;
+    klen            = maxhdrlen;
     ctx->key_lc.len = 0;
     // parse key and store lowercase in key_lc
     // header-field = field-name ":" OWS field-value OWS
@@ -1932,14 +1944,14 @@ RETRY:
     }
 
     // re-check maximum header length constraint
-    if (unlikely(cur > maxlen)) {
+    if (unlikely(cur > maxhdrlen)) {
         return HWIRE_EHDRLEN;
     }
     ustr += cur;
     len -= cur;
 
     header.value.ptr = (const char *)ustr;
-    vlen             = maxlen - (size_t)(ustr - head);
+    vlen             = maxhdrlen - (size_t)(ustr - head);
     // field-value = *field-content
     // RFC 7230 3.2 / RFC 9112 5.5: Field Values
     // Note: Empty field-value is allowed.
@@ -1949,6 +1961,12 @@ RETRY:
     }
     ustr += cur;
     len -= cur;
+
+    // the whole header block (fields + delimiters + CRLFs) must fit within the
+    // maxlen budget (tail); the terminating empty line is not counted
+    if (unlikely((uintptr_t)ustr > tail)) {
+        return HWIRE_EHDRLEN;
+    }
 
     // set header key and value
     header.key.ptr   = (const char *)head;
@@ -1961,6 +1979,19 @@ RETRY:
     }
 
     goto RETRY;
+}
+
+/**
+ * @brief Parse HTTP headers
+ *
+ * Ported from parse.c:parse_header
+ */
+int hwire_parse_headers(hwire_ctx_t *ctx, const char *str, size_t len,
+                        size_t *pos, size_t maxlen, uint8_t maxnhdrs)
+{
+    // public contract: maxlen bounds each header field individually; SIZE_MAX
+    // disables the cumulative block cap
+    return parse_headers(ctx, str, len, pos, maxlen, maxnhdrs, SIZE_MAX);
 }
 
 /** @} */ /* end of HTTP Headers Parsing Functions */
@@ -2047,41 +2078,47 @@ static int parse_uri(const unsigned char *str, size_t len, size_t *pos,
 /**
  * @brief Parse HTTP method
  *
- * Parses method as 1*tchar followed by SP.
+ * Parses method as 1*tchar followed by SP, length-capped by maxlen (mirrors
+ * parse_uri so the method participates in the request's cumulative budget).
  *
  * @param str String to parse (must not be NULL)
  * @param len Length of string
  * @param pos Input: start offset, Output: end offset (must not be NULL)
+ * @param maxlen Maximum method length (remaining message budget)
  * @param method Output: method string slice
  * @return HWIRE_OK on success
  * @return HWIRE_EAGAIN if more data needed
+ * @return HWIRE_ELEN if method length exceeds maxlen
  * @return HWIRE_EMETHOD for invalid method (not tchar or no SP)
  */
 static int parse_method(const unsigned char *str, size_t len, size_t *pos,
-                        hwire_str_t *method)
+                        size_t maxlen, hwire_str_t *method)
 {
-    size_t cur  = 0;
-    size_t mlen = 0;
+    size_t limit = len > maxlen ? maxlen : len;
+    size_t cur   = 0;
+    size_t mlen  = hwire_parse_tchar((const char *)str, limit, &cur);
 
-    // method = 1*tchar
-    mlen = hwire_parse_tchar((const char *)str, len, &cur);
-    if (mlen == 0) {
-        // first character is not tchar
-        return HWIRE_EMETHOD;
+    // method = 1*tchar terminated by SP
+    if (mlen < len && str[mlen] == SP) {
+        if (mlen == 0) {
+            // method must not be empty
+            return HWIRE_EMETHOD;
+        }
+        method->ptr = (const char *)str;
+        method->len = mlen;
+        *pos        = mlen + 1; // skip SP
+        return HWIRE_OK;
     }
 
-    // SP is required
-    if (cur >= len) {
+    if (mlen != limit) {
+        // found a non-tchar, non-SP byte before reaching the limit
+        return HWIRE_EMETHOD;
+    } else if (mlen == len) {
+        // reached end of string without finding SP, need more bytes
         return HWIRE_EAGAIN;
     }
-    if (str[cur] != SP) {
-        return HWIRE_EMETHOD;
-    }
-
-    method->ptr = (const char *)str;
-    method->len = mlen;
-    *pos        = cur + 1; // skip SP
-    return HWIRE_OK;
+    // method length exceeds maxlen
+    return HWIRE_ELEN;
 }
 
 /**
@@ -2116,12 +2153,16 @@ SKIP_NEXT_CRLF:
     // parse method
     // method = 1*tchar
     // RFC 7230 3.1.1 / RFC 9112 3.1: Method
-    rv = parse_method(ustr, len, &cur, &req.method);
+    rv = parse_method(ustr, len, &cur, maxlen, &req.method);
     if (rv != HWIRE_OK) {
         return rv;
     }
     ustr += cur;
     len -= cur;
+    // total consumed must stay within the message budget (tail check)
+    if ((size_t)(ustr - top) > maxlen) {
+        return HWIRE_ELEN;
+    }
 
     // parse-uri (find SP delimiter)
     // request-target = origin-form / absolute-form / authority-form /
@@ -2132,6 +2173,9 @@ SKIP_NEXT_CRLF:
     }
     ustr += cur;
     len -= cur;
+    if ((size_t)(ustr - top) > maxlen) {
+        return HWIRE_ELEN;
+    }
 
     // parse version
     // HTTP-version = HTTP-name "/" DIGIT "." DIGIT
@@ -2165,16 +2209,22 @@ SKIP_NEXT_CRLF:
 
     ustr += cur;
     len -= cur;
+    if ((size_t)(ustr - top) > maxlen) {
+        return HWIRE_ELEN;
+    }
 
     // call request callback
     if (ctx->request_cb(ctx, &req) != 0) {
         return HWIRE_ECALLBACK;
     }
 
-    // parse headers
+    // parse headers within the remaining message budget (cumulative total);
+    // (ustr - top) <= maxlen is guaranteed by the tail checks above, so this
+    // subtraction cannot underflow
+    maxlen -= (size_t)(ustr - top);
     cur = 0;
-    rv  = hwire_parse_headers(ctx, (const char *)ustr, len, &cur, maxlen,
-                              maxnhdrs);
+    rv  = parse_headers(ctx, (const char *)ustr, len, &cur, maxlen, maxnhdrs,
+                        maxlen);
     if (rv != HWIRE_OK) {
         return rv;
     }
@@ -2307,7 +2357,6 @@ SKIP_NEXT_CRLF:
     // parse version
     // status-line = HTTP-version SP status-code SP reason-phrase CRLF
     // RFC 7230 3.1.2 / RFC 9112 4: Status Line
-    // RFC 7230 3.1.2 / RFC 9112 4: Status Line
     rv = parse_version(ustr, len, &cur, &rsp.version);
     if (rv != HWIRE_OK) {
         return rv;
@@ -2318,6 +2367,10 @@ SKIP_NEXT_CRLF:
     }
     ustr += cur + 1;
     len -= cur + 1;
+    // total consumed must stay within the message budget (tail check)
+    if ((size_t)(ustr - top) > maxlen) {
+        return HWIRE_ELEN;
+    }
 
     // parse status
     // status-code = 3DIGIT
@@ -2328,6 +2381,9 @@ SKIP_NEXT_CRLF:
     }
     ustr += cur;
     len -= cur;
+    if ((size_t)(ustr - top) > maxlen) {
+        return HWIRE_ELEN;
+    }
 
     // parse reason
     // reason-phrase = *( HTAB / SP / VCHAR / obs-text )
@@ -2340,16 +2396,22 @@ SKIP_NEXT_CRLF:
     }
     ustr += cur;
     len -= cur;
+    if ((size_t)(ustr - top) > maxlen) {
+        return HWIRE_ELEN;
+    }
 
     // call response callback
     if (ctx->response_cb(ctx, &rsp) != 0) {
         return HWIRE_ECALLBACK;
     }
 
-    // parse headers
+    // parse headers within the remaining message budget (cumulative total);
+    // (ustr - top) <= maxlen is guaranteed by the tail checks above, so this
+    // subtraction cannot underflow
+    maxlen -= (size_t)(ustr - top);
     cur = 0;
-    rv  = hwire_parse_headers(ctx, (const char *)ustr, len, &cur, maxlen,
-                              maxnhdrs);
+    rv  = parse_headers(ctx, (const char *)ustr, len, &cur, maxlen, maxnhdrs,
+                        maxlen);
     if (rv != HWIRE_OK) {
         return rv;
     }

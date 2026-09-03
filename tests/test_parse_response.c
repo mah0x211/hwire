@@ -553,8 +553,49 @@ void test_parse_response_content_verification(void)
     TEST_END();
 }
 
+/*
+ * Covers: #4 cumulative maxlen — hwire_parse_response bounds the TOTAL message
+ * bytes (status-line + header fields; delimiters counted; terminating empty
+ * line excluded).
+ */
+void test_parse_response_maxlen_cumulative(void)
+{
+    TEST_START("test_parse_response_maxlen_cumulative");
+
+    char key_storage[TEST_KEY_SIZE];
+    hwire_ctx_t cb = {
+        .key_lc = {.buf = key_storage, .size = sizeof(key_storage), .len = 0},
+        .response_cb = mock_response_cb,
+        .header_cb   = mock_header_cb
+    };
+    size_t pos;
+    int rv;
+    const char *buf;
+
+    /* "HTTP/1.1 200 OK\r\nX: y\r\n\r\n":
+     * status-line 17 + "X: y\r\n" 6 = 23 counted bytes */
+    buf = "HTTP/1.1 200 OK\r\nX: y\r\n\r\n";
+    pos = 0;
+    rv  = hwire_parse_response(&cb, buf, strlen(buf), &pos, 23, 16);
+    ASSERT_OK(rv);
+    ASSERT_EQ(pos, strlen(buf));
+
+    /* one byte short → header overflows the shared budget */
+    pos = 0;
+    rv  = hwire_parse_response(&cb, buf, strlen(buf), &pos, 22, 16);
+    ASSERT_EQ(rv, HWIRE_EHDRLEN);
+
+    /* budget too small for the status-line itself → HWIRE_ELEN */
+    pos = 0;
+    rv  = hwire_parse_response(&cb, buf, strlen(buf), &pos, 10, 16);
+    ASSERT_EQ(rv, HWIRE_ELEN);
+
+    TEST_END();
+}
+
 int main(void)
 {
+    test_parse_response_maxlen_cumulative();
     test_parse_response_valid();
     test_parse_response_cb_fail();
     test_parse_response_reason_phrase();

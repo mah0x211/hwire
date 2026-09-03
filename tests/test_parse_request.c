@@ -83,6 +83,12 @@ void test_parse_request_method_errors(void)
     rv  = hwire_parse_request(&cb, buf, strlen(buf), &pos, 1024, 10);
     ASSERT_EQ(rv, HWIRE_EAGAIN);
 
+    /* Method length exceeds maxlen (tchar run fills the budget) */
+    buf = "VERYLONGMETHOD / HTTP/1.1\r\n\r\n";
+    pos = 0;
+    rv  = hwire_parse_request(&cb, buf, strlen(buf), &pos, 8, 10);
+    ASSERT_EQ(rv, HWIRE_ELEN);
+
     /* Empty URI (GET  HTTP/1.1) */
     buf = "GET  HTTP/1.1\r\n\r\n";
     pos = 0;
@@ -160,10 +166,10 @@ void test_parse_request_uri_errors(void)
     rv  = hwire_parse_request(&cb, buf, strlen(buf), &pos, 10, 10);
     ASSERT_EQ(rv, HWIRE_ELEN);
 
-    /* URI with SP within maxlen */
+    /* full request-line fits within maxlen (cumulative total) → OK */
     buf = "GET /sp HTTP/1.1\r\n\r\n";
     pos = 0;
-    rv  = hwire_parse_request(&cb, buf, strlen(buf), &pos, 5, 10);
+    rv  = hwire_parse_request(&cb, buf, strlen(buf), &pos, 100, 10);
     ASSERT_OK(rv);
 
     /* No space after URI */
@@ -344,11 +350,11 @@ void test_parse_request_uri_invalid_chars(void)
     rv  = hwire_parse_request(&cb, buf, strlen(buf), &pos, 1024, 10);
     ASSERT_EQ(rv, HWIRE_EURI);
 
-    /* Maxlen boundary check: URI "12345" (5 bytes) with maxlen=5 →
-       HWIRE_EAGAIN (no SP yet) */
+    /* request-target with no SP yet, buffer-limited (not budget-limited) →
+       HWIRE_EAGAIN */
     buf = "GET 12345";
     pos = 0;
-    rv  = hwire_parse_request(&cb, buf, strlen(buf), &pos, 5, 10);
+    rv  = hwire_parse_request(&cb, buf, strlen(buf), &pos, 1024, 10);
     ASSERT_EQ(rv, HWIRE_EAGAIN);
 
     /* Long header value (SIMD coverage): 64 VCHAR characters */
@@ -614,8 +620,59 @@ void test_parse_request_content_verification(void)
     TEST_END();
 }
 
+/*
+ * Covers: #4 cumulative maxlen — hwire_parse_request bounds the TOTAL message
+ * bytes (request-line + header fields; SP / ":" / OWS / CRLF all count; the
+ * terminating empty line is excluded). maxlen == total → OK; below → error.
+ */
+void test_parse_request_maxlen_cumulative(void)
+{
+    TEST_START("test_parse_request_maxlen_cumulative");
+
+    char key_storage[TEST_KEY_SIZE];
+    hwire_ctx_t cb = {
+        .key_lc = {.buf = key_storage, .size = sizeof(key_storage), .len = 0},
+        .request_cb = mock_request_cb,
+        .header_cb  = mock_header_cb
+    };
+    size_t pos;
+    int rv;
+    const char *buf;
+
+    /* "GET / HTTP/1.1\r\nHost: x\r\n\r\n":
+     * request-line 16 + "Host: x\r\n" 9 = 25 counted bytes */
+    buf = "GET / HTTP/1.1\r\nHost: x\r\n\r\n";
+    pos = 0;
+    rv  = hwire_parse_request(&cb, buf, strlen(buf), &pos, 25, 16);
+    ASSERT_OK(rv);
+    ASSERT_EQ(pos, strlen(buf));
+
+    /* one byte short: the header value + CRLF overflows the shared budget */
+    pos = 0;
+    rv  = hwire_parse_request(&cb, buf, strlen(buf), &pos, 24, 16);
+    ASSERT_EQ(rv, HWIRE_EHDRLEN);
+
+    /* budget too small for the request-line itself → HWIRE_ELEN */
+    pos = 0;
+    rv  = hwire_parse_request(&cb, buf, strlen(buf), &pos, 10, 16);
+    ASSERT_EQ(rv, HWIRE_ELEN);
+
+    /* cumulative across multiple headers:
+     * request-line 16 + "A: 1\r\n" 6 + "B: 22\r\n" 7 = 29 */
+    buf = "GET / HTTP/1.1\r\nA: 1\r\nB: 22\r\n\r\n";
+    pos = 0;
+    rv  = hwire_parse_request(&cb, buf, strlen(buf), &pos, 29, 16);
+    ASSERT_OK(rv);
+    pos = 0;
+    rv  = hwire_parse_request(&cb, buf, strlen(buf), &pos, 28, 16);
+    ASSERT_EQ(rv, HWIRE_EHDRLEN);
+
+    TEST_END();
+}
+
 int main(void)
 {
+    test_parse_request_maxlen_cumulative();
     test_parse_request_valid();
     test_parse_request_cb_fail();
     test_parse_request_method_errors();
