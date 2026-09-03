@@ -13,7 +13,7 @@ Zero-allocation `HTTP/1.1` parser written in `C99` or later.
 - **Zero allocation** — no internal heap allocation; the caller owns all buffers.
 - **Non-destructive** — the input buffer is never modified; `hwire_str_t` fields reference it directly.
 - **EAGAIN-based streaming** — returns `HWIRE_EAGAIN` when the buffer is incomplete; re-submit the original buffer with more data appended and call again from offset 0. Stateless re-scan: no per-call resume state is maintained.
-- **SIMD acceleration** — auto-selects `AVX2` / `SSE4.2` / `SSSE3` / `SSE2` on `x86-64`, `NEON` on `ARM64`; falls back to scalar code when none of those instruction sets are available at compile time.
+- **SIMD acceleration** — auto-selects `SSE4.2` / `SSSE3` / `SSE2` on `x86-64`, `NEON` on `ARM64`; falls back to scalar code when none of those instruction sets are available at compile time.
 - **HTTP/1.x grammar** — validates method tokens, URIs, header field names, header field values (including `obs-text`), `chunk-size`, and quoted-strings per **RFC 9110**, **RFC 9112**, **RFC 7230**, and **RFC 3986**.
 - **`C99` or later / `C++` compatible** — single header + single source file; `extern "C"` guard included.
 
@@ -61,7 +61,7 @@ Message body parsing, transfer-coding, and connection management (**RFC 9112** �
 - Any `C99` or later compiler; `stddef.h` and `stdint.h` are required
 - For `SIMD` code paths: `GCC` ≥ 4.9, `clang` ≥ 3.5, or `MSVC` (with `<intrin.h>`
   for `_BitScanForward`/`_BitScanForward64`); `SIMD` is detected automatically via
-  predefined macros (`__AVX2__`, `__SSE4_2__`, `__aarch64__`, etc.) and silently
+  predefined macros (`__SSE4_2__`, `__SSSE3__`, `__aarch64__`, etc.) and silently
   disabled on unsupported compilers, falling back to the scalar implementation
 
 ---
@@ -74,7 +74,7 @@ Copy `src/hwire.h` and `src/hwire.c` into your project and compile `hwire.c` tog
 cc -std=c99 -Isrc -o myapp myapp.c src/hwire.c  # C11 or later also works
 ```
 
-`SIMD` code paths are selected automatically at compile time based on the target architecture. To force a specific instruction set, pass the appropriate compiler flag (e.g., `-mavx2` for `AVX2` on `x86-64`); scalar fallback is used when no supported `SIMD` macro is defined.
+`SIMD` code paths are selected automatically at compile time based on the target architecture. To force a specific instruction set, pass the appropriate compiler flag (e.g., `-msse4.2` for `SSE4.2` on `x86-64`); scalar fallback is used when no supported `SIMD` macro is defined. Building with `-mavx2` (or `-march=native` on AVX2-capable hardware) is supported and uses the `SSE4.2` paths, which measure fastest for typical header traffic.
 
 Define `HWIRE_NO_SIMD` (e.g. `-DHWIRE_NO_SIMD`) to force the portable scalar implementation on any target, regardless of the detected architecture. `make test-nosimd` builds and runs the test suite in this configuration.
 
