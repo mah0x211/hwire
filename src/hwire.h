@@ -378,13 +378,12 @@ int hwire_parse_parameters(hwire_ctx_t *ctx, const char *str, size_t len,
  *
  * @param str String to parse (must not be NULL)
  * @param len Maximum length of string
- * @param pos Output: bytes consumed from str[0] (after CRLF, must not be NULL;
- *            must be 0 on entry — str must point to the start of chunk-size
- * data)
+ * @param pos Output: bytes consumed from str[0] (after CRLF or LF, must not be
+ * NULL; must be 0 on entry — str must point to the start of chunk-size data)
  * @param maxlen Maximum string length
  * @param maxexts Maximum number of extensions
  * @param ctx Parser context (must not be NULL)
- * @return HWIRE_OK on success, CRLF consumed
+ * @return HWIRE_OK on success, CRLF or LF consumed
  * @return HWIRE_EAGAIN if more data needed
  * @return HWIRE_ELEN if length exceeds maxlen
  * @return HWIRE_ERANGE if chunk size exceeds maxsize
@@ -394,6 +393,8 @@ int hwire_parse_parameters(hwire_ctx_t *ctx, const char *str, size_t len,
  * @return HWIRE_EEXTVAL for invalid extension value or missing EOL
  * @return HWIRE_ECALLBACK if callback returned non-zero
  * @return HWIRE_ENOBUFS if extension count exceeds maxexts
+ * @note Line terminators match CR?LF: both CRLF and bare LF are accepted;
+ * bare CR is invalid.
  */
 int hwire_parse_chunksize(hwire_ctx_t *ctx, const char *str, size_t len,
                           size_t *pos, size_t maxlen, uint8_t maxexts);
@@ -401,13 +402,13 @@ int hwire_parse_chunksize(hwire_ctx_t *ctx, const char *str, size_t len,
 /**
  * @brief Parse HTTP headers
  *
- * Parses headers according to RFC 7230 until empty line (CRLF) is encountered.
- * Calls header_cb for each parsed header.
+ * Parses headers until an empty CRLF or LF line is encountered. Calls
+ * header_cb for each parsed header.
  *
  * @param str String to parse (must not be NULL)
  * @param len Maximum length of string
- * @param pos Output: bytes consumed from str[0] after empty-line CRLF (must not
- * be NULL)
+ * @param pos Output: bytes consumed from str[0] after the empty CRLF or LF line
+ * (must not be NULL)
  * @param maxlen Maximum individual header length
  * @param maxnhdrs Maximum number of headers
  * @param ctx Parser context (key_lc must be allocated, header_cb must not be
@@ -417,10 +418,12 @@ int hwire_parse_chunksize(hwire_ctx_t *ctx, const char *str, size_t len,
  * @return HWIRE_EHDRNAME for invalid header name
  * @return HWIRE_EHDRVALUE for invalid header value
  * @return HWIRE_EHDRLEN if header length exceeds maxlen
- * @return HWIRE_EEOL if end-of-line in header value is invalid (CR without LF)
+ * @return HWIRE_EEOL if a line terminator is invalid (CR without LF)
  * @return HWIRE_ENOBUFS if header count exceeds maxnhdrs
  * @return HWIRE_EKEYLEN if key length exceeds ctx->key_lc.size
  * @return HWIRE_ECALLBACK if callback returned non-zero
+ * @note Line terminators match CR?LF: both CRLF and bare LF are accepted;
+ * bare CR is invalid.
  */
 int hwire_parse_headers(hwire_ctx_t *ctx, const char *str, size_t len,
                         size_t *pos, size_t maxlen, uint8_t maxnhdrs);
@@ -452,6 +455,8 @@ int hwire_parse_headers(hwire_ctx_t *ctx, const char *str, size_t len,
  * @return HWIRE_EKEYLEN if key length exceeds ctx->key_lc.size
  * @return HWIRE_ECALLBACK if callback returned non-zero
  * @return HWIRE_ENOBUFS if header count exceeds maxnhdrs
+ * @note Line terminators and leading empty lines match CR?LF: both CRLF and
+ * bare LF are accepted; bare CR is invalid.
  */
 int hwire_parse_request(hwire_ctx_t *ctx, const char *str, size_t len,
                         size_t *pos, size_t maxlen, uint8_t maxnhdrs);
@@ -483,6 +488,8 @@ int hwire_parse_request(hwire_ctx_t *ctx, const char *str, size_t len,
  * @return HWIRE_EKEYLEN if key length exceeds ctx->key_lc.size
  * @return HWIRE_ECALLBACK if callback returned non-zero
  * @return HWIRE_ENOBUFS if header count exceeds maxnhdrs
+ * @note Line terminators and leading empty lines match CR?LF: both CRLF and
+ * bare LF are accepted; bare CR is invalid.
  */
 int hwire_parse_response(hwire_ctx_t *ctx, const char *str, size_t len,
                          size_t *pos, size_t maxlen, uint8_t maxnhdrs);

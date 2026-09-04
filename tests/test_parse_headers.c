@@ -273,11 +273,11 @@ void test_parse_headers_empty_and_eol(void)
     rv  = hwire_parse_headers(&cb, buf, strlen(buf), &pos, 1024, 10);
     ASSERT_EQ(rv, HWIRE_EAGAIN);
 
-    /* CR followed by non-LF */
+    /* CR followed by non-LF is an invalid empty-line terminator */
     buf = "\rX";
     pos = 0;
     rv  = hwire_parse_headers(&cb, buf, strlen(buf), &pos, 1024, 10);
-    ASSERT_EQ(rv, HWIRE_EHDRNAME);
+    ASSERT_EQ(rv, HWIRE_EEOL);
 
     TEST_END();
 }
