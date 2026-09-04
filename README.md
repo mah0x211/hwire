@@ -70,8 +70,8 @@ The following rules from [RFC 9110](https://www.rfc-editor.org/rfc/rfc9110) and 
 
 The following behaviors deviate from strict RFC requirements for robustness and backward compatibility ([RFC 9112 §2.2](https://www.rfc-editor.org/rfc/rfc9112#section-2.2)):
 
-- **Bare `LF` as line terminator**: although senders MUST use `CRLF`, a bare `LF` (without a preceding `CR`) is also accepted at every line boundary — request-line, status-line, each header field line, and the end-of-headers blank line.
-- **Leading `CR`/`LF` before message start**: any leading `CR` or `LF` bytes before the request-line or status-line are silently discarded.
+- **`CR?LF` line terminators**: although senders MUST use `CRLF`, recipients accept either `CRLF` or a bare `LF` at every parsed line boundary — request-line, status-line, header field line, end-of-headers, and chunk-size line. A bare `CR` is rejected.
+- **Leading empty lines**: empty `CRLF` or `LF` lines before a request-line or status-line are ignored. A bare `CR` is not an empty line and is rejected.
 
 ### Partial
 
@@ -193,7 +193,7 @@ All parse functions return `hwire_code_t`. Negative values are errors.
 | `HWIRE_ELEN` | −2 | Length exceeded |
 | `HWIRE_EMETHOD` | −3 | Unknown / unimplemented HTTP method |
 | `HWIRE_EVERSION` | −4 | Unsupported HTTP version |
-| `HWIRE_EEOL` | −5 | Invalid end-of-line (expected `CRLF`) |
+| `HWIRE_EEOL` | −5 | Invalid end-of-line (expected `CR?LF`) |
 | `HWIRE_EHDRNAME` | −6 | Invalid header field name |
 | `HWIRE_EHDRVALUE` | −7 | Invalid header field value |
 | `HWIRE_EHDRLEN` | −8 | Header length exceeded `maxlen` |
@@ -515,14 +515,14 @@ chunk-size = 1*HEXDIG
 chunk-ext  = *( BWS ";" BWS chunk-ext-name [ BWS "=" BWS chunk-ext-val ] )
 ```
 
-`ctx->chunksize_cb` is called once with the parsed size; `ctx->chunksize_ext_cb` is called for each extension (optional). On success, `*pos` is advanced past the trailing `CRLF`.
+`ctx->chunksize_cb` is called once with the parsed size; `ctx->chunksize_ext_cb` is called for each extension (optional). On success, `*pos` is advanced past the trailing `CRLF` or `LF`.
 
 **Parameters**
 
 - `ctx` — parser context (`chunksize_cb` must not be NULL).
 - `str` — input string (must not be NULL; `*pos` must be `0` on entry).
 - `len` — total bytes in `str`.
-- `pos` — out: bytes consumed from `str[0]` including the trailing `CRLF` (must not be NULL).
+- `pos` — out: bytes consumed from `str[0]` including the trailing `CRLF` or `LF` (must not be NULL).
 - `maxlen` — maximum line length in bytes.
 - `maxexts` — maximum number of chunk extensions.
 
@@ -530,14 +530,14 @@ chunk-ext  = *( BWS ";" BWS chunk-ext-name [ BWS "=" BWS chunk-ext-val ] )
 
 | Return | Condition |
 |--------|-----------|
-| `HWIRE_OK` | Chunk-size line consumed including `CRLF` |
+| `HWIRE_OK` | Chunk-size line consumed including `CRLF` or `LF` |
 | `HWIRE_EAGAIN` | More data needed |
 | `HWIRE_ELEN` | Length exceeds `maxlen` |
 | `HWIRE_ERANGE` | Chunk size exceeds `HWIRE_MAX_CHUNKSIZE` |
 | `HWIRE_EILSEQ` | Invalid byte sequence |
 | `HWIRE_EEOL` | Invalid end-of-line terminator |
 | `HWIRE_EEXTNAME` | Invalid extension name |
-| `HWIRE_EEXTVAL` | Invalid extension value or missing `CRLF` |
+| `HWIRE_EEXTVAL` | Invalid extension value or missing line terminator |
 | `HWIRE_ECALLBACK` | Callback returned non-zero |
 | `HWIRE_ENOBUFS` | Extension count exceeds `maxexts` |
 
@@ -548,14 +548,14 @@ int hwire_parse_headers(hwire_ctx_t *ctx, const char *str, size_t len,
                         size_t *pos, size_t maxlen, uint8_t maxnhdrs);
 ```
 
-Parses HTTP header fields until the empty line (`CRLF CRLF` boundary). `ctx->header_cb` is called for each field; `ctx->key_lc.buf` is populated with the lowercase field name before each callback.
+Parses HTTP header fields until an empty `CRLF` or `LF` line. `ctx->header_cb` is called for each field; `ctx->key_lc.buf` is populated with the lowercase field name before each callback.
 
 **Parameters**
 
 - `ctx` — parser context (`header_cb` must not be NULL).
 - `str` — input string (must not be NULL).
 - `len` — total bytes in `str`.
-- `pos` — out: bytes consumed from `str[0]` including the empty-line `CRLF` (must not be NULL).
+- `pos` — out: bytes consumed from `str[0]` including the empty `CRLF` or `LF` line (must not be NULL).
 - `maxlen` — maximum individual header length in bytes.
 - `maxnhdrs` — maximum number of header fields.
 

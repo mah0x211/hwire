@@ -1619,7 +1619,7 @@ CHECK_PARAM:
  * @return HWIRE_EILSEQ if byte sequence is illegal
  * @return HWIRE_EEOL if end-of-line terminator is invalid
  *
- * @note This function requires CRLF (\\r\\n) as the line terminator.
+ * @note This function accepts CRLF or bare LF as the line terminator.
  * @note Extensions with no value have empty string as value (ptr="" len=0).
  */
 int hwire_parse_chunksize(hwire_ctx_t *ctx, const char *str, size_t len,
@@ -1919,7 +1919,7 @@ static int parse_hkey(const unsigned char *str, size_t len, size_t *cur,
  * maxhdrlen bounds each individual header field (the public hwire_parse_headers
  * per-field contract). maxlen bounds the whole header block cumulatively: after
  * each field the absolute cursor must stay within str + maxlen (delimiters and
- * CRLF included), else HWIRE_EHDRLEN; the terminating empty line is not
+ * CRLF/LF included), else HWIRE_EHDRLEN; the terminating empty line is not
  * counted. The tail is clamped to the buffer so the pointer never overflows and
  * a budget larger than the available data defers to HWIRE_EAGAIN.
  * hwire_parse_headers passes SIZE_MAX to disable the block cap;
@@ -1948,7 +1948,7 @@ static int parse_headers(hwire_ctx_t *ctx, const char *str, size_t len,
     hwire_header_t header;
 
 RETRY:
-    // End-of-headers (CR/LF) or incomplete data — happens once per request,
+    // End-of-headers (CRLF/LF) or incomplete data — happens once per request,
     // not once per header. Use unlikely to keep the hot header-parsing path
     // as a straight-line fall-through.
     if (unlikely(len == 0)) {
@@ -1964,7 +1964,8 @@ RETRY:
                 *pos = (size_t)(ustr - top);
                 return HWIRE_OK;
             }
-            // CR without LF: fall through → parse_hkey rejects as non-tchar
+            // CR followed by a non-LF byte is not a line ending.
+            return HWIRE_EEOL;
         } else if (*ustr == LF) {
             ustr++;
             *pos = (size_t)(ustr - top);
@@ -2015,8 +2016,9 @@ RETRY:
     ustr += cur;
     len -= cur;
 
-    // the whole header block (fields + delimiters + CRLFs) must fit within the
-    // maxlen budget (tail); the terminating empty line is not counted
+    // the whole header block (fields + delimiters + line endings) must fit
+    // within the maxlen budget (tail); the terminating empty line is not
+    // counted
     if (unlikely((uintptr_t)ustr > tail)) {
         return HWIRE_EHDRLEN;
     }
@@ -2197,6 +2199,15 @@ SKIP_NEXT_CRLF:
     }
     switch (*ustr) {
     case CR:
+        if (unlikely(len < 2)) {
+            return HWIRE_EAGAIN;
+        } else if (unlikely(ustr[1] != LF)) {
+            return HWIRE_EEOL;
+        }
+        ustr += 2;
+        len -= 2;
+        goto SKIP_NEXT_CRLF;
+
     case LF:
         ustr++;
         len--;
@@ -2401,6 +2412,15 @@ SKIP_NEXT_CRLF:
     }
     switch (*ustr) {
     case CR:
+        if (unlikely(len < 2)) {
+            return HWIRE_EAGAIN;
+        } else if (unlikely(ustr[1] != LF)) {
+            return HWIRE_EEOL;
+        }
+        ustr += 2;
+        len -= 2;
+        goto SKIP_NEXT_CRLF;
+
     case LF:
         ustr++;
         len--;
