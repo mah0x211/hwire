@@ -18,6 +18,34 @@ Zero-allocation `HTTP/1.1` parser written in `C99` or later.
 - **`C99` or later / `C++` compatible** — single header + single source file; `extern "C"` guard included.
 
 
+## Benchmark
+
+A self-contained benchmark suite lives in [`bench/`](bench/): one plain-C
+driver measures hwire (always compiled from the current sources) and any
+third-party parser dropped in under `bench/parsers/`, over realistic
+2026-traffic fixtures (modern browser navigation, logged-in cookie-heavy
+requests, API calls, CDN assets, ...). It builds per SIMD variant
+(`nosimd`/`sse2`/`sse42`/`avx2` on x86-64, `nosimd`/`neon` on ARM64) and
+reports time per message and throughput.
+
+```sh
+cd bench
+make               # run every variant and print the comparison
+make request       # or make response: one direction only
+```
+
+Headline numbers from the reference hosts (full tables and platform
+details in [`bench/README.md`](bench/README.md#sample-results)):
+
+| host (variant) | request: browser page load (669 B) | request: logged-in browser (1213 B) | response: HTML page (842 B) | response: JSON API (1122 B) |
+|---|---:|---:|---:|---:|
+| Apple M1 Max (`neon`) | 172 ns, 3.9 GB/s | 175 ns, 7.0 GB/s | 188 ns, 4.5 GB/s | 288 ns, 3.9 GB/s |
+| Ryzen 7 PRO 4750GE (`sse42`, 3.09 GHz) | 176 ns, 3.8 GB/s | 193 ns, 6.3 GB/s | 193 ns, 4.4 GB/s | 275 ns, 4.1 GB/s |
+
+On these workloads NEON is 1.2-1.7x the scalar build on ARM64, and
+`-msse4.2` is the fastest x86-64 configuration.
+
+
 ## RFC Compliance
 
 This library parses `HTTP/1.x` **message framing and header field syntax**. Application-level HTTP semantics (content negotiation, conditional requests, authentication, caching) are outside its scope.
