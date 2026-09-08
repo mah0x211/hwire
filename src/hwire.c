@@ -79,8 +79,8 @@
 // for typical header traffic than the PCMPESTRI paths.
 #if defined(__AVX2__) && !defined(__SSE4_2__)
 # define __SSE4_2__ 1
-# define __SSSE3__ 1
-# define __SSE2__ 1
+# define __SSSE3__  1
+# define __SSE2__   1
 #endif
 
 // SIMD intrinsic headers.  Each x86 header transitively includes its
@@ -892,7 +892,7 @@ static inline size_t strurichar_neon(const unsigned char *str, size_t len)
 // Parameters:
 // - is_field_vchar: non-zero if field-vchar is allowed, 0x00 otherwise
 // - endc: set to the first invalid byte (non-NULL assumed)
-#if !defined(__SSE4_2__)
+# if !defined(__SSE4_2__)
 static inline size_t strvchar_sse2(const unsigned char *str, size_t len,
                                    int8_t is_field_vchar, unsigned char *endc)
 {
@@ -1007,7 +1007,7 @@ static inline size_t strurichar_sse2(const unsigned char *str, size_t len)
     return pos + strurichar_cmp(str + pos, len - pos);
 }
 
-#endif /* !defined(__SSE4_2__) */
+# endif /* !defined(__SSE4_2__) */
 
 #endif /* defined(__SSE2__) */
 
@@ -1757,8 +1757,7 @@ CHECK_EOL:
             .key   = {.len = klen, .ptr = (const char *)key              },
             .value = {.len = vlen, .ptr = (vlen) ? (const char *)val : ""}
         };
-        if (ctx->chunksize_ext_cb != NULL &&
-            ctx->chunksize_ext_cb(ctx, &ext)) {
+        if (ctx->chunksize_ext_cb != NULL && ctx->chunksize_ext_cb(ctx, &ext)) {
             return HWIRE_ECALLBACK;
         }
         nexts++;
@@ -2210,28 +2209,32 @@ int hwire_parse_request(hwire_ctx_t *ctx, const char *str, size_t len,
     assert(ctx->request_cb != NULL);
     assert(ctx->header_cb != NULL);
     const unsigned char *ustr = (const unsigned char *)str;
-    const unsigned char *top  = ustr;
     hwire_request_t req;
-    size_t cur = 0;
-    int rv     = 0;
+    size_t head = 0;
+    size_t cur  = 0;
+    int rv      = 0;
 
 SKIP_NEXT_CRLF:
     if (unlikely(len == 0)) {
         return HWIRE_EAGAIN;
+    } else if (unlikely(head >= maxlen)) {
+        return HWIRE_ELEN;
     }
-    switch (*ustr) {
+    switch (ustr[head]) {
     case CR:
         if (unlikely(len < 2)) {
             return HWIRE_EAGAIN;
-        } else if (unlikely(ustr[1] != LF)) {
+        } else if (unlikely(maxlen - head < 2)) {
+            return HWIRE_ELEN;
+        } else if (unlikely(ustr[head + 1] != LF)) {
             return HWIRE_EEOL;
         }
-        ustr += 2;
+        head += 2;
         len -= 2;
         goto SKIP_NEXT_CRLF;
 
     case LF:
-        ustr++;
+        head++;
         len--;
         goto SKIP_NEXT_CRLF;
     }
@@ -2239,34 +2242,34 @@ SKIP_NEXT_CRLF:
     // parse method
     // method = 1*tchar
     // RFC 7230 3.1.1 / RFC 9112 3.1: Method
-    rv = parse_method(ustr, len, &cur, maxlen, &req.method);
+    rv = parse_method(ustr + head, len, &cur, maxlen - head, &req.method);
     if (rv != HWIRE_OK) {
         return rv;
     }
-    ustr += cur;
+    head += cur;
     len -= cur;
     // total consumed must stay within the message budget (tail check)
-    if ((size_t)(ustr - top) > maxlen) {
+    if (head > maxlen) {
         return HWIRE_ELEN;
     }
 
     // parse-uri (find SP delimiter)
     // request-target = origin-form / absolute-form / authority-form /
     // asterik-form RFC 7230 3.1.1 / RFC 9112 3.2: Request Target
-    rv = parse_uri(ustr, len, &cur, maxlen, &req.uri);
+    rv = parse_uri(ustr + head, len, &cur, maxlen - head, &req.uri);
     if (rv != HWIRE_OK) {
         return rv;
     }
-    ustr += cur;
+    head += cur;
     len -= cur;
-    if ((size_t)(ustr - top) > maxlen) {
+    if (head > maxlen) {
         return HWIRE_ELEN;
     }
 
     // parse version
     // HTTP-version = HTTP-name "/" DIGIT "." DIGIT
     // RFC 7230 2.6 / RFC 9110 2.5: Protocol Versioning
-    rv = parse_version(ustr, len, &cur, &req.version);
+    rv = parse_version(ustr + head, len, &cur, &req.version);
     if (rv != HWIRE_OK) {
         return rv;
     }
@@ -2275,11 +2278,11 @@ SKIP_NEXT_CRLF:
     if (unlikely(cur >= len)) {
         return HWIRE_EAGAIN;
     }
-    switch (ustr[cur]) {
+    switch (ustr[head + cur]) {
     case CR:
         if (cur + 1 >= len) {
             return HWIRE_EAGAIN;
-        } else if (ustr[cur + 1] != LF) {
+        } else if (ustr[head + cur + 1] != LF) {
             // invalid end-of-line terminator
             return HWIRE_EEOL;
         }
@@ -2293,9 +2296,9 @@ SKIP_NEXT_CRLF:
         return HWIRE_EVERSION;
     }
 
-    ustr += cur;
+    head += cur;
     len -= cur;
-    if ((size_t)(ustr - top) > maxlen) {
+    if (head > maxlen) {
         return HWIRE_ELEN;
     }
 
@@ -2304,19 +2307,16 @@ SKIP_NEXT_CRLF:
         return HWIRE_ECALLBACK;
     }
 
-    // parse headers within the remaining message budget (cumulative total);
-    // (ustr - top) <= maxlen is guaranteed by the tail checks above, so this
-    // subtraction cannot underflow
-    maxlen -= (size_t)(ustr - top);
+    // parse headers within the remaining message budget (cumulative total)
     cur = 0;
-    rv  = parse_headers(ctx, (const char *)ustr, len, &cur, maxlen, maxnhdrs,
-                        maxlen);
+    rv  = parse_headers(ctx, (const char *)(ustr + head), len, &cur,
+                        maxlen - head, maxnhdrs, maxlen - head);
     if (rv != HWIRE_OK) {
         return rv;
     }
-    ustr += cur;
+    head += cur;
 
-    *pos = (size_t)(ustr - top);
+    *pos = head;
     return HWIRE_OK;
 }
 
@@ -2423,28 +2423,32 @@ int hwire_parse_response(hwire_ctx_t *ctx, const char *str, size_t len,
     assert(ctx->response_cb != NULL);
     assert(ctx->header_cb != NULL);
     const unsigned char *ustr = (const unsigned char *)str;
-    const unsigned char *top  = ustr;
     hwire_response_t rsp;
-    size_t cur = 0;
-    int rv     = 0;
+    size_t head = 0;
+    size_t cur  = 0;
+    int rv      = 0;
 
 SKIP_NEXT_CRLF:
     if (unlikely(len == 0)) {
         return HWIRE_EAGAIN;
+    } else if (unlikely(head >= maxlen)) {
+        return HWIRE_ELEN;
     }
-    switch (*ustr) {
+    switch (ustr[head]) {
     case CR:
         if (unlikely(len < 2)) {
             return HWIRE_EAGAIN;
-        } else if (unlikely(ustr[1] != LF)) {
+        } else if (unlikely(maxlen - head < 2)) {
+            return HWIRE_ELEN;
+        } else if (unlikely(ustr[head + 1] != LF)) {
             return HWIRE_EEOL;
         }
-        ustr += 2;
+        head += 2;
         len -= 2;
         goto SKIP_NEXT_CRLF;
 
     case LF:
-        ustr++;
+        head++;
         len--;
         goto SKIP_NEXT_CRLF;
     }
@@ -2452,46 +2456,46 @@ SKIP_NEXT_CRLF:
     // parse version
     // status-line = HTTP-version SP status-code SP reason-phrase CRLF
     // RFC 7230 3.1.2 / RFC 9112 4: Status Line
-    rv = parse_version(ustr, len, &cur, &rsp.version);
+    rv = parse_version(ustr + head, len, &cur, &rsp.version);
     if (rv != HWIRE_OK) {
         return rv;
     } else if (cur >= len) {
         return HWIRE_EAGAIN;
-    } else if (ustr[cur] != SP) {
+    } else if (ustr[head + cur] != SP) {
         return HWIRE_EVERSION;
     }
-    ustr += cur + 1;
+    head += cur + 1;
     len -= cur + 1;
     // total consumed must stay within the message budget (tail check)
-    if ((size_t)(ustr - top) > maxlen) {
+    if (head > maxlen) {
         return HWIRE_ELEN;
     }
 
     // parse status
     // status-code = 3DIGIT
     // RFC 7230 3.1.2 / RFC 9112 4: Status Code
-    rv = parse_status(ustr, len, &cur, &rsp.status);
+    rv = parse_status(ustr + head, len, &cur, &rsp.status);
     if (rv != HWIRE_OK) {
         return rv;
     }
-    ustr += cur;
+    head += cur;
     len -= cur;
-    if ((size_t)(ustr - top) > maxlen) {
+    if (head > maxlen) {
         return HWIRE_ELEN;
     }
 
     // parse reason
     // reason-phrase = *( HTAB / SP / VCHAR / obs-text )
     // RFC 7230 3.1.2 / RFC 9112 4: Reason Phrase
-    rsp.reason.ptr = (const char *)ustr;
-    rsp.reason.len = maxlen;
-    rv             = parse_reason(ustr, len, &cur, &rsp.reason.len);
+    rsp.reason.ptr = (const char *)(ustr + head);
+    rsp.reason.len = maxlen - head;
+    rv             = parse_reason(ustr + head, len, &cur, &rsp.reason.len);
     if (rv != HWIRE_OK) {
         return rv;
     }
-    ustr += cur;
+    head += cur;
     len -= cur;
-    if ((size_t)(ustr - top) > maxlen) {
+    if (head > maxlen) {
         return HWIRE_ELEN;
     }
 
@@ -2500,19 +2504,16 @@ SKIP_NEXT_CRLF:
         return HWIRE_ECALLBACK;
     }
 
-    // parse headers within the remaining message budget (cumulative total);
-    // (ustr - top) <= maxlen is guaranteed by the tail checks above, so this
-    // subtraction cannot underflow
-    maxlen -= (size_t)(ustr - top);
+    // parse headers within the remaining message budget (cumulative total)
     cur = 0;
-    rv  = parse_headers(ctx, (const char *)ustr, len, &cur, maxlen, maxnhdrs,
-                        maxlen);
+    rv  = parse_headers(ctx, (const char *)(ustr + head), len, &cur,
+                        maxlen - head, maxnhdrs, maxlen - head);
     if (rv != HWIRE_OK) {
         return rv;
     }
-    ustr += cur;
+    head += cur;
 
-    *pos = (size_t)(ustr - top);
+    *pos = head;
     return HWIRE_OK;
 }
 
