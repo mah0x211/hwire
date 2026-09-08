@@ -517,6 +517,10 @@ chunk-ext  = *( BWS ";" BWS chunk-ext-name [ BWS "=" BWS chunk-ext-val ] )
 
 `ctx->chunksize_cb` is called once with the parsed size; `ctx->chunksize_ext_cb` is called for each extension when set (optional). When it is `NULL`, extensions are still syntax-checked and counted against `maxexts`, but are not delivered. On success, `*pos` is advanced past the trailing `CRLF` or `LF`.
 
+When `=` is present, it must be followed by a non-empty token or a
+quoted-string. An empty quoted-string (`foo=""`) is valid, while an empty token
+value (`foo=`) is rejected with `HWIRE_EEXTVAL`.
+
 **Parameters**
 
 - `ctx` — parser context (`chunksize_cb` must not be NULL).
