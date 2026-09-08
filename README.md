@@ -523,7 +523,11 @@ chunk-ext  = *( BWS ";" BWS chunk-ext-name [ BWS "=" BWS chunk-ext-val ] )
 - `str` — input string (must not be NULL; `*pos` must be `0` on entry).
 - `len` — total bytes in `str`.
 - `pos` — out: bytes consumed from `str[0]` including the trailing `CRLF` or `LF` (must not be NULL).
-- `maxlen` — maximum line length in bytes.
+- `maxlen` — maximum line length and input scanning budget in bytes. The
+  complete line, including its trailing `CRLF` or `LF`, must fit within this
+  budget. If available input ends before the budget is exhausted, the parser
+  returns `HWIRE_EAGAIN`. If the line is incomplete upon reaching `maxlen`, it
+  returns `HWIRE_ELEN` without examining later bytes.
 - `maxexts` — maximum number of chunk extensions.
 
 **Returns**
@@ -531,8 +535,8 @@ chunk-ext  = *( BWS ";" BWS chunk-ext-name [ BWS "=" BWS chunk-ext-val ] )
 | Return | Condition |
 |--------|-----------|
 | `HWIRE_OK` | Chunk-size line consumed including `CRLF` or `LF` |
-| `HWIRE_EAGAIN` | More data needed |
-| `HWIRE_ELEN` | Length exceeds `maxlen` |
+| `HWIRE_EAGAIN` | More data needed before `maxlen` is reached |
+| `HWIRE_ELEN` | Line incomplete upon reaching `maxlen` |
 | `HWIRE_ERANGE` | Chunk size exceeds `HWIRE_MAX_CHUNKSIZE` |
 | `HWIRE_EILSEQ` | Invalid byte sequence |
 | `HWIRE_EEOL` | Invalid end-of-line terminator |
@@ -699,4 +703,3 @@ for (;;) {
 ```
 
 > **Note:** `hwire_parse_parameters` is designed for parsing a single header field value that has already been fully received. It does not return `HWIRE_EAGAIN`.
-

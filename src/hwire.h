@@ -382,12 +382,13 @@ int hwire_parse_parameters(hwire_ctx_t *ctx, const char *str, size_t len,
  * @param len Maximum length of string
  * @param pos Output: bytes consumed from str[0] (after CRLF or LF, must not be
  * NULL; must be 0 on entry — str must point to the start of chunk-size data)
- * @param maxlen Maximum string length
+ * @param maxlen Maximum line length and number of input bytes examined; the
+ * complete line terminator must fit within this budget
  * @param maxexts Maximum number of extensions
  * @param ctx Parser context (must not be NULL)
  * @return HWIRE_OK on success, CRLF or LF consumed
- * @return HWIRE_EAGAIN if more data needed
- * @return HWIRE_ELEN if length exceeds maxlen
+ * @return HWIRE_EAGAIN if more data is needed before maxlen is reached
+ * @return HWIRE_ELEN if the line is incomplete upon reaching maxlen
  * @return HWIRE_ERANGE if chunk size exceeds maxsize
  * @return HWIRE_EILSEQ if byte sequence is illegal
  * @return HWIRE_EEOL if end-of-line terminator is invalid
