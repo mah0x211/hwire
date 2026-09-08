@@ -196,7 +196,9 @@ typedef struct hwire_ctx_st {
     int (*chunksize_cb)(struct hwire_ctx_st *ctx, uint32_t size);
 
     /**
-     * Called for each chunk extension parsed by hwire_parse_chunksize.
+     * Optional callback called for each chunk extension parsed by
+     * hwire_parse_chunksize. When NULL, extensions are still syntax-checked
+     * and counted against maxexts, but are not delivered.
      * @param ctx Parser context
      * @param ext Parsed extension (key and value reference input buffer)
      * @return 0 to continue, non-zero to stop (HWIRE_ECALLBACK)

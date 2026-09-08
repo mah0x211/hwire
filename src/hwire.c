@@ -1720,7 +1720,8 @@ CHECK_EOL:
                 .key   = {.len = klen, .ptr = (const char *)key              },
                 .value = {.len = vlen, .ptr = (vlen) ? (const char *)val : ""}
             };
-            if (ctx->chunksize_ext_cb(ctx, &ext)) {
+            if (ctx->chunksize_ext_cb != NULL &&
+                ctx->chunksize_ext_cb(ctx, &ext)) {
                 return HWIRE_ECALLBACK;
             }
         }
@@ -1746,7 +1747,8 @@ CHECK_EOL:
             .key   = {.len = klen, .ptr = (const char *)key              },
             .value = {.len = vlen, .ptr = (vlen) ? (const char *)val : ""}
         };
-        if (ctx->chunksize_ext_cb(ctx, &ext)) {
+        if (ctx->chunksize_ext_cb != NULL &&
+            ctx->chunksize_ext_cb(ctx, &ext)) {
             return HWIRE_ECALLBACK;
         }
         nexts++;
