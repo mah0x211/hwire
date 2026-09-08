@@ -1605,12 +1605,12 @@ CHECK_PARAM:
  * @param len Length of input string
  * @param pos Output: bytes consumed from str[0] (must not be NULL; must be 0 on
  * entry)
- * @param maxlen Maximum allowed length for parsing
+ * @param maxlen Maximum line length and number of input bytes examined
  * @param maxexts Maximum number of chunk-extensions to parse
  * @param cb Callback context (must not be NULL)
  * @return HWIRE_OK on success
- * @return HWIRE_EAGAIN if more data is needed
- * @return HWIRE_ELEN if parsed length exceeds maxlen
+ * @return HWIRE_EAGAIN if more data is needed before maxlen is reached
+ * @return HWIRE_ELEN if the line is incomplete upon reaching maxlen
  * @return HWIRE_ERANGE if chunk-size exceeds maxsize
  * @return HWIRE_EEXTNAME if extension name is empty
  * @return HWIRE_EEXTVAL if extension value is invalid
@@ -1630,6 +1630,7 @@ int hwire_parse_chunksize(hwire_ctx_t *ctx, const char *str, size_t len,
     assert(ctx != NULL);
     assert(ctx->chunksize_cb != NULL);
     const unsigned char *ustr = (const unsigned char *)str;
+    size_t limit              = (len < maxlen) ? len : maxlen;
     size_t cur  = 0; // hex2size always scans from str[0]; *pos is output-only
     size_t head = 0;
     const unsigned char *key = NULL;
@@ -1642,12 +1643,15 @@ int hwire_parse_chunksize(hwire_ctx_t *ctx, const char *str, size_t len,
     if (!len) {
         // need more bytes
         return HWIRE_EAGAIN;
+    } else if (!maxlen) {
+        // no input can be examined within the line-length budget
+        return HWIRE_ELEN;
     }
 
     // parse chunk-size
     // chunk-size = 1*HEXDIG
     // RFC 7230 4.1 / RFC 9112 7.1: Chunk Size
-    size = hex2size(ustr, len, &cur, HWIRE_MAX_CHUNKSIZE);
+    size = hex2size(ustr, limit, &cur, HWIRE_MAX_CHUNKSIZE);
     if (size < 0) {
         // chunk size exceeds maximum allowed size or invalid
         return (int)size;
@@ -1685,6 +1689,9 @@ CHECK_EOL:
     do {                                                                       \
         if (skip_ws(ustr, len, &cur, maxlen) != HWIRE_OK) {                    \
             return HWIRE_ELEN;                                                 \
+        } else if (cur >= maxlen) {                                            \
+            /* The line cannot be completed within the budget. */              \
+            return HWIRE_ELEN;                                                 \
         } else if (cur >= len) {                                               \
             /* more bytes needed */                                            \
             return HWIRE_EAGAIN;                                               \
@@ -1702,7 +1709,10 @@ CHECK_EOL:
     // found tail
     case CR:
         cur++;
-        if (cur >= len) {
+        if (cur >= maxlen) {
+            // line-length budget ended between CR and LF
+            return HWIRE_ELEN;
+        } else if (cur >= len) {
             // more bytes needed
             return HWIRE_EAGAIN;
         } else if (ustr[cur] != LF) {
@@ -1758,7 +1768,7 @@ CHECK_EOL:
 
     // parse ext-name
     head = cur;
-    hwire_parse_tchar(str, len, &cur);
+    hwire_parse_tchar(str, limit, &cur);
     if (cur == head) {
         // disallow empty ext-name (invalid extension name)
         return HWIRE_EEXTNAME;
@@ -1780,19 +1790,22 @@ CHECK_EOL:
         int rv = 0;
         // parse as a quoted-string
         head   = cur + 1;
-        vlen   = maxlen;
-        rv     = hwire_parse_quoted_string((const char *)str, len, &cur, vlen);
+        vlen   = limit - cur;
+        rv = hwire_parse_quoted_string((const char *)str, limit, &cur, vlen);
         if (rv == HWIRE_OK) {
             vlen = cur - head - 1; // exclude closing quote
             val  = ustr + head;    // skip opening quote
             goto CHECK_EOL;
+        }
+        if (rv == HWIRE_EAGAIN && len >= maxlen) {
+            return HWIRE_ELEN;
         }
         // treat an illegal byte sequence as extension value error
         return (rv == HWIRE_EILSEQ) ? HWIRE_EEXTVAL : rv;
     }
     // parse as a token
     head = cur;
-    hwire_parse_tchar(str, len, &cur);
+    hwire_parse_tchar(str, limit, &cur);
     val  = ustr + head;
     vlen = cur - head;
 
