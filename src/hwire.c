@@ -1806,6 +1806,13 @@ CHECK_EOL:
     // parse as a token
     head = cur;
     hwire_parse_tchar(str, limit, &cur);
+    if (cur == head) {
+        // delimiters here mean '=' was followed by no extension value
+        if (ustr[cur] == CR || ustr[cur] == LF || ustr[cur] == SEMICOLON) {
+            return HWIRE_EEXTVAL;
+        }
+        return HWIRE_EILSEQ;
+    }
     val  = ustr + head;
     vlen = cur - head;
 
