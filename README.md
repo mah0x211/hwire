@@ -602,7 +602,7 @@ Host: example.com\r\n
 - `str` — input string (must not be NULL).
 - `len` — total bytes in `str`.
 - `pos` — out: bytes consumed from `str[0]`; pass `0` on entry, reset to `0` when retrying after `HWIRE_EAGAIN` (must not be NULL).
-- `maxlen` — maximum total byte length of the message (request-line + header fields, all delimiters included; the terminating empty line is excluded).
+- `maxlen` — maximum total byte length of the message (leading empty lines + request-line + header fields, all delimiters included; the terminating empty line is excluded).
 - `maxnhdrs` — maximum number of header fields.
 
 **Returns**
@@ -644,7 +644,7 @@ Content-Length: 0\r\n
 - `str` — input string (must not be NULL).
 - `len` — total bytes in `str`.
 - `pos` — out: bytes consumed from `str[0]`; pass `0` on entry, reset to `0` when retrying after `HWIRE_EAGAIN` (must not be NULL).
-- `maxlen` — maximum total byte length of the message (status-line + header fields, all delimiters included; the terminating empty line is excluded).
+- `maxlen` — maximum total byte length of the message (leading empty lines + status-line + header fields, all delimiters included; the terminating empty line is excluded).
 - `maxnhdrs` — maximum number of header fields.
 
 **Returns**
