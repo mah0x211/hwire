@@ -396,7 +396,7 @@ Advances `*pos` past consecutive tchar characters starting at `str[*pos]`. Retur
 
 - `str` — input string (must not be NULL).
 - `len` — total bytes in `str`.
-- `pos` — in/out: start offset on entry, first non-tchar offset on return (must not be NULL).
+- `pos` — in/out: start offset on entry, first non-tchar offset on return (must not be NULL). If the initial offset is greater than or equal to `len`, the function returns `0` and leaves `*pos` unchanged.
 
 #### `hwire_parse_vchar`
 
@@ -410,7 +410,7 @@ Same as `hwire_parse_tchar` but for vchar (visible ASCII + obs-text).
 
 - `str` — input string (must not be NULL).
 - `len` — total bytes in `str`.
-- `pos` — in/out: start offset on entry, first non-vchar offset on return (must not be NULL).
+- `pos` — in/out: start offset on entry, first non-vchar offset on return (must not be NULL). If the initial offset is greater than or equal to `len`, the function returns `0` and leaves `*pos` unchanged.
 
 
 #### `hwire_parse_fcchar`
@@ -427,7 +427,7 @@ This is the superset of `hwire_parse_vchar`: it additionally accepts SP and HTAB
 
 - `str` — input string (must not be NULL).
 - `len` — total bytes in `str`.
-- `pos` — in/out: start offset on entry, first non-fcchar offset on return (must not be NULL).
+- `pos` — in/out: start offset on entry, first non-fcchar offset on return (must not be NULL). If the initial offset is greater than or equal to `len`, the function returns `0` and leaves `*pos` unchanged.
 
 ---
 

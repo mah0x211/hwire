@@ -100,6 +100,24 @@ void test_parse_tchar(void)
     TEST_END();
 }
 
+void test_parse_tchar_offset_boundaries(void)
+{
+    TEST_START("test_parse_tchar_offset_boundaries");
+
+    const char *str = "abc";
+    const size_t len = 3;
+    const size_t offsets[] = {len, len + 1, SIZE_MAX};
+
+    for (size_t i = 0; i < sizeof(offsets) / sizeof(offsets[0]); i++) {
+        size_t pos = offsets[i];
+        size_t n   = hwire_parse_tchar(str, len, &pos);
+        ASSERT_EQ(n, 0);
+        ASSERT_EQ(pos, offsets[i]);
+    }
+
+    TEST_END();
+}
+
 /*
  * Covers: RFC 9110 §5.6.2  tchar ABNF exhaustive verification
  * MUST: hwire_is_tchar() MUST return true for exactly the 76 tchar bytes
@@ -190,6 +208,7 @@ int main(void)
 {
     test_is_tchar();
     test_parse_tchar();
+    test_parse_tchar_offset_boundaries();
     test_is_tchar_all256();
     test_parse_tchar_simd_boundary();
     print_test_summary();

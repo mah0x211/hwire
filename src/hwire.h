@@ -280,7 +280,9 @@ int hwire_is_fcchar(unsigned char c);
  *
  * @param str String to parse (must not be NULL)
  * @param len Maximum length of string
- * @param pos Input: start offset, Output: end offset (must not be NULL)
+ * @param pos Input: start offset, Output: end offset (must not be NULL). If the
+ * initial offset is greater than or equal to len, returns 0 and leaves it
+ * unchanged.
  * @return Number of consecutive tchar characters matched (0 if first char is
  * not tchar)
  */
@@ -295,7 +297,9 @@ size_t hwire_parse_tchar(const char *str, size_t len, size_t *pos);
  *
  * @param str String to parse (must not be NULL)
  * @param len Maximum length of string
- * @param pos Input: start offset, Output: end offset (must not be NULL)
+ * @param pos Input: start offset, Output: end offset (must not be NULL). If the
+ * initial offset is greater than or equal to len, returns 0 and leaves it
+ * unchanged.
  * @return Number of consecutive vchar characters matched (0 if first char is
  * not vchar)
  */
@@ -310,7 +314,9 @@ size_t hwire_parse_vchar(const char *str, size_t len, size_t *pos);
  *
  * @param str String to parse (must not be NULL)
  * @param len Maximum length of string
- * @param pos Input: start offset, Output: end offset (must not be NULL)
+ * @param pos Input: start offset, Output: end offset (must not be NULL). If the
+ * initial offset is greater than or equal to len, returns 0 and leaves it
+ * unchanged.
  * @return Number of consecutive fcchar characters matched (0 if first char is
  * not fcchar)
  */

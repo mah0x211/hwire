@@ -1211,11 +1211,15 @@ size_t hwire_parse_tchar(const char *str, size_t len, size_t *pos)
 {
     assert(str != NULL);
     assert(pos != NULL);
-    size_t cur                = *pos;
-    const unsigned char *ustr = (const unsigned char *)str + cur;
-    size_t n                  = strtchar(ustr, len - cur, NULL);
-    *pos += n;
-    return n;
+    size_t cur = *pos;
+
+    if (cur < len) {
+        const unsigned char *ustr = (const unsigned char *)str + cur;
+        size_t n                  = strtchar(ustr, len - cur, NULL);
+        *pos += n;
+        return n;
+    }
+    return 0;
 }
 
 /**
@@ -1237,11 +1241,15 @@ size_t hwire_parse_vchar(const char *str, size_t len, size_t *pos)
 {
     assert(str != NULL);
     assert(pos != NULL);
-    size_t cur                = *pos;
-    const unsigned char *ustr = (const unsigned char *)str + cur;
-    size_t n                  = strvchar(ustr, len - cur);
-    *pos += n;
-    return n;
+    size_t cur = *pos;
+
+    if (cur < len) {
+        const unsigned char *ustr = (const unsigned char *)str + cur;
+        size_t n                  = strvchar(ustr, len - cur);
+        *pos += n;
+        return n;
+    }
+    return 0;
 }
 
 /**
@@ -1262,12 +1270,16 @@ size_t hwire_parse_fcchar(const char *str, size_t len, size_t *pos)
 {
     assert(str != NULL);
     assert(pos != NULL);
-    size_t cur                = *pos;
-    const unsigned char *ustr = (const unsigned char *)str + cur;
-    unsigned char endc        = 0; /* discarded; caller uses str[*pos] */
-    size_t n                  = strfcchar(ustr, len - cur, &endc);
-    *pos += n;
-    return n;
+    size_t cur = *pos;
+
+    if (cur < len) {
+        const unsigned char *ustr = (const unsigned char *)str + cur;
+        unsigned char endc        = 0; /* discarded; caller uses str[*pos] */
+        size_t n                  = strfcchar(ustr, len - cur, &endc);
+        *pos += n;
+        return n;
+    }
+    return 0;
 }
 
 /**
