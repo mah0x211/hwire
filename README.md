@@ -447,7 +447,7 @@ Parses a quoted-string per [RFC 9110 §5.6.4](https://www.rfc-editor.org/rfc/rfc
 - `str` — input string (must not be NULL; `str[*pos]` must be `"`).
 - `len` — total bytes in `str`.
 - `pos` — in/out: start offset on entry, end offset on return (must not be NULL).
-- `maxlen` — maximum content length (bytes between the quotes).
+- `maxlen` — maximum wire length from the initial offset, including both `"` delimiters.
 
 **Returns**
 
@@ -456,7 +456,7 @@ Parses a quoted-string per [RFC 9110 §5.6.4](https://www.rfc-editor.org/rfc/rfc
 | `HWIRE_OK` | Valid quoted-string consumed |
 | `HWIRE_EAGAIN` | No closing `"` seen yet |
 | `HWIRE_EILSEQ` | Invalid character inside the string |
-| `HWIRE_ELEN` | Content length exceeds `maxlen` |
+| `HWIRE_ELEN` | Wire length exceeds `maxlen` |
 
 #### `hwire_parse_parameters`
 

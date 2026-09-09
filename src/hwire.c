@@ -1293,7 +1293,6 @@ int hwire_parse_quoted_string(const char *str, size_t len, size_t *pos,
     assert(pos != NULL);
     const unsigned char *ustr = (const unsigned char *)str;
     size_t cur                = *pos;
-    size_t tail               = cur + maxlen;
 
     if (cur >= len) {
         // cur exceeds length
@@ -1301,9 +1300,10 @@ int hwire_parse_quoted_string(const char *str, size_t len, size_t *pos,
     } else if (ustr[cur] != DQUOTE) {
         // not starting with DQUOTE
         return HWIRE_EILSEQ;
-    } else if (tail > len) {
-        // adjust tail if exceeds length
-        tail = len;
+    } else if (maxlen < len - cur) {
+        maxlen += cur;
+    } else {
+        maxlen = len;
     }
     // Skip opening quote
     cur++;
@@ -1312,7 +1312,7 @@ int hwire_parse_quoted_string(const char *str, size_t len, size_t *pos,
     // RFC 9110 5.6.4: quoted-string = DQUOTE *( qdtext / quoted-pair ) DQUOTE
     // qdtext = HTAB / SP / %x21 / %x23-5B / %x5D-7E / obs-text
     // obs-text = %x80-FF
-    for (; cur < tail; cur++) {
+    for (; cur < maxlen; cur++) {
         unsigned char c = ustr[cur];
         if (!QDTEXT[c]) {
             switch (c) {
@@ -1323,10 +1323,9 @@ int hwire_parse_quoted_string(const char *str, size_t len, size_t *pos,
 
             case BACKSLASH:
                 // quoted-pair = "\" ( HTAB / SP / VCHAR / obs-text )
-                if (cur + 1 >= len) {
-                    // reach to the end of string, need more bytes
+                if (maxlen - cur < 2) {
                     *pos = cur;
-                    return HWIRE_EAGAIN;
+                    return maxlen < len ? HWIRE_ELEN : HWIRE_EAGAIN;
                 }
                 c = ustr[cur + 1];
                 if (is_vchar(c) || c == HT || c == SP) {
@@ -1344,7 +1343,7 @@ int hwire_parse_quoted_string(const char *str, size_t len, size_t *pos,
         }
     }
 
-    if (len > tail) {
+    if (maxlen < len) {
         // length exceeds maxlen
         *pos = cur;
         return HWIRE_ELEN;

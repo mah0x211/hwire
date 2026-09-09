@@ -335,7 +335,8 @@ size_t hwire_parse_fcchar(const char *str, size_t len, size_t *pos);
  * @param str String to parse (must start with DQUOTE, must not be NULL)
  * @param len Maximum length of string
  * @param pos Input: start offset, Output: end offset (must not be NULL)
- * @param maxlen Maximum length inside quotes
+ * @param maxlen Maximum wire length from the initial offset, including both
+ * DQUOTE delimiters
  * @return HWIRE_OK on success
  * @return HWIRE_EAGAIN if more data needed
  * @return HWIRE_EILSEQ for invalid byte sequence
