@@ -357,8 +357,9 @@ int hwire_parse_quoted_string(const char *str, size_t len, size_t *pos,
  *
  * @param str String to parse (must not be NULL)
  * @param len Maximum length of string
- * @param pos Output: bytes consumed from str[0] (must not be NULL)
- * @param maxlen Maximum length
+ * @param pos Input: start offset, Output: end offset (must not be NULL). An
+ * initial offset greater than len returns HWIRE_EILSEQ unchanged.
+ * @param maxlen Maximum number of bytes from the initial offset
  * @param maxnparams Maximum number of parameters
  * @param skip_leading_semicolon Non-zero to skip semicolon check for first
  * parameter (0: require leading semicolon, 1: allow first param without

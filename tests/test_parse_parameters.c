@@ -238,6 +238,48 @@ void test_parse_parameters_edge_cases(void)
     TEST_END();
 }
 
+void test_parse_parameters_numeric_boundaries(void)
+{
+    TEST_START("test_parse_parameters_numeric_boundaries");
+
+    char key_storage[TEST_KEY_SIZE];
+    hwire_ctx_t cb = {
+        .key_lc   = {.buf = key_storage, .size = sizeof(key_storage), .len = 0},
+        .param_cb = mock_param_cb
+    };
+    const char *buf = "xkey=value";
+    size_t len      = strlen(buf);
+    size_t pos      = 1;
+    int rv = hwire_parse_parameters(&cb, buf, len, &pos, SIZE_MAX, 10, 1);
+    ASSERT_OK(rv);
+    ASSERT_EQ(pos, len);
+
+    pos = 1;
+    rv  = hwire_parse_parameters(&cb, buf, len, &pos, 0, 10, 1);
+    ASSERT_EQ(rv, HWIRE_ELEN);
+
+    pos = 1;
+    rv  = hwire_parse_parameters(&cb, buf, len, &pos, 1, 10, 1);
+    ASSERT_EQ(rv, HWIRE_ELEN);
+
+    pos = len;
+    rv  = hwire_parse_parameters(&cb, buf, len, &pos, SIZE_MAX, 10, 0);
+    ASSERT_OK(rv);
+    ASSERT_EQ(pos, len);
+
+    pos = len + 1;
+    rv  = hwire_parse_parameters(&cb, buf, len, &pos, SIZE_MAX, 10, 0);
+    ASSERT_EQ(rv, HWIRE_EILSEQ);
+    ASSERT_EQ(pos, len + 1);
+
+    pos = SIZE_MAX;
+    rv  = hwire_parse_parameters(&cb, buf, len, &pos, SIZE_MAX, 10, 0);
+    ASSERT_EQ(rv, HWIRE_EILSEQ);
+    ASSERT_EQ(pos, SIZE_MAX);
+
+    TEST_END();
+}
+
 /*
  * Covers: RFC 9110 §5.6.6  parameters = *( OWS ";" OWS [ parameter ] )
  * The ABNF allows empty parameter slots (consecutive ";;").
@@ -415,6 +457,7 @@ int main(void)
     test_parse_parameters_valid();
     test_parse_parameters_invalid();
     test_parse_parameters_edge_cases();
+    test_parse_parameters_numeric_boundaries();
     test_parse_parameters_rfc_compliance();
     test_parse_parameters_content_verification();
     test_parse_parameters_multi_content_verification();

@@ -1517,6 +1517,12 @@ int hwire_parse_parameters(hwire_ctx_t *ctx, const char *str, size_t len,
     uint8_t nparams           = 0;
     int rv                    = HWIRE_OK;
 
+    if (cur > len) {
+        return HWIRE_EILSEQ;
+    } else if (maxlen > SIZE_MAX - cur) {
+        maxpos = SIZE_MAX;
+    }
+
     if (skip_leading_semicolon) {
         // skip leading semicolon if present
         goto CHECK_PARAM;

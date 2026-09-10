@@ -480,8 +480,8 @@ parameter  = parameter-name "=" parameter-value
 - `ctx` — parser context (`param_cb` must not be NULL).
 - `str` — input string (must not be NULL).
 - `len` — total bytes in `str`.
-- `pos` — in/out: start offset on entry, end offset on return (must not be NULL).
-- `maxlen` — maximum string length.
+- `pos` — in/out: start offset on entry, end offset on return (must not be NULL). An initial offset greater than `len` returns `HWIRE_EILSEQ` unchanged.
+- `maxlen` — maximum number of bytes from the initial offset.
 - `maxnparams` — maximum number of parameters.
 - `skip_leading_semicolon` — non-zero to accept the first parameter without a leading `;`.
 
