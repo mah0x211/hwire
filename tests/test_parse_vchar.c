@@ -69,6 +69,24 @@ void test_parse_vchar(void)
     TEST_END();
 }
 
+void test_parse_vchar_offset_boundaries(void)
+{
+    TEST_START("test_parse_vchar_offset_boundaries");
+
+    const char *str = "abc";
+    const size_t len = 3;
+    const size_t offsets[] = {len, len + 1, SIZE_MAX};
+
+    for (size_t i = 0; i < sizeof(offsets) / sizeof(offsets[0]); i++) {
+        size_t pos = offsets[i];
+        size_t n   = hwire_parse_vchar(str, len, &pos);
+        ASSERT_EQ(n, 0);
+        ASSERT_EQ(pos, offsets[i]);
+    }
+
+    TEST_END();
+}
+
 /*
  * Covers: RFC 9110 §5.5  field-vchar = VCHAR / obs-text
  *                        obs-text    = %x80-FF
@@ -120,6 +138,7 @@ int main(void)
 {
     test_is_vchar();
     test_parse_vchar();
+    test_parse_vchar_offset_boundaries();
     test_parse_vchar_obstext_and_boundary();
     print_test_summary();
     return g_tests_failed;

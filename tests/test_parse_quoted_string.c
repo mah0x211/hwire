@@ -1,4 +1,17 @@
+#define _GNU_SOURCE
+
 #include "test_helpers.h"
+
+#if defined(__APPLE__) || defined(__linux__)
+# include <sys/mman.h>
+# include <unistd.h>
+#endif
+
+#if defined(MAP_ANONYMOUS)
+# define HWIRE_MAP_ANONYMOUS MAP_ANONYMOUS
+#elif defined(MAP_ANON)
+# define HWIRE_MAP_ANONYMOUS MAP_ANON
+#endif
 
 /*
  * Covers: RFC 9110 §5.6.4  quoted-string = DQUOTE *( qdtext / quoted-pair )
@@ -236,6 +249,73 @@ void test_parse_quoted_string_content_verification(void)
     TEST_END();
 }
 
+void test_parse_quoted_string_numeric_boundaries(void)
+{
+    TEST_START("test_parse_quoted_string_numeric_boundaries");
+
+    const char *str = "x\"ab\"";
+    size_t pos      = 1;
+    int rv = hwire_parse_quoted_string(str, strlen(str), &pos, SIZE_MAX);
+    ASSERT_OK(rv);
+    ASSERT_EQ(pos, strlen(str));
+
+    pos = 1;
+    rv  = hwire_parse_quoted_string(str, strlen(str), &pos, 0);
+    ASSERT_EQ(rv, HWIRE_ELEN);
+
+    pos = 1;
+    rv  = hwire_parse_quoted_string(str, strlen(str), &pos, 1);
+    ASSERT_EQ(rv, HWIRE_ELEN);
+
+    pos = SIZE_MAX;
+    rv  = hwire_parse_quoted_string(str, strlen(str), &pos, SIZE_MAX);
+    ASSERT_EQ(rv, HWIRE_EAGAIN);
+    ASSERT_EQ(pos, SIZE_MAX);
+
+    TEST_END();
+}
+
+void test_parse_quoted_string_quoted_pair_budget(void)
+{
+    TEST_START("test_parse_quoted_string_quoted_pair_budget");
+
+    const char *str = "\"\\a\"";
+    size_t pos      = 0;
+    int rv = hwire_parse_quoted_string(str, strlen(str), &pos, 2);
+    ASSERT_EQ(rv, HWIRE_ELEN);
+    ASSERT_EQ(pos, 1);
+
+#if defined(HWIRE_MAP_ANONYMOUS)
+    long page_size = sysconf(_SC_PAGESIZE);
+    ASSERT(page_size > 0);
+    ASSERT((size_t)page_size <= SIZE_MAX / 2);
+
+    size_t map_len = (size_t)page_size * 2;
+    unsigned char *region = mmap(NULL, map_len, PROT_READ | PROT_WRITE,
+                                 MAP_PRIVATE | HWIRE_MAP_ANONYMOUS, -1, 0);
+    ASSERT(region != MAP_FAILED);
+    ASSERT_EQ(
+        mprotect(region + (size_t)page_size, (size_t)page_size, PROT_NONE), 0);
+
+    unsigned char *buf = region + (size_t)page_size - 2;
+    buf[0]             = '"';
+    buf[1]             = '\\';
+    pos                = 0;
+    ASSERT_EQ(hwire_parse_quoted_string((const char *)buf, 3, &pos, 2),
+              HWIRE_ELEN);
+    ASSERT_EQ(pos, 1);
+
+    ASSERT_EQ(mprotect(region + (size_t)page_size, (size_t)page_size,
+                       PROT_READ | PROT_WRITE),
+              0);
+    ASSERT_EQ(munmap(region, map_len), 0);
+#else
+    fprintf(stdout, "[SKIP] anonymous mmap is unavailable\n");
+#endif
+
+    TEST_END();
+}
+
 int main(void)
 {
     test_parse_quoted_string_valid();
@@ -243,6 +323,8 @@ int main(void)
     test_parse_quoted_string_rfc_compliance();
     test_parse_quoted_string_rfc_invalid();
     test_parse_quoted_string_content_verification();
+    test_parse_quoted_string_numeric_boundaries();
+    test_parse_quoted_string_quoted_pair_budget();
     print_test_summary();
     return g_tests_failed;
 }

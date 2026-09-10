@@ -396,7 +396,7 @@ Advances `*pos` past consecutive tchar characters starting at `str[*pos]`. Retur
 
 - `str` — input string (must not be NULL).
 - `len` — total bytes in `str`.
-- `pos` — in/out: start offset on entry, first non-tchar offset on return (must not be NULL).
+- `pos` — in/out: start offset on entry, first non-tchar offset on return (must not be NULL). If the initial offset is greater than or equal to `len`, the function returns `0` and leaves `*pos` unchanged.
 
 #### `hwire_parse_vchar`
 
@@ -410,7 +410,7 @@ Same as `hwire_parse_tchar` but for vchar (visible ASCII + obs-text).
 
 - `str` — input string (must not be NULL).
 - `len` — total bytes in `str`.
-- `pos` — in/out: start offset on entry, first non-vchar offset on return (must not be NULL).
+- `pos` — in/out: start offset on entry, first non-vchar offset on return (must not be NULL). If the initial offset is greater than or equal to `len`, the function returns `0` and leaves `*pos` unchanged.
 
 
 #### `hwire_parse_fcchar`
@@ -427,7 +427,7 @@ This is the superset of `hwire_parse_vchar`: it additionally accepts SP and HTAB
 
 - `str` — input string (must not be NULL).
 - `len` — total bytes in `str`.
-- `pos` — in/out: start offset on entry, first non-fcchar offset on return (must not be NULL).
+- `pos` — in/out: start offset on entry, first non-fcchar offset on return (must not be NULL). If the initial offset is greater than or equal to `len`, the function returns `0` and leaves `*pos` unchanged.
 
 ---
 
@@ -447,7 +447,7 @@ Parses a quoted-string per [RFC 9110 §5.6.4](https://www.rfc-editor.org/rfc/rfc
 - `str` — input string (must not be NULL; `str[*pos]` must be `"`).
 - `len` — total bytes in `str`.
 - `pos` — in/out: start offset on entry, end offset on return (must not be NULL).
-- `maxlen` — maximum content length (bytes between the quotes).
+- `maxlen` — maximum wire length from the initial offset, including both `"` delimiters.
 
 **Returns**
 
@@ -456,7 +456,7 @@ Parses a quoted-string per [RFC 9110 §5.6.4](https://www.rfc-editor.org/rfc/rfc
 | `HWIRE_OK` | Valid quoted-string consumed |
 | `HWIRE_EAGAIN` | No closing `"` seen yet |
 | `HWIRE_EILSEQ` | Invalid character inside the string |
-| `HWIRE_ELEN` | Content length exceeds `maxlen` |
+| `HWIRE_ELEN` | Wire length exceeds `maxlen` |
 
 #### `hwire_parse_parameters`
 
@@ -480,8 +480,8 @@ parameter  = parameter-name "=" parameter-value
 - `ctx` — parser context (`param_cb` must not be NULL).
 - `str` — input string (must not be NULL).
 - `len` — total bytes in `str`.
-- `pos` — in/out: start offset on entry, end offset on return (must not be NULL).
-- `maxlen` — maximum string length.
+- `pos` — in/out: start offset on entry, end offset on return (must not be NULL). An initial offset greater than `len` returns `HWIRE_EILSEQ` unchanged.
+- `maxlen` — maximum number of bytes from the initial offset.
 - `maxnparams` — maximum number of parameters.
 - `skip_leading_semicolon` — non-zero to accept the first parameter without a leading `;`.
 

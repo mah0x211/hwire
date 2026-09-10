@@ -280,7 +280,9 @@ int hwire_is_fcchar(unsigned char c);
  *
  * @param str String to parse (must not be NULL)
  * @param len Maximum length of string
- * @param pos Input: start offset, Output: end offset (must not be NULL)
+ * @param pos Input: start offset, Output: end offset (must not be NULL). If the
+ * initial offset is greater than or equal to len, returns 0 and leaves it
+ * unchanged.
  * @return Number of consecutive tchar characters matched (0 if first char is
  * not tchar)
  */
@@ -295,7 +297,9 @@ size_t hwire_parse_tchar(const char *str, size_t len, size_t *pos);
  *
  * @param str String to parse (must not be NULL)
  * @param len Maximum length of string
- * @param pos Input: start offset, Output: end offset (must not be NULL)
+ * @param pos Input: start offset, Output: end offset (must not be NULL). If the
+ * initial offset is greater than or equal to len, returns 0 and leaves it
+ * unchanged.
  * @return Number of consecutive vchar characters matched (0 if first char is
  * not vchar)
  */
@@ -310,7 +314,9 @@ size_t hwire_parse_vchar(const char *str, size_t len, size_t *pos);
  *
  * @param str String to parse (must not be NULL)
  * @param len Maximum length of string
- * @param pos Input: start offset, Output: end offset (must not be NULL)
+ * @param pos Input: start offset, Output: end offset (must not be NULL). If the
+ * initial offset is greater than or equal to len, returns 0 and leaves it
+ * unchanged.
  * @return Number of consecutive fcchar characters matched (0 if first char is
  * not fcchar)
  */
@@ -329,7 +335,8 @@ size_t hwire_parse_fcchar(const char *str, size_t len, size_t *pos);
  * @param str String to parse (must start with DQUOTE, must not be NULL)
  * @param len Maximum length of string
  * @param pos Input: start offset, Output: end offset (must not be NULL)
- * @param maxlen Maximum length inside quotes
+ * @param maxlen Maximum wire length from the initial offset, including both
+ * DQUOTE delimiters
  * @return HWIRE_OK on success
  * @return HWIRE_EAGAIN if more data needed
  * @return HWIRE_EILSEQ for invalid byte sequence
@@ -350,8 +357,9 @@ int hwire_parse_quoted_string(const char *str, size_t len, size_t *pos,
  *
  * @param str String to parse (must not be NULL)
  * @param len Maximum length of string
- * @param pos Output: bytes consumed from str[0] (must not be NULL)
- * @param maxlen Maximum length
+ * @param pos Input: start offset, Output: end offset (must not be NULL). An
+ * initial offset greater than len returns HWIRE_EILSEQ unchanged.
+ * @param maxlen Maximum number of bytes from the initial offset
  * @param maxnparams Maximum number of parameters
  * @param skip_leading_semicolon Non-zero to skip semicolon check for first
  * parameter (0: require leading semicolon, 1: allow first param without

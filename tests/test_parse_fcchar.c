@@ -121,6 +121,24 @@ void test_parse_fcchar_basic(void)
     TEST_END();
 }
 
+void test_parse_fcchar_offset_boundaries(void)
+{
+    TEST_START("test_parse_fcchar_offset_boundaries");
+
+    const char *str = "abc";
+    const size_t len = 3;
+    const size_t offsets[] = {len, len + 1, SIZE_MAX};
+
+    for (size_t i = 0; i < sizeof(offsets) / sizeof(offsets[0]); i++) {
+        size_t pos = offsets[i];
+        size_t n   = hwire_parse_fcchar(str, len, &pos);
+        ASSERT_EQ(n, 0);
+        ASSERT_EQ(pos, offsets[i]);
+    }
+
+    TEST_END();
+}
+
 /*
  * Covers: RFC 9110 §5.5  SP and HTAB are valid inside field-value.
  * hwire_parse_fcchar() MUST NOT stop at SP (0x20) or HTAB (0x09); it stops
@@ -218,6 +236,7 @@ int main(void)
     test_is_fcchar();
     test_is_fcchar_all256();
     test_parse_fcchar_basic();
+    test_parse_fcchar_offset_boundaries();
     test_parse_fcchar_whitespace();
     test_parse_fcchar_simd_boundary();
     print_test_summary();
