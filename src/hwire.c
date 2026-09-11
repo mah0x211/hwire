@@ -1292,18 +1292,15 @@ int hwire_parse_quoted_string(const char *str, size_t len, size_t *pos,
     assert(str != NULL);
     assert(pos != NULL);
     const unsigned char *ustr = (const unsigned char *)str;
+    size_t tail               = (len < maxlen) ? len : maxlen;
     size_t cur                = *pos;
 
-    if (cur >= len) {
-        // cur exceeds length
-        return HWIRE_EAGAIN;
+    if (cur >= tail) {
+        // classify the boundary only after reaching the parse tail
+        return (cur >= len) ? HWIRE_EAGAIN : HWIRE_ELEN;
     } else if (ustr[cur] != DQUOTE) {
         // not starting with DQUOTE
         return HWIRE_EILSEQ;
-    } else if (maxlen < len - cur) {
-        maxlen += cur;
-    } else {
-        maxlen = len;
     }
     // Skip opening quote
     cur++;
@@ -1312,7 +1309,7 @@ int hwire_parse_quoted_string(const char *str, size_t len, size_t *pos,
     // RFC 9110 5.6.4: quoted-string = DQUOTE *( qdtext / quoted-pair ) DQUOTE
     // qdtext = HTAB / SP / %x21 / %x23-5B / %x5D-7E / obs-text
     // obs-text = %x80-FF
-    for (; cur < maxlen; cur++) {
+    for (; cur < tail; cur++) {
         unsigned char c = ustr[cur];
         if (!QDTEXT[c]) {
             switch (c) {
@@ -1323,9 +1320,8 @@ int hwire_parse_quoted_string(const char *str, size_t len, size_t *pos,
 
             case BACKSLASH:
                 // quoted-pair = "\" ( HTAB / SP / VCHAR / obs-text )
-                if (maxlen - cur < 2) {
-                    *pos = cur;
-                    return maxlen < len ? HWIRE_ELEN : HWIRE_EAGAIN;
+                if (tail - cur < 2) {
+                    goto TAIL_REACHED;
                 }
                 c = ustr[cur + 1];
                 if (is_vchar(c) || c == HT || c == SP) {
@@ -1343,14 +1339,9 @@ int hwire_parse_quoted_string(const char *str, size_t len, size_t *pos,
         }
     }
 
-    if (maxlen < len) {
-        // length exceeds maxlen
-        *pos = cur;
-        return HWIRE_ELEN;
-    }
-    // need more bytes
+TAIL_REACHED:
     *pos = cur;
-    return HWIRE_EAGAIN;
+    return (tail < maxlen) ? HWIRE_EAGAIN : HWIRE_ELEN;
 }
 
 /** @} */ /* end of Character Validation Functions */
@@ -1441,7 +1432,7 @@ static int parse_parameter(const char *str, size_t len, size_t *pos,
     head = cur;
     if (ustr[cur] == DQUOTE) {
         // parse as a quoted-string
-        int rc = hwire_parse_quoted_string(str, len, &cur, maxpos - cur);
+        int rc = hwire_parse_quoted_string(str, len, &cur, maxpos);
         if (rc == HWIRE_OK) {
             // cur was updated via &cur pointer
             param.value.ptr = str + head + 1; // skip opening quote
@@ -1647,7 +1638,7 @@ int hwire_parse_chunksize(hwire_ctx_t *ctx, const char *str, size_t len,
     assert(ctx != NULL);
     assert(ctx->chunksize_cb != NULL);
     const unsigned char *ustr = (const unsigned char *)str;
-    size_t limit              = (len < maxlen) ? len : maxlen;
+    size_t tail               = (len < maxlen) ? len : maxlen;
     size_t cur  = 0; // hex2size always scans from str[0]; *pos is output-only
     size_t head = 0;
     const unsigned char *key = NULL;
@@ -1668,7 +1659,7 @@ int hwire_parse_chunksize(hwire_ctx_t *ctx, const char *str, size_t len,
     // parse chunk-size
     // chunk-size = 1*HEXDIG
     // RFC 7230 4.1 / RFC 9112 7.1: Chunk Size
-    size = hex2size(ustr, limit, &cur, HWIRE_MAX_CHUNKSIZE);
+    size = hex2size(ustr, tail, &cur, HWIRE_MAX_CHUNKSIZE);
     if (size < 0) {
         // chunk size exceeds maximum allowed size or invalid
         return (int)size;
@@ -1784,7 +1775,7 @@ CHECK_EOL:
 
     // parse ext-name
     head = cur;
-    hwire_parse_tchar(str, limit, &cur);
+    hwire_parse_tchar(str, tail, &cur);
     if (cur == head) {
         // disallow empty ext-name (invalid extension name)
         return HWIRE_EEXTNAME;
@@ -1806,22 +1797,20 @@ CHECK_EOL:
         int rv = 0;
         // parse as a quoted-string
         head   = cur + 1;
-        vlen   = limit - cur;
-        rv = hwire_parse_quoted_string((const char *)str, limit, &cur, vlen);
+        rv = hwire_parse_quoted_string((const char *)str, tail, &cur, maxlen);
         if (rv == HWIRE_OK) {
             vlen = cur - head - 1; // exclude closing quote
             val  = ustr + head;    // skip opening quote
             goto CHECK_EOL;
+        } else if (rv == HWIRE_EILSEQ) {
+            // treat an illegal byte sequence as extension value error
+            return HWIRE_EEXTVAL;
         }
-        if (rv == HWIRE_EAGAIN && len >= maxlen) {
-            return HWIRE_ELEN;
-        }
-        // treat an illegal byte sequence as extension value error
-        return (rv == HWIRE_EILSEQ) ? HWIRE_EEXTVAL : rv;
+        return rv;
     }
     // parse as a token
     head = cur;
-    hwire_parse_tchar(str, limit, &cur);
+    hwire_parse_tchar(str, tail, &cur);
     if (cur == head) {
         // delimiters here mean '=' was followed by no extension value
         if (ustr[cur] == CR || ustr[cur] == LF || ustr[cur] == SEMICOLON) {

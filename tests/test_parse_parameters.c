@@ -28,6 +28,14 @@ void test_parse_parameters_valid(void)
     ASSERT_OK(rv);
     ASSERT_EQ(pos, strlen(buf));
 
+    /* The absolute quoted-string budget includes its parameter prefix. */
+    buf = ";k=\"v\"";
+    pos = 0;
+    rv  = hwire_parse_parameters(&cb, buf, strlen(buf), &pos, strlen(buf), 10,
+                                 0);
+    ASSERT_OK(rv);
+    ASSERT_EQ(pos, strlen(buf));
+
     /* Multiple parameters: second with quoted-string value */
     buf = "; k1=v1; k2=\"quoted\" ";
     pos = 0;

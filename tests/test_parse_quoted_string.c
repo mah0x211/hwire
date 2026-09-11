@@ -188,9 +188,9 @@ void test_parse_quoted_string_rfc_invalid(void)
  * both DQUOTE delimiters. MUST: a quoted-pair inside the string MUST count
  * as 2 bytes (backslash + target char) toward pos.
  * MUST: non-zero initial pos MUST be correctly offset.
- * MUST: maxlen is the total wire length (including both DQUOTE delimiters).
- *       maxlen exactly equal to wire length MUST succeed (not HWIRE_ELEN).
- *       maxlen one less than wire length MUST return HWIRE_ELEN.
+ * MUST: maxlen is an absolute limit measured from str[0].
+ *       A closing DQUOTE at maxlen - 1 MUST succeed.
+ *       A quoted-string that would end after maxlen MUST return HWIRE_ELEN.
  */
 void test_parse_quoted_string_content_verification(void)
 {
@@ -233,6 +233,23 @@ void test_parse_quoted_string_content_verification(void)
     ASSERT_OK(rv);
     ASSERT_EQ(pos, 5); /* consumed 4 bytes from pos=1 */
 
+    /* maxlen is absolute: the prefix at index 0 also consumes the budget */
+    pos = 1;
+    rv  = hwire_parse_quoted_string(str4, strlen(str4), &pos, 5);
+    ASSERT_OK(rv);
+    ASSERT_EQ(pos, 5);
+
+    pos = 1;
+    rv  = hwire_parse_quoted_string(str4, strlen(str4), &pos, 4);
+    ASSERT_EQ(rv, HWIRE_ELEN);
+    ASSERT_EQ(pos, 4);
+
+    /* Input ending before the absolute budget remains retryable. */
+    pos = 1;
+    rv  = hwire_parse_quoted_string(str4, 4, &pos, 5);
+    ASSERT_EQ(rv, HWIRE_EAGAIN);
+    ASSERT_EQ(pos, 4);
+
     /* quoted-pair "\a" = 4 total wire bytes (`"`, `\`, `a`, `"`);
      * maxlen=4 MUST return HWIRE_OK */
     const char *str5 = "\"\\a\"";
@@ -245,6 +262,18 @@ void test_parse_quoted_string_content_verification(void)
     pos = 0;
     rv  = hwire_parse_quoted_string(str5, strlen(str5), &pos, 3);
     ASSERT_EQ(rv, HWIRE_ELEN);
+
+    /* An incomplete string at the exact absolute budget is not retryable. */
+    const char *str6 = "\"abc";
+    pos              = 0;
+    rv               = hwire_parse_quoted_string(str6, strlen(str6), &pos, 4);
+    ASSERT_EQ(rv, HWIRE_ELEN);
+    ASSERT_EQ(pos, 4);
+
+    pos = 0;
+    rv  = hwire_parse_quoted_string(str6, strlen(str6), &pos, 5);
+    ASSERT_EQ(rv, HWIRE_EAGAIN);
+    ASSERT_EQ(pos, 4);
 
     TEST_END();
 }
@@ -262,15 +291,22 @@ void test_parse_quoted_string_numeric_boundaries(void)
     pos = 1;
     rv  = hwire_parse_quoted_string(str, strlen(str), &pos, 0);
     ASSERT_EQ(rv, HWIRE_ELEN);
+    ASSERT_EQ(pos, 1);
 
     pos = 1;
     rv  = hwire_parse_quoted_string(str, strlen(str), &pos, 1);
     ASSERT_EQ(rv, HWIRE_ELEN);
+    ASSERT_EQ(pos, 1);
 
     pos = SIZE_MAX;
     rv  = hwire_parse_quoted_string(str, strlen(str), &pos, SIZE_MAX);
     ASSERT_EQ(rv, HWIRE_EAGAIN);
     ASSERT_EQ(pos, SIZE_MAX);
+
+    pos = strlen(str);
+    rv  = hwire_parse_quoted_string(str, strlen(str), &pos, 0);
+    ASSERT_EQ(rv, HWIRE_EAGAIN);
+    ASSERT_EQ(pos, strlen(str));
 
     TEST_END();
 }
@@ -281,7 +317,7 @@ void test_parse_quoted_string_quoted_pair_budget(void)
 
     const char *str = "\"\\a\"";
     size_t pos      = 0;
-    int rv = hwire_parse_quoted_string(str, strlen(str), &pos, 2);
+    int rv          = hwire_parse_quoted_string(str, strlen(str), &pos, 2);
     ASSERT_EQ(rv, HWIRE_ELEN);
     ASSERT_EQ(pos, 1);
 
@@ -290,7 +326,7 @@ void test_parse_quoted_string_quoted_pair_budget(void)
     ASSERT(page_size > 0);
     ASSERT((size_t)page_size <= SIZE_MAX / 2);
 
-    size_t map_len = (size_t)page_size * 2;
+    size_t map_len        = (size_t)page_size * 2;
     unsigned char *region = mmap(NULL, map_len, PROT_READ | PROT_WRITE,
                                  MAP_PRIVATE | HWIRE_MAP_ANONYMOUS, -1, 0);
     ASSERT(region != MAP_FAILED);
@@ -304,6 +340,13 @@ void test_parse_quoted_string_quoted_pair_budget(void)
     ASSERT_EQ(hwire_parse_quoted_string((const char *)buf, 3, &pos, 2),
               HWIRE_ELEN);
     ASSERT_EQ(pos, 1);
+
+    /* str[maxlen] is protected: an initial position at the absolute budget
+     * must return without examining that byte. */
+    pos = 2;
+    ASSERT_EQ(hwire_parse_quoted_string((const char *)buf, 3, &pos, 2),
+              HWIRE_ELEN);
+    ASSERT_EQ(pos, 2);
 
     ASSERT_EQ(mprotect(region + (size_t)page_size, (size_t)page_size,
                        PROT_READ | PROT_WRITE),

@@ -447,16 +447,20 @@ Parses a quoted-string per [RFC 9110 §5.6.4](https://www.rfc-editor.org/rfc/rfc
 - `str` — input string (must not be NULL; `str[*pos]` must be `"`).
 - `len` — total bytes in `str`.
 - `pos` — in/out: start offset on entry, end offset on return (must not be NULL).
-- `maxlen` — maximum wire length from the initial offset, including both `"` delimiters.
+- `maxlen` — absolute, exclusive scan limit measured from `str[0]`; bytes at
+  indices greater than or equal to `maxlen` are not examined. Both `"`
+  delimiters count toward the budget, and success may set `*pos == maxlen`. To
+  apply a separate budget to a substring, pass the sliced pointer and length
+  with `*pos = 0`.
 
 **Returns**
 
 | Return | Condition |
 |--------|-----------|
 | `HWIRE_OK` | Valid quoted-string consumed |
-| `HWIRE_EAGAIN` | No closing `"` seen yet |
+| `HWIRE_EAGAIN` | The initial position has no available byte, or input ends below `maxlen` before the closing `"` |
 | `HWIRE_EILSEQ` | Invalid character inside the string |
-| `HWIRE_ELEN` | Wire length exceeds `maxlen` |
+| `HWIRE_ELEN` | An available initial position is outside the budget, or the quoted-string is incomplete upon reaching `maxlen` |
 
 #### `hwire_parse_parameters`
 
