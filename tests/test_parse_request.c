@@ -350,12 +350,11 @@ void test_parse_request_uri_invalid_chars(void)
     rv  = hwire_parse_request(&cb, buf, strlen(buf), &pos, 1024, 10);
     ASSERT_EQ(rv, HWIRE_EURI);
 
-    /* request-target with no SP yet, buffer-limited (not budget-limited) →
-       HWIRE_EAGAIN */
+    /* A non-origin target must begin with an absolute-URI scheme. */
     buf = "GET 12345";
     pos = 0;
     rv  = hwire_parse_request(&cb, buf, strlen(buf), &pos, 1024, 10);
-    ASSERT_EQ(rv, HWIRE_EAGAIN);
+    ASSERT_EQ(rv, HWIRE_EURI);
 
     /* Long header value (SIMD coverage): 64 VCHAR characters */
     buf = "Long: "

@@ -67,7 +67,7 @@ typedef enum {
     HWIRE_ENOBUFS   = -14, /**< Buffer overflow (e.g., max_exts exceeded) */
     HWIRE_EKEYLEN   = -15, /**< Key length exceeds buffer size */
     HWIRE_ECALLBACK = -16, /**< Callback returned non-zero */
-    HWIRE_EURI      = -17  /**< Invalid URI character */
+    HWIRE_EURI      = -17  /**< Invalid request-target */
 } hwire_code_t;
 
 /** @} */ /* end of Error Codes */
@@ -150,12 +150,29 @@ typedef enum {
 } hwire_http_version_t;
 
 /**
+ * @brief Syntax type of the URI field in an HTTP request line
+ */
+typedef enum {
+    HWIRE_ORIGIN_URI = 0, /**< origin-form request-target */
+    HWIRE_ABSOLUTE_URI,   /**< absolute-form request-target */
+    HWIRE_AUTHORITY_URI,  /**< authority-form request-target */
+    HWIRE_ASTERISK_URI    /**< asterisk-form request-target */
+} hwire_uri_type_t;
+
+/**
  * @brief HTTP request structure
  */
 typedef struct {
     hwire_str_t method;           /**< Method (references input buffer) */
-    hwire_str_t uri;              /**< URI (references input buffer) */
+    hwire_str_t uri;              /**< Complete request-target */
     hwire_http_version_t version; /**< HTTP version */
+    hwire_uri_type_t uri_type;    /**< Request-line URI syntax type */
+    hwire_str_t scheme;   /**< Scheme without ':'; absent unless absolute */
+    hwire_str_t userinfo; /**< Userinfo without '@'; absent if ptr is NULL */
+    hwire_str_t host;     /**< Host; IP-literal brackets are retained */
+    hwire_str_t port;     /**< Port without ':'; absent if ptr is NULL */
+    hwire_str_t path;     /**< Path; absent for authority/asterisk forms */
+    hwire_str_t query;    /**< Query without '?'; absent if ptr is NULL */
 } hwire_request_t;
 
 /**
@@ -217,7 +234,8 @@ typedef struct hwire_ctx_st {
     /**
      * Called after parsing the request line.
      * @param ctx Parser context
-     * @param req Parsed request (method, uri, version reference input buffer)
+     * @param req Parsed request; method, uri, and present request-target
+     * components reference the input buffer
      * @return 0 to continue, non-zero to stop (HWIRE_ECALLBACK)
      */
     int (*request_cb)(struct hwire_ctx_st *ctx, hwire_request_t *req);
@@ -451,7 +469,9 @@ int hwire_parse_headers(hwire_ctx_t *ctx, const char *str, size_t len,
  * @brief Parse HTTP request
  *
  * Parses request line and headers, calling request_cb after request line
- * and header_cb for each header.
+ * and header_cb for each header. The request-target form and RFC 3986
+ * components are validated and returned as slices into str; uri retains the
+ * complete request-target.
  *
  * @param str String to parse (must not be NULL)
  * @param len Number of available input bytes from str[0]
@@ -469,7 +489,7 @@ int hwire_parse_headers(hwire_ctx_t *ctx, const char *str, size_t len,
  * @return HWIRE_EEOL for invalid end-of-line
  * @return HWIRE_ELEN if leading empty lines or the request-line are incomplete
  * when maxlen is exhausted
- * @return HWIRE_EURI for invalid URI character
+ * @return HWIRE_EURI for an invalid request-target form, component, or byte
  * @return HWIRE_EHDRNAME for invalid header field name
  * @return HWIRE_EHDRVALUE for invalid header field value
  * @return HWIRE_EHDRLEN if the header section is incomplete when the remaining

@@ -77,7 +77,7 @@ The following behaviors deviate from strict RFC requirements for robustness and 
 
 ### Partial
 
-- **request-target** ([RFC 3986](https://www.rfc-editor.org/rfc/rfc3986) §2–3): allowed characters are validated, but structural parsing (scheme, authority, path, query) is not performed.
+- **request-target** ([RFC 9112](https://www.rfc-editor.org/rfc/rfc9112) §3.2 / [RFC 3986](https://www.rfc-editor.org/rfc/rfc3986) §2–3): origin-form, absolute-form, authority-form, and asterisk-form are structurally validated. URI components are returned as zero-copy slices; scheme-specific semantics, decoding, and normalization remain outside the parser.
 - **Chunked transfer encoding** ([RFC 9112](https://www.rfc-editor.org/rfc/rfc9112) §7): the chunk-size line (§7.1.1) is parsed; chunk body data and trailer fields are not handled.
 
 ### Out of scope
@@ -207,7 +207,7 @@ All parse functions return `hwire_code_t`. Negative values are errors.
 | `HWIRE_ENOBUFS` | −14 | Too many headers / parameters / extensions |
 | `HWIRE_EKEYLEN` | −15 | Key length exceeds `ctx->key_lc.size` |
 | `HWIRE_ECALLBACK` | −16 | A callback returned non-zero |
-| `HWIRE_EURI` | −17 | Invalid URI character |
+| `HWIRE_EURI` | −17 | Invalid request-target form, component, or character |
 
 ---
 
@@ -264,10 +264,37 @@ typedef hwire_kv_pair_t hwire_chunksize_ext_t; /* chunk extension */
 ```c
 typedef struct {
     hwire_str_t          method;
-    hwire_str_t          uri;
-    hwire_http_version_t version; /* HWIRE_HTTP_V10 or HWIRE_HTTP_V11 */
+    hwire_str_t          uri; /* complete request-target */
+    hwire_http_version_t version;
+    hwire_uri_type_t     uri_type;
+    hwire_str_t          scheme;
+    hwire_str_t          userinfo;
+    hwire_str_t          host;
+    hwire_str_t          port;
+    hwire_str_t          path;
+    hwire_str_t          query;
 } hwire_request_t;
 ```
+
+`uri` always references the complete request-target. Component slices exclude
+their delimiters, except that an IP-literal `host` retains its square brackets.
+An absent component has `ptr == NULL` and `len == 0`; a syntactically present
+but empty component has a non-NULL pointer and `len == 0`. No component is
+decoded, normalized, or NUL-terminated.
+
+`uri_type` classifies the request-target syntax occupying the request line's
+URI field. It is one of:
+
+| Constant | Request-target syntax |
+|----------|-----------------------|
+| `HWIRE_ORIGIN_URI` | `absolute-path [ "?" query ]` |
+| `HWIRE_ABSOLUTE_URI` | `absolute-URI` |
+| `HWIRE_AUTHORITY_URI` | `uri-host ":" port` for CONNECT |
+| `HWIRE_ASTERISK_URI` | exact `"*"` for OPTIONS |
+
+RFC 3986 defines `userinfo` as one component. hwire does not reinterpret it as
+a username/password pair; that historical form is deprecated. Applications
+can reject a non-NULL `userinfo` according to their scheme and security policy.
 
 #### `hwire_response_t` — Parsed status line
 
@@ -599,7 +626,7 @@ int hwire_parse_request(hwire_ctx_t *ctx, const char *str, size_t len,
                         size_t *pos, size_t maxlen, uint8_t maxnhdrs);
 ```
 
-Parses a full `HTTP/1.x` request (request-line + headers). `ctx->request_cb` is called once for the request line, then `ctx->header_cb` for each header field. Returns `HWIRE_OK` when the empty line terminating the headers has been consumed.
+Parses a full `HTTP/1.x` request (request-line + headers). `ctx->request_cb` is called once for the request line, then `ctx->header_cb` for each header field. The request-target is structurally parsed into its RFC 9112 form and RFC 3986 components while `req->uri` retains the complete wire value. Returns `HWIRE_OK` when the empty line terminating the headers has been consumed.
 
 ```
 GET /index.html HTTP/1.1\r\n
@@ -630,7 +657,7 @@ Host: example.com\r\n
 | `HWIRE_EVERSION` | Unsupported HTTP version |
 | `HWIRE_EEOL` | Invalid end-of-line |
 | `HWIRE_ELEN` | Leading empty lines or the request-line are incomplete upon exhausting `maxlen` |
-| `HWIRE_EURI` | Invalid URI character |
+| `HWIRE_EURI` | Invalid request-target form, component, or character |
 | `HWIRE_EHDRNAME` | Invalid header field name |
 | `HWIRE_EHDRVALUE` | Invalid header field value |
 | `HWIRE_EHDRLEN` | The header section is incomplete upon exhausting the remaining `maxlen` budget |
