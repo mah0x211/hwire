@@ -332,15 +332,20 @@ size_t hwire_parse_fcchar(const char *str, size_t len, size_t *pos);
 /**
  * @brief Parse a quoted-string
  *
- * @param str String to parse (must start with DQUOTE, must not be NULL)
- * @param len Maximum length of string
+ * @param str Input string (str[*pos] must be DQUOTE, must not be NULL)
+ * @param len Number of available input bytes from str[0]
  * @param pos Input: start offset, Output: end offset (must not be NULL)
- * @param maxlen Maximum wire length from the initial offset, including both
- * DQUOTE delimiters
+ * @param maxlen Exclusive upper bound for examined input indices from str[0];
+ * both DQUOTE delimiters count toward the budget and success may set *pos to
+ * maxlen
  * @return HWIRE_OK on success
- * @return HWIRE_EAGAIN if more data needed
+ * @return HWIRE_EAGAIN if the initial position has no available byte, or
+ * available input ends before maxlen
  * @return HWIRE_EILSEQ for invalid byte sequence
- * @return HWIRE_ELEN if length exceeds maxlen
+ * @return HWIRE_ELEN if an available initial position is at or beyond maxlen,
+ * or the quoted-string is incomplete at maxlen
+ * @note To apply a separate budget to a substring, pass the sliced pointer and
+ * length with an initial position of zero.
  */
 int hwire_parse_quoted_string(const char *str, size_t len, size_t *pos,
                               size_t maxlen);
