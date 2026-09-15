@@ -555,8 +555,8 @@ void test_parse_response_content_verification(void)
 
 /*
  * Covers: #4 cumulative maxlen — hwire_parse_response bounds the TOTAL message
- * bytes (status-line + header fields; delimiters counted; terminating empty
- * line excluded).
+ * bytes (status-line + header fields + terminating empty line; all delimiters
+ * counted).
  */
 void test_parse_response_maxlen_cumulative(void)
 {
@@ -573,16 +573,16 @@ void test_parse_response_maxlen_cumulative(void)
     const char *buf;
 
     /* "HTTP/1.1 200 OK\r\nX: y\r\n\r\n":
-     * status-line 17 + "X: y\r\n" 6 = 23 counted bytes */
+     * status-line 17 + "X: y\r\n" 6 + terminating CRLF 2 = 25 bytes */
     buf = "HTTP/1.1 200 OK\r\nX: y\r\n\r\n";
     pos = 0;
-    rv  = hwire_parse_response(&cb, buf, strlen(buf), &pos, 23, 16);
+    rv  = hwire_parse_response(&cb, buf, strlen(buf), &pos, 25, 16);
     ASSERT_OK(rv);
     ASSERT_EQ(pos, strlen(buf));
 
     /* one byte short → header overflows the shared budget */
     pos = 0;
-    rv  = hwire_parse_response(&cb, buf, strlen(buf), &pos, 22, 16);
+    rv  = hwire_parse_response(&cb, buf, strlen(buf), &pos, 24, 16);
     ASSERT_EQ(rv, HWIRE_EHDRLEN);
 
     /* budget too small for the status-line itself → HWIRE_ELEN */

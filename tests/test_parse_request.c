@@ -622,8 +622,8 @@ void test_parse_request_content_verification(void)
 
 /*
  * Covers: #4 cumulative maxlen — hwire_parse_request bounds the TOTAL message
- * bytes (request-line + header fields; SP / ":" / OWS / CRLF all count; the
- * terminating empty line is excluded). maxlen == total → OK; below → error.
+ * bytes (request-line + header fields + terminating empty line; SP / ":" /
+ * OWS / CRLF all count). maxlen == total → OK; below → error.
  */
 void test_parse_request_maxlen_cumulative(void)
 {
@@ -640,16 +640,16 @@ void test_parse_request_maxlen_cumulative(void)
     const char *buf;
 
     /* "GET / HTTP/1.1\r\nHost: x\r\n\r\n":
-     * request-line 16 + "Host: x\r\n" 9 = 25 counted bytes */
+     * request-line 16 + "Host: x\r\n" 9 + terminating CRLF 2 = 27 bytes */
     buf = "GET / HTTP/1.1\r\nHost: x\r\n\r\n";
     pos = 0;
-    rv  = hwire_parse_request(&cb, buf, strlen(buf), &pos, 25, 16);
+    rv  = hwire_parse_request(&cb, buf, strlen(buf), &pos, 27, 16);
     ASSERT_OK(rv);
     ASSERT_EQ(pos, strlen(buf));
 
     /* one byte short: the header value + CRLF overflows the shared budget */
     pos = 0;
-    rv  = hwire_parse_request(&cb, buf, strlen(buf), &pos, 24, 16);
+    rv  = hwire_parse_request(&cb, buf, strlen(buf), &pos, 26, 16);
     ASSERT_EQ(rv, HWIRE_EHDRLEN);
 
     /* budget too small for the request-line itself → HWIRE_ELEN */
@@ -658,13 +658,13 @@ void test_parse_request_maxlen_cumulative(void)
     ASSERT_EQ(rv, HWIRE_ELEN);
 
     /* cumulative across multiple headers:
-     * request-line 16 + "A: 1\r\n" 6 + "B: 22\r\n" 7 = 29 */
+     * request-line 16 + "A: 1\r\n" 6 + "B: 22\r\n" 7 + CRLF 2 = 31 */
     buf = "GET / HTTP/1.1\r\nA: 1\r\nB: 22\r\n\r\n";
     pos = 0;
-    rv  = hwire_parse_request(&cb, buf, strlen(buf), &pos, 29, 16);
+    rv  = hwire_parse_request(&cb, buf, strlen(buf), &pos, 31, 16);
     ASSERT_OK(rv);
     pos = 0;
-    rv  = hwire_parse_request(&cb, buf, strlen(buf), &pos, 28, 16);
+    rv  = hwire_parse_request(&cb, buf, strlen(buf), &pos, 30, 16);
     ASSERT_EQ(rv, HWIRE_EHDRLEN);
 
     TEST_END();

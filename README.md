@@ -12,7 +12,9 @@ Zero-allocation `HTTP/1.1` parser written in `C99` or later.
 
 - **Zero allocation** — no internal heap allocation; the caller owns all buffers.
 - **Non-destructive** — the input buffer is never modified; `hwire_str_t` fields reference it directly.
-- **EAGAIN-based streaming** — returns `HWIRE_EAGAIN` when the buffer is incomplete; re-submit the original buffer with more data appended and call again from offset 0. Stateless re-scan: no per-call resume state is maintained.
+- **EAGAIN-based streaming** — returns `HWIRE_EAGAIN` when the buffer is
+  incomplete; append more data and call again with the same message-start
+  offset. Stateless re-scan: no per-call resume state is maintained.
 - **SIMD acceleration** — auto-selects `SSE4.2` / `SSSE3` / `SSE2` on `x86-64`, `NEON` on `ARM64`; falls back to scalar code when none of those instruction sets are available at compile time.
 - **HTTP/1.x grammar** — validates method tokens, URIs, header field names, header field values (including `obs-text`), `chunk-size`, and quoted-strings per **RFC 9110**, **RFC 9112**, **RFC 7230**, and **RFC 3986**.
 - **`C99` or later / `C++` compatible** — single header + single source file; `extern "C"` guard included.
@@ -447,20 +449,17 @@ Parses a quoted-string per [RFC 9110 §5.6.4](https://www.rfc-editor.org/rfc/rfc
 - `str` — input string (must not be NULL; `str[*pos]` must be `"`).
 - `len` — total bytes in `str`.
 - `pos` — in/out: start offset on entry, end offset on return (must not be NULL).
-- `maxlen` — absolute, exclusive scan limit measured from `str[0]`; bytes at
-  indices greater than or equal to `maxlen` are not examined. Both `"`
-  delimiters count toward the budget, and success may set `*pos == maxlen`. To
-  apply a separate budget to a substring, pass the sliced pointer and length
-  with `*pos = 0`.
+- `maxlen` — maximum number of bytes examined from the initial `*pos`. Both
+  `"` delimiters count toward the budget.
 
 **Returns**
 
 | Return | Condition |
 |--------|-----------|
 | `HWIRE_OK` | Valid quoted-string consumed |
-| `HWIRE_EAGAIN` | The initial position has no available byte, or input ends below `maxlen` before the closing `"` |
+| `HWIRE_EAGAIN` | Input ends before the `maxlen` budget is exhausted |
 | `HWIRE_EILSEQ` | Invalid character inside the string |
-| `HWIRE_ELEN` | An available initial position is outside the budget, or the quoted-string is incomplete upon reaching `maxlen` |
+| `HWIRE_ELEN` | The quoted-string is incomplete when the `maxlen` budget is exhausted, including empty input with `maxlen == 0` |
 
 #### `hwire_parse_parameters`
 
@@ -485,7 +484,9 @@ parameter  = parameter-name "=" parameter-value
 - `str` — input string (must not be NULL).
 - `len` — total bytes in `str`.
 - `pos` — in/out: start offset on entry, end offset on return (must not be NULL). An initial offset greater than `len` returns `HWIRE_EILSEQ` unchanged.
-- `maxlen` — maximum number of bytes from the initial offset.
+- `maxlen` — maximum number of bytes examined from the initial `*pos`. If a
+  required parameter component is incomplete when this budget is exhausted,
+  the function returns `HWIRE_ELEN` without examining later bytes.
 - `maxnparams` — maximum number of parameters.
 - `skip_leading_semicolon` — non-zero to accept the first parameter without a leading `;`.
 
@@ -494,9 +495,9 @@ parameter  = parameter-name "=" parameter-value
 | Return | Condition |
 |--------|-----------|
 | `HWIRE_OK` | All parameters consumed |
-| `HWIRE_EAGAIN` | More data needed |
+| `HWIRE_EAGAIN` | A required parameter component needs more input before `maxlen` is exhausted |
 | `HWIRE_EILSEQ` | Invalid byte sequence |
-| `HWIRE_ELEN` | Length exceeds `maxlen` |
+| `HWIRE_ELEN` | A required parameter component is incomplete upon exhausting `maxlen` |
 | `HWIRE_EKEYLEN` | Key length exceeds `ctx->key_lc.size` |
 | `HWIRE_ECALLBACK` | Callback returned non-zero |
 | `HWIRE_ENOBUFS` | Parameter count exceeds `maxnparams` |
@@ -528,14 +529,16 @@ value (`foo=`) is rejected with `HWIRE_EEXTVAL`.
 **Parameters**
 
 - `ctx` — parser context (`chunksize_cb` must not be NULL).
-- `str` — input string (must not be NULL; `*pos` must be `0` on entry).
+- `str` — input string (must not be NULL).
 - `len` — total bytes in `str`.
-- `pos` — out: bytes consumed from `str[0]` including the trailing `CRLF` or `LF` (must not be NULL).
-- `maxlen` — maximum line length and input scanning budget in bytes. The
-  complete line, including its trailing `CRLF` or `LF`, must fit within this
-  budget. If available input ends before the budget is exhausted, the parser
-  returns `HWIRE_EAGAIN`. If the line is incomplete upon reaching `maxlen`, it
-  returns `HWIRE_ELEN` without examining later bytes.
+- `pos` — in/out: start offset on entry, position after the trailing `CRLF`
+  or `LF` on success (must not be NULL). It is unchanged on failure.
+- `maxlen` — maximum line length and input scanning budget in bytes from the
+  initial `*pos`. The complete line, including its trailing `CRLF` or `LF`,
+  must fit within this budget. If available input ends before the budget is
+  exhausted, the parser returns `HWIRE_EAGAIN`. If the line is incomplete
+  upon exhausting `maxlen`, it returns `HWIRE_ELEN` without examining later
+  bytes.
 - `maxexts` — maximum number of chunk extensions.
 
 **Returns**
@@ -544,7 +547,7 @@ value (`foo=`) is rejected with `HWIRE_EEXTVAL`.
 |--------|-----------|
 | `HWIRE_OK` | Chunk-size line consumed including `CRLF` or `LF` |
 | `HWIRE_EAGAIN` | More data needed before `maxlen` is reached |
-| `HWIRE_ELEN` | Line incomplete upon reaching `maxlen` |
+| `HWIRE_ELEN` | Line incomplete upon reaching `maxlen`, including empty input with `maxlen == 0` |
 | `HWIRE_ERANGE` | Chunk size exceeds `HWIRE_MAX_CHUNKSIZE` |
 | `HWIRE_EILSEQ` | Invalid byte sequence |
 | `HWIRE_EEOL` | Invalid end-of-line terminator |
@@ -567,8 +570,12 @@ Parses HTTP header fields until an empty `CRLF` or `LF` line. `ctx->header_cb` i
 - `ctx` — parser context (`header_cb` must not be NULL).
 - `str` — input string (must not be NULL).
 - `len` — total bytes in `str`.
-- `pos` — out: bytes consumed from `str[0]` including the empty `CRLF` or `LF` line (must not be NULL).
-- `maxlen` — maximum individual header length in bytes.
+- `pos` — in/out: start offset on entry, position after the empty `CRLF` or
+  `LF` line on success (must not be NULL). It is unchanged on failure.
+- `maxlen` — maximum total length of the header block from the initial
+  `*pos`, including field delimiters, line endings, and the terminating empty
+  line. An incomplete block at the budget boundary returns `HWIRE_EHDRLEN`
+  without examining later bytes.
 - `maxnhdrs` — maximum number of header fields.
 
 **Returns**
@@ -576,10 +583,10 @@ Parses HTTP header fields until an empty `CRLF` or `LF` line. `ctx->header_cb` i
 | Return | Condition |
 |--------|-----------|
 | `HWIRE_OK` | All headers consumed including the empty line |
-| `HWIRE_EAGAIN` | More data needed |
+| `HWIRE_EAGAIN` | Input is absent at the start or ends before the header block budget |
 | `HWIRE_EHDRNAME` | Invalid header field name |
 | `HWIRE_EHDRVALUE` | Invalid header field value |
-| `HWIRE_EHDRLEN` | Header length exceeds `maxlen` |
+| `HWIRE_EHDRLEN` | Header block is incomplete upon exhausting `maxlen` |
 | `HWIRE_EEOL` | Invalid end-of-line in header value (CR without LF) |
 | `HWIRE_ENOBUFS` | Header count exceeds `maxnhdrs` |
 | `HWIRE_EKEYLEN` | Key length exceeds `ctx->key_lc.size` |
@@ -605,8 +612,12 @@ Host: example.com\r\n
 - `ctx` — parser context (`request_cb` and `header_cb` must not be NULL).
 - `str` — input string (must not be NULL).
 - `len` — total bytes in `str`.
-- `pos` — out: bytes consumed from `str[0]`; pass `0` on entry, reset to `0` when retrying after `HWIRE_EAGAIN` (must not be NULL).
-- `maxlen` — maximum total byte length of the message (leading empty lines + request-line + header fields, all delimiters included; the terminating empty line is excluded).
+- `pos` — in/out: request start offset on entry and end offset on success
+  (must not be NULL). It is unchanged on failure, including `HWIRE_EAGAIN`.
+- `maxlen` — maximum total byte length from the initial `*pos` (leading
+  empty lines + request-line + header fields and the terminating empty line,
+  all delimiters included). An incomplete component at
+  the budget boundary returns its length error without examining later bytes.
 - `maxnhdrs` — maximum number of header fields.
 
 **Returns**
@@ -614,15 +625,15 @@ Host: example.com\r\n
 | Return | Condition |
 |--------|-----------|
 | `HWIRE_OK` | Full request consumed including the empty line |
-| `HWIRE_EAGAIN` | More data needed |
+| `HWIRE_EAGAIN` | Input ends before the applicable budget |
 | `HWIRE_EMETHOD` | Invalid method (not tchar or missing SP) |
 | `HWIRE_EVERSION` | Unsupported HTTP version |
 | `HWIRE_EEOL` | Invalid end-of-line |
-| `HWIRE_ELEN` | Length exceeds `maxlen` |
+| `HWIRE_ELEN` | Leading empty lines or the request-line are incomplete upon exhausting `maxlen` |
 | `HWIRE_EURI` | Invalid URI character |
 | `HWIRE_EHDRNAME` | Invalid header field name |
 | `HWIRE_EHDRVALUE` | Invalid header field value |
-| `HWIRE_EHDRLEN` | Header length exceeds `maxlen` |
+| `HWIRE_EHDRLEN` | The header section is incomplete upon exhausting the remaining `maxlen` budget |
 | `HWIRE_EKEYLEN` | Key length exceeds `ctx->key_lc.size` |
 | `HWIRE_ECALLBACK` | Callback returned non-zero |
 | `HWIRE_ENOBUFS` | Header count exceeds `maxnhdrs` |
@@ -647,8 +658,12 @@ Content-Length: 0\r\n
 - `ctx` — parser context (`response_cb` and `header_cb` must not be NULL).
 - `str` — input string (must not be NULL).
 - `len` — total bytes in `str`.
-- `pos` — out: bytes consumed from `str[0]`; pass `0` on entry, reset to `0` when retrying after `HWIRE_EAGAIN` (must not be NULL).
-- `maxlen` — maximum total byte length of the message (leading empty lines + status-line + header fields, all delimiters included; the terminating empty line is excluded).
+- `pos` — in/out: response start offset on entry and end offset on success
+  (must not be NULL). It is unchanged on failure, including `HWIRE_EAGAIN`.
+- `maxlen` — maximum total byte length from the initial `*pos` (leading
+  empty lines + status-line + header fields and the terminating empty line,
+  all delimiters included). An incomplete component at
+  the budget boundary returns its length error without examining later bytes.
 - `maxnhdrs` — maximum number of header fields.
 
 **Returns**
@@ -656,15 +671,15 @@ Content-Length: 0\r\n
 | Return | Condition |
 |--------|-----------|
 | `HWIRE_OK` | Full response consumed including the empty line |
-| `HWIRE_EAGAIN` | More data needed |
+| `HWIRE_EAGAIN` | Input ends before the applicable budget |
 | `HWIRE_ESTATUS` | Invalid HTTP status code |
 | `HWIRE_EVERSION` | Unsupported HTTP version |
 | `HWIRE_EEOL` | Invalid end-of-line |
 | `HWIRE_EILSEQ` | Invalid character in reason phrase |
-| `HWIRE_ELEN` | Length exceeds `maxlen` |
+| `HWIRE_ELEN` | Leading empty lines or the status-line are incomplete upon exhausting `maxlen` |
 | `HWIRE_EHDRNAME` | Invalid header field name |
 | `HWIRE_EHDRVALUE` | Invalid header field value |
-| `HWIRE_EHDRLEN` | Header length exceeds `maxlen` |
+| `HWIRE_EHDRLEN` | The header section is incomplete upon exhausting the remaining `maxlen` budget |
 | `HWIRE_EKEYLEN` | Key length exceeds `ctx->key_lc.size` |
 | `HWIRE_ECALLBACK` | Callback returned non-zero |
 | `HWIRE_ENOBUFS` | Header count exceeds `maxnhdrs` |
@@ -677,20 +692,24 @@ Content-Length: 0\r\n
 
 1. Keep the data received so far.
 2. Read more bytes from the network and append them to the buffer.
-3. Call the parse function again, passing the buffer from its start (`buf[0]`) with the updated `filled` length.
+3. Call the parse function again with the same `str`, updated `len`, and
+   unchanged message-start `pos`.
 
-The function re-scans from the start on each call, so there is no resume state to manage. The trade-off is that re-scanning is inexpensive compared to the complexity of maintaining per-call state.
+On `HWIRE_EAGAIN`, request, response, header, and chunk-size parsers leave
+`pos` at the current construct's start and re-scan from there on retry. After
+`HWIRE_OK`, `pos` points to the next byte, so a concatenated message or line
+can be parsed by calling the same function again without slicing `str`.
 
 ```c
 char buf[4096];
 size_t filled = 0;
+size_t pos = 0;
 
 for (;;) {
     ssize_t n = recv(fd, buf + filled, sizeof(buf) - filled, 0);
     if (n <= 0) break; /* connection closed or error */
     filled += (size_t)n;
 
-    size_t pos = 0;
     int rc = hwire_parse_response(&ctx, buf, filled, &pos,
                                   UINT16_MAX, UINT8_MAX);
     if (rc == HWIRE_OK) {
@@ -710,4 +729,6 @@ for (;;) {
 }
 ```
 
-> **Note:** `hwire_parse_parameters` is designed for parsing a single header field value that has already been fully received. It does not return `HWIRE_EAGAIN`.
+> **Note:** `hwire_parse_parameters` does not consume the byte following the
+> parameter list. It can return `HWIRE_EAGAIN` after a prefix such as `;` or
+> `name=` when more input can still fit within `maxlen`.

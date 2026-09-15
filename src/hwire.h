@@ -279,7 +279,7 @@ int hwire_is_fcchar(unsigned char c);
  * after the matched characters.
  *
  * @param str String to parse (must not be NULL)
- * @param len Maximum length of string
+ * @param len Number of available input bytes from str[0]
  * @param pos Input: start offset, Output: end offset (must not be NULL). If the
  * initial offset is greater than or equal to len, returns 0 and leaves it
  * unchanged.
@@ -296,7 +296,7 @@ size_t hwire_parse_tchar(const char *str, size_t len, size_t *pos);
  * after the matched characters.
  *
  * @param str String to parse (must not be NULL)
- * @param len Maximum length of string
+ * @param len Number of available input bytes from str[0]
  * @param pos Input: start offset, Output: end offset (must not be NULL). If the
  * initial offset is greater than or equal to len, returns 0 and leaves it
  * unchanged.
@@ -313,7 +313,7 @@ size_t hwire_parse_vchar(const char *str, size_t len, size_t *pos);
  * consumed (`0` if `str[*pos]` is not fcchar).
  *
  * @param str String to parse (must not be NULL)
- * @param len Maximum length of string
+ * @param len Number of available input bytes from str[0]
  * @param pos Input: start offset, Output: end offset (must not be NULL). If the
  * initial offset is greater than or equal to len, returns 0 and leaves it
  * unchanged.
@@ -335,17 +335,14 @@ size_t hwire_parse_fcchar(const char *str, size_t len, size_t *pos);
  * @param str Input string (str[*pos] must be DQUOTE, must not be NULL)
  * @param len Number of available input bytes from str[0]
  * @param pos Input: start offset, Output: end offset (must not be NULL)
- * @param maxlen Exclusive upper bound for examined input indices from str[0];
- * both DQUOTE delimiters count toward the budget and success may set *pos to
- * maxlen
+ * @param maxlen Maximum number of bytes examined from the initial *pos; both
+ * DQUOTE delimiters count toward the budget
  * @return HWIRE_OK on success
- * @return HWIRE_EAGAIN if the initial position has no available byte, or
- * available input ends before maxlen
+ * @return HWIRE_EAGAIN if available input ends before the maxlen budget is
+ * exhausted
  * @return HWIRE_EILSEQ for invalid byte sequence
- * @return HWIRE_ELEN if an available initial position is at or beyond maxlen,
- * or the quoted-string is incomplete at maxlen
- * @note To apply a separate budget to a substring, pass the sliced pointer and
- * length with an initial position of zero.
+ * @return HWIRE_ELEN if the quoted-string is incomplete when the maxlen budget
+ * is exhausted, including zero available bytes with maxlen equal to zero
  */
 int hwire_parse_quoted_string(const char *str, size_t len, size_t *pos,
                               size_t maxlen);
@@ -361,18 +358,20 @@ int hwire_parse_quoted_string(const char *str, size_t len, size_t *pos,
  * after this function returns HWIRE_OK.
  *
  * @param str String to parse (must not be NULL)
- * @param len Maximum length of string
+ * @param len Number of available input bytes from str[0]
  * @param pos Input: start offset, Output: end offset (must not be NULL). An
  * initial offset greater than len returns HWIRE_EILSEQ unchanged.
- * @param maxlen Maximum number of bytes from the initial offset
+ * @param maxlen Maximum number of bytes examined from the initial *pos
  * @param maxnparams Maximum number of parameters
  * @param skip_leading_semicolon Non-zero to skip semicolon check for first
  * parameter (0: require leading semicolon, 1: allow first param without
  * semicolon)
  * @return HWIRE_OK on success
- * @return HWIRE_EAGAIN if more data needed
+ * @return HWIRE_EAGAIN if a required component needs more input before maxlen
+ * is exhausted
  * @return HWIRE_EILSEQ for invalid byte sequence
- * @return HWIRE_ELEN if length exceeds maxlen
+ * @return HWIRE_ELEN if a required component is incomplete when maxlen is
+ * exhausted
  * @return HWIRE_EKEYLEN if key length exceeds ctx->key_lc.size
  * @return HWIRE_ECALLBACK if callback returned non-zero
  * @return HWIRE_ENOBUFS if number of parameters exceeds maxnparams
@@ -392,16 +391,17 @@ int hwire_parse_parameters(hwire_ctx_t *ctx, const char *str, size_t len,
  * @brief Parse chunk size
  *
  * @param str String to parse (must not be NULL)
- * @param len Maximum length of string
- * @param pos Output: bytes consumed from str[0] (after CRLF or LF, must not be
- * NULL; must be 0 on entry — str must point to the start of chunk-size data)
- * @param maxlen Maximum line length and number of input bytes examined; the
- * complete line terminator must fit within this budget
+ * @param len Number of available input bytes from str[0]
+ * @param pos Input: start offset, Output: position after CRLF or LF (must not
+ * be NULL); unchanged on failure
+ * @param maxlen Maximum line length and number of input bytes examined from
+ * the initial *pos; the complete line terminator must fit within this budget
  * @param maxexts Maximum number of extensions
  * @param ctx Parser context (must not be NULL)
  * @return HWIRE_OK on success, CRLF or LF consumed
  * @return HWIRE_EAGAIN if more data is needed before maxlen is reached
- * @return HWIRE_ELEN if the line is incomplete upon reaching maxlen
+ * @return HWIRE_ELEN if the line is incomplete upon reaching maxlen, including
+ * zero available bytes with maxlen equal to zero
  * @return HWIRE_ERANGE if chunk size exceeds maxsize
  * @return HWIRE_EILSEQ if byte sequence is illegal
  * @return HWIRE_EEOL if end-of-line terminator is invalid
@@ -422,18 +422,21 @@ int hwire_parse_chunksize(hwire_ctx_t *ctx, const char *str, size_t len,
  * header_cb for each parsed header.
  *
  * @param str String to parse (must not be NULL)
- * @param len Maximum length of string
- * @param pos Output: bytes consumed from str[0] after the empty CRLF or LF line
- * (must not be NULL)
- * @param maxlen Maximum individual header length
+ * @param len Number of available input bytes from str[0]
+ * @param pos Input: start offset, Output: position after the empty CRLF or LF
+ * line (must not be NULL); unchanged on failure
+ * @param maxlen Maximum total length of the header block from the initial
+ * *pos, including the terminating empty line
  * @param maxnhdrs Maximum number of headers
  * @param ctx Parser context (key_lc must be allocated, header_cb must not be
  * NULL)
  * @return HWIRE_OK on success, empty line consumed
- * @return HWIRE_EAGAIN if more data needed
+ * @return HWIRE_EAGAIN if input is absent at the start or ends before the
+ * header block budget
  * @return HWIRE_EHDRNAME for invalid header name
  * @return HWIRE_EHDRVALUE for invalid header value
- * @return HWIRE_EHDRLEN if header length exceeds maxlen
+ * @return HWIRE_EHDRLEN if the header block is incomplete when maxlen is
+ * exhausted
  * @return HWIRE_EEOL if a line terminator is invalid (CR without LF)
  * @return HWIRE_ENOBUFS if header count exceeds maxnhdrs
  * @return HWIRE_EKEYLEN if key length exceeds ctx->key_lc.size
@@ -451,23 +454,26 @@ int hwire_parse_headers(hwire_ctx_t *ctx, const char *str, size_t len,
  * and header_cb for each header.
  *
  * @param str String to parse (must not be NULL)
- * @param len Length of string
- * @param pos Output: bytes consumed from str[0] (must not be NULL)
- * @param maxlen Maximum total byte length of the message (leading empty lines
- * + request-line + header fields, all delimiters included; the terminating
- * empty line is excluded)
+ * @param len Number of available input bytes from str[0]
+ * @param pos Input: start offset, Output: position after the request (must not
+ * be NULL); unchanged on failure
+ * @param maxlen Maximum total byte length from the initial *pos (leading empty
+ * lines + request-line + header fields and the terminating empty line, all
+ * delimiters included)
  * @param maxnhdrs Maximum number of headers
  * @param ctx Parser context (request_cb and header_cb must not be NULL)
  * @return HWIRE_OK on success
- * @return HWIRE_EAGAIN if more data needed
+ * @return HWIRE_EAGAIN if input ends before the applicable budget
  * @return HWIRE_EMETHOD for invalid method (not tchar or missing SP)
  * @return HWIRE_EVERSION for invalid HTTP version
  * @return HWIRE_EEOL for invalid end-of-line
- * @return HWIRE_ELEN if length exceeds maxlen
+ * @return HWIRE_ELEN if leading empty lines or the request-line are incomplete
+ * when maxlen is exhausted
  * @return HWIRE_EURI for invalid URI character
  * @return HWIRE_EHDRNAME for invalid header field name
  * @return HWIRE_EHDRVALUE for invalid header field value
- * @return HWIRE_EHDRLEN if header length exceeds maxlen
+ * @return HWIRE_EHDRLEN if the header section is incomplete when the remaining
+ * maxlen budget is exhausted
  * @return HWIRE_EKEYLEN if key length exceeds ctx->key_lc.size
  * @return HWIRE_ECALLBACK if callback returned non-zero
  * @return HWIRE_ENOBUFS if header count exceeds maxnhdrs
@@ -484,23 +490,26 @@ int hwire_parse_request(hwire_ctx_t *ctx, const char *str, size_t len,
  * and header_cb for each header.
  *
  * @param str String to parse (must not be NULL)
- * @param len Length of string
- * @param pos Output: bytes consumed from str[0] (must not be NULL)
- * @param maxlen Maximum total byte length of the message (leading empty lines
- * + status-line + header fields, all delimiters included; the terminating
- * empty line is excluded)
+ * @param len Number of available input bytes from str[0]
+ * @param pos Input: start offset, Output: position after the response (must not
+ * be NULL); unchanged on failure
+ * @param maxlen Maximum total byte length from the initial *pos (leading empty
+ * lines + status-line + header fields and the terminating empty line, all
+ * delimiters included)
  * @param maxnhdrs Maximum number of headers
  * @param ctx Parser context (response_cb and header_cb must not be NULL)
  * @return HWIRE_OK on success
- * @return HWIRE_EAGAIN if more data needed
+ * @return HWIRE_EAGAIN if input ends before the applicable budget
  * @return HWIRE_ESTATUS for invalid status code
  * @return HWIRE_EVERSION for invalid HTTP version
  * @return HWIRE_EEOL for invalid end-of-line
  * @return HWIRE_EILSEQ for invalid character in reason phrase
- * @return HWIRE_ELEN if length exceeds maxlen
+ * @return HWIRE_ELEN if leading empty lines or the status-line are incomplete
+ * when maxlen is exhausted
  * @return HWIRE_EHDRNAME for invalid header field name
  * @return HWIRE_EHDRVALUE for invalid header field value
- * @return HWIRE_EHDRLEN if header length exceeds maxlen
+ * @return HWIRE_EHDRLEN if the header section is incomplete when the remaining
+ * maxlen budget is exhausted
  * @return HWIRE_EKEYLEN if key length exceeds ctx->key_lc.size
  * @return HWIRE_ECALLBACK if callback returned non-zero
  * @return HWIRE_ENOBUFS if header count exceeds maxnhdrs

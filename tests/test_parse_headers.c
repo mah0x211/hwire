@@ -239,11 +239,11 @@ void test_parse_headers_key_parsing(void)
         .header_cb = mock_header_cb
     };
 
-    /* Key without colon, needs more data */
+    /* Key without colon exhausts the available header budget. */
     buf = "KeyWithoutColon";
     pos = 0;
     rv  = hwire_parse_headers(&cb, buf, strlen(buf), &pos, strlen(buf), 10);
-    ASSERT_EQ(rv, HWIRE_EAGAIN);
+    ASSERT_EQ(rv, HWIRE_EHDRLEN);
 
     TEST_END();
 }
@@ -305,18 +305,9 @@ void test_parse_headers_ows_maxlen(void)
 }
 
 /*
- * Covers: RFC 9110 §5.5  field-value scanning at maxlen boundary
- * MUST: a header value whose content is exactly (maxlen-1) bytes followed by
- *       CRLF MUST be accepted.  Previously, parse_hval checked
- *       `pos+1 < max` (scan limit) instead of `pos+1 < len` (buffer limit)
- *       and incorrectly returned HWIRE_EEOL when CR landed at max-1 while
- *       the corresponding LF was available at max (still within len).
- *
- * Internal detail: hwire_parse_headers passes vlen = maxlen - (key+colon+OWS)
- * to parse_hval as the value-content limit.  For "K: value\r\n":
- *   key="K"(1) + ":"(1) + " "(1) = 3 bytes consumed before value
- *   vlen = maxlen - 3
- * So with maxlen=10, vlen=7.  Boundary case: value is 6 bytes = vlen-1.
+ * Covers: RFC 9110 §5.5 field-value scanning at the header-block maxlen
+ * boundary. The field line and the empty line terminating the block must both
+ * fit within maxlen.
  */
 void test_parse_headers_hval_maxlen_boundary(void)
 {
@@ -327,29 +318,30 @@ void test_parse_headers_hval_maxlen_boundary(void)
         .key_lc = {.buf = key_storage, .size = sizeof(key_storage), .len = 0},
         .header_cb = mock_header_cb
     };
-    size_t pos;
-    int rv;
+    size_t pos = 0;
+    int rv     = 0;
 
-    /* maxlen=10, vlen=7; value="123456" (6 bytes = vlen-1): boundary case
-     * CR lands at pos=6 == vlen-1 == max-1.
-     * Bug: `pos+1 < max` → 7 < 7 → false → fell through to HWIRE_EEOL.
-     * Fix: `pos+1 < len` → 7 < 12 → true → str[7]=='\\n' → HWIRE_OK. */
+    /* "K: 123456\r\n\r\n" is exactly 13 bytes. */
     const char *buf = "K: 123456\r\n\r\n";
     pos             = 0;
-    rv              = hwire_parse_headers(&cb, buf, strlen(buf), &pos, 10, 10);
+    rv              = hwire_parse_headers(&cb, buf, strlen(buf), &pos, 13, 10);
     ASSERT_OK(rv);
     ASSERT_EQ(pos, strlen(buf));
 
-    /* value="12345" (5 bytes, well within vlen-1): always worked */
+    pos = 0;
+    rv  = hwire_parse_headers(&cb, buf, strlen(buf), &pos, 12, 10);
+    ASSERT_EQ(rv, HWIRE_EHDRLEN);
+
+    /* "K: 12345\r\n\r\n" is exactly 12 bytes. */
     buf = "K: 12345\r\n\r\n";
     pos = 0;
-    rv  = hwire_parse_headers(&cb, buf, strlen(buf), &pos, 10, 10);
+    rv  = hwire_parse_headers(&cb, buf, strlen(buf), &pos, 12, 10);
     ASSERT_OK(rv);
 
-    /* value="1234567" (7 bytes = vlen, exceeds maxlen): HWIRE_EHDRLEN */
+    /* "K: 1234567\r\n\r\n" exceeds maxlen=13. */
     buf = "K: 1234567\r\n\r\n";
     pos = 0;
-    rv  = hwire_parse_headers(&cb, buf, strlen(buf), &pos, 10, 10);
+    rv  = hwire_parse_headers(&cb, buf, strlen(buf), &pos, 13, 10);
     ASSERT_EQ(rv, HWIRE_EHDRLEN);
 
     TEST_END();
@@ -764,9 +756,9 @@ void test_parse_headers_content_verification(void)
         hdr_verify_expect_t exp = {"OWS-Key", 7, "trimmed", 7, NULL,
                                    NULL,      0, 0,         0};
         hwire_ctx_t cb          = {
-                     .uctx      = &exp,
-                     .key_lc    = {.buf = key_storage, .size = sizeof(key_storage)},
-                     .header_cb = verify_hdr_content_cb
+            .uctx      = &exp,
+            .key_lc    = {.buf = key_storage, .size = sizeof(key_storage)},
+            .header_cb = verify_hdr_content_cb
         };
         size_t pos      = 0;
         const char *buf = "OWS-Key:   trimmed   \r\n\r\n";
