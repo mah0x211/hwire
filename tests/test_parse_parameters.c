@@ -28,11 +28,11 @@ void test_parse_parameters_valid(void)
     ASSERT_OK(rv);
     ASSERT_EQ(pos, strlen(buf));
 
-    /* The absolute quoted-string budget includes its parameter prefix. */
+    /* The parameter-list budget includes the quoted-string prefix. */
     buf = ";k=\"v\"";
     pos = 0;
-    rv  = hwire_parse_parameters(&cb, buf, strlen(buf), &pos, strlen(buf), 10,
-                                 0);
+    rv =
+        hwire_parse_parameters(&cb, buf, strlen(buf), &pos, strlen(buf), 10, 0);
     ASSERT_OK(rv);
     ASSERT_EQ(pos, strlen(buf));
 
@@ -208,8 +208,8 @@ void test_parse_parameters_edge_cases(void)
     rv  = hwire_parse_parameters(&cb, buf, strlen(buf), &pos, 100, 10, 0);
     ASSERT_EQ(rv, HWIRE_EAGAIN);
 
-    /* parameter-name runs up to maxpos boundary (key "ab" pushes cur to
-       maxpos=4) → HWIRE_ELEN */
+    /* parameter-name reaches the maxlen tail (key "ab" consumes the
+       remaining two-byte budget) → HWIRE_ELEN */
     buf = "; ab=val";
     pos = 0;
     rv  = hwire_parse_parameters(&cb, buf, strlen(buf), &pos, 4, 10, 0);
@@ -284,6 +284,62 @@ void test_parse_parameters_numeric_boundaries(void)
     rv  = hwire_parse_parameters(&cb, buf, len, &pos, SIZE_MAX, 10, 0);
     ASSERT_EQ(rv, HWIRE_EILSEQ);
     ASSERT_EQ(pos, SIZE_MAX);
+
+    TEST_END();
+}
+
+void test_parse_parameters_hard_budget(void)
+{
+    TEST_START("test_parse_parameters_hard_budget");
+
+    char key_storage[TEST_KEY_SIZE] = {0};
+    hwire_ctx_t cb                  = {
+        .key_lc   = {.buf = key_storage, .size = sizeof(key_storage), .len = 0},
+        .param_cb = mock_param_cb
+    };
+    const char *buf = ";";
+    size_t pos      = 0;
+    int rv = hwire_parse_parameters(&cb, buf, strlen(buf), &pos, 1, 10, 0);
+
+    /* A consumed semicolon requires a following byte. At the exact budget
+     * boundary, reading more input cannot complete the parse in-budget. */
+    ASSERT_EQ(rv, HWIRE_ELEN);
+    ASSERT_EQ(pos, 1);
+
+    pos = 0;
+    rv  = hwire_parse_parameters(&cb, buf, strlen(buf), &pos, 2, 10, 0);
+    ASSERT_EQ(rv, HWIRE_EAGAIN);
+    ASSERT_EQ(pos, 1);
+
+    buf = ";k=";
+    pos = 0;
+    rv  = hwire_parse_parameters(&cb, buf, strlen(buf), &pos, 3, 10, 0);
+    ASSERT_EQ(rv, HWIRE_ELEN);
+    ASSERT_EQ(pos, 1);
+
+    pos = 0;
+    rv  = hwire_parse_parameters(&cb, buf, strlen(buf), &pos, 4, 10, 0);
+    ASSERT_EQ(rv, HWIRE_EAGAIN);
+    ASSERT_EQ(pos, 1);
+
+    /* A byte outside the budget cannot determine the syntax result. */
+    buf = ";ab@";
+    pos = 0;
+    rv  = hwire_parse_parameters(&cb, buf, strlen(buf), &pos, 3, 10, 0);
+    ASSERT_EQ(rv, HWIRE_ELEN);
+    ASSERT_EQ(pos, 1);
+
+    pos = 0;
+    rv  = hwire_parse_parameters(&cb, buf, strlen(buf), &pos, 4, 10, 0);
+    ASSERT_EQ(rv, HWIRE_EILSEQ);
+    ASSERT_EQ(pos, 1);
+
+    /* A token value may finish exactly at the caller-inspected boundary. */
+    buf = ";k=v";
+    pos = 0;
+    rv  = hwire_parse_parameters(&cb, buf, strlen(buf), &pos, 4, 10, 0);
+    ASSERT_OK(rv);
+    ASSERT_EQ(pos, 4);
 
     TEST_END();
 }
@@ -466,6 +522,7 @@ int main(void)
     test_parse_parameters_invalid();
     test_parse_parameters_edge_cases();
     test_parse_parameters_numeric_boundaries();
+    test_parse_parameters_hard_budget();
     test_parse_parameters_rfc_compliance();
     test_parse_parameters_content_verification();
     test_parse_parameters_multi_content_verification();

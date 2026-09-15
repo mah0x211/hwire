@@ -43,7 +43,8 @@ void test_chunksize_maxlen_boundaries(void)
     };
     size_t pos = 0;
 
-    ASSERT_EQ(parse_chunksize("", 0, 0, &pos), HWIRE_EAGAIN);
+    ASSERT_EQ(parse_chunksize("", 0, 0, &pos), HWIRE_ELEN);
+    ASSERT_EQ(parse_chunksize("", 0, 1, &pos), HWIRE_EAGAIN);
     for (size_t i = 0; i < sizeof(lines) / sizeof(lines[0]); i++) {
         size_t line_len = strlen(lines[i]);
 

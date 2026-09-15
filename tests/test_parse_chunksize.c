@@ -118,10 +118,10 @@ void test_parse_chunksize_valid(void)
     rv  = hwire_parse_chunksize(&cb, buf, strlen(buf), &pos, 100, 10);
     ASSERT_OK(rv);
 
-    /* MUST return HWIRE_ELEN: quoted-string ext-val exceeds maxlen budget.
-     * "1A;e=\"12345678\"\r\n" = 17 bytes. Opening DQUOTE is at position 5.
-     * The absolute maxlen=12 leaves 7 bytes at the DQUOTE, but the
-     * quoted-string needs 10 bytes, so it cannot be completed in-budget. */
+    /* MUST return HWIRE_ELEN: quoted-string ext-val exceeds the line budget.
+     * "1A;e=\"12345678\"\r\n" = 17 bytes. maxlen=12 leaves 7 bytes from the
+     * opening DQUOTE, but the quoted-string needs 10 bytes, so it cannot be
+     * completed in-budget. */
     buf = "1A;e=\"12345678\"\r\n";
     pos = 0;
     rv  = hwire_parse_chunksize(&cb, buf, strlen(buf), &pos, 12, 10);
@@ -374,13 +374,13 @@ void test_parse_chunksize_content_verification(void)
     /* Case 4: "1a;ext=val\r\n" → size=26, ext key="ext"(3), value="val"(3) */
     {
         chunk_ext_expect_t exp = {26, "ext", 3, "val", 3, NULL, 0, 0, 0, 0};
-        hwire_ctx_t cb         = {.uctx             = &exp,
-                                  .chunksize_cb     = verify_chunksize_with_ext_cb,
-                                  .chunksize_ext_cb = verify_chunksize_ext_content_cb};
-        size_t pos             = 0;
-        const char *buf        = "1a;ext=val\r\n";
-        exp.buf                = buf;
-        exp.buf_len            = strlen(buf);
+        hwire_ctx_t cb  = {.uctx             = &exp,
+                           .chunksize_cb     = verify_chunksize_with_ext_cb,
+                           .chunksize_ext_cb = verify_chunksize_ext_content_cb};
+        size_t pos      = 0;
+        const char *buf = "1a;ext=val\r\n";
+        exp.buf         = buf;
+        exp.buf_len     = strlen(buf);
         int rv = hwire_parse_chunksize(&cb, buf, strlen(buf), &pos, 100, 10);
         ASSERT_OK(rv);
         ASSERT_EQ(exp.size_called, 1);
@@ -391,13 +391,13 @@ void test_parse_chunksize_content_verification(void)
     /* Case 5: "1a;flag\r\n" → size=26, ext key="flag"(4), value.len=0 */
     {
         chunk_ext_expect_t exp = {26, "flag", 4, "", 0, NULL, 0, 0, 0, 0};
-        hwire_ctx_t cb         = {.uctx             = &exp,
-                                  .chunksize_cb     = verify_chunksize_with_ext_cb,
-                                  .chunksize_ext_cb = verify_chunksize_ext_content_cb};
-        size_t pos             = 0;
-        const char *buf        = "1a;flag\r\n";
-        exp.buf                = buf;
-        exp.buf_len            = strlen(buf);
+        hwire_ctx_t cb  = {.uctx             = &exp,
+                           .chunksize_cb     = verify_chunksize_with_ext_cb,
+                           .chunksize_ext_cb = verify_chunksize_ext_content_cb};
+        size_t pos      = 0;
+        const char *buf = "1a;flag\r\n";
+        exp.buf         = buf;
+        exp.buf_len     = strlen(buf);
         int rv = hwire_parse_chunksize(&cb, buf, strlen(buf), &pos, 100, 10);
         ASSERT_OK(rv);
         ASSERT_EQ(exp.size_called, 1);
@@ -434,14 +434,14 @@ void test_parse_chunksize_maxexts_limit(void)
         int expect_rv;
         int expect_calls;
     } cases[] = {
-        {"0;a\r\n",        1, HWIRE_OK,      1}, /* exactly maxexts */
-        {"0;a;b\r\n",      1, HWIRE_ENOBUFS, 1}, /* maxexts+1 → ENOBUFS */
-        {"0;a;b\r\n",      2, HWIRE_OK,      2},
-        {"0;a;b;c\r\n",    2, HWIRE_ENOBUFS, 2},
-        {"0;a=1;b=2\r\n",  1, HWIRE_ENOBUFS, 1},
-        {"0;a=1;b=2\r\n",  2, HWIRE_OK,      2},
-        {"0;a\r\n",        0, HWIRE_ENOBUFS, 0}, /* no extensions allowed */
-        {"0\r\n",          0, HWIRE_OK,      0}, /* no extensions present */
+        {"0;a\r\n",       1, HWIRE_OK,      1}, /* exactly maxexts */
+        {"0;a;b\r\n",     1, HWIRE_ENOBUFS, 1}, /* maxexts+1 → ENOBUFS */
+        {"0;a;b\r\n",     2, HWIRE_OK,      2},
+        {"0;a;b;c\r\n",   2, HWIRE_ENOBUFS, 2},
+        {"0;a=1;b=2\r\n", 1, HWIRE_ENOBUFS, 1},
+        {"0;a=1;b=2\r\n", 2, HWIRE_OK,      2},
+        {"0;a\r\n",       0, HWIRE_ENOBUFS, 0}, /* no extensions allowed */
+        {"0\r\n",         0, HWIRE_OK,      0}, /* no extensions present */
     };
 
     for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
@@ -450,9 +450,8 @@ void test_parse_chunksize_maxexts_limit(void)
                           .chunksize_cb     = mock_chunksize_cb,
                           .chunksize_ext_cb = count_ext_cb};
         size_t pos     = 0;
-        int rv         = hwire_parse_chunksize(&cb, cases[i].buf,
-                                               strlen(cases[i].buf), &pos, 100,
-                                               cases[i].maxexts);
+        int rv = hwire_parse_chunksize(&cb, cases[i].buf, strlen(cases[i].buf),
+                                       &pos, 100, cases[i].maxexts);
         ASSERT_EQ(rv, cases[i].expect_rv);
         ASSERT_EQ(calls, cases[i].expect_calls);
     }

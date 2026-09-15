@@ -52,7 +52,7 @@ void test_parse_quoted_string_valid(void)
  * MUST reject: input not starting with DQUOTE → HWIRE_EILSEQ
  * MUST return HWIRE_EAGAIN: no closing DQUOTE yet (incomplete input)
  * MUST return HWIRE_EAGAIN: backslash at end of input (quoted-pair incomplete)
- * MUST return HWIRE_EAGAIN: pos >= len (no input remaining)
+ * MUST return HWIRE_EAGAIN: pos == len with budget remaining
  * MUST reject: invalid quoted-pair target (CTL other than HTAB) → HWIRE_EILSEQ
  * MUST return HWIRE_ELEN: content exceeds maxlen
  */
@@ -95,7 +95,7 @@ void test_parse_quoted_string_invalid(void)
     rv  = hwire_parse_quoted_string(str, strlen(str), &pos, 4);
     ASSERT_EQ(rv, HWIRE_ELEN);
 
-    /* MUST return HWIRE_EAGAIN: pos >= len (no input remaining at start) */
+    /* MUST return HWIRE_EAGAIN: no input remains but budget is available. */
     str = "abc";
     pos = 3;
     rv  = hwire_parse_quoted_string(str, 3, &pos, 100);
@@ -188,16 +188,16 @@ void test_parse_quoted_string_rfc_invalid(void)
  * both DQUOTE delimiters. MUST: a quoted-pair inside the string MUST count
  * as 2 bytes (backslash + target char) toward pos.
  * MUST: non-zero initial pos MUST be correctly offset.
- * MUST: maxlen is an absolute limit measured from str[0].
- *       A closing DQUOTE at maxlen - 1 MUST succeed.
- *       A quoted-string that would end after maxlen MUST return HWIRE_ELEN.
+ * MUST: maxlen is measured from the initial position.
+ *       A closing DQUOTE at initial pos + maxlen - 1 MUST succeed.
+ *       A quoted-string longer than maxlen MUST return HWIRE_ELEN.
  */
 void test_parse_quoted_string_content_verification(void)
 {
     TEST_START("test_parse_quoted_string_content_verification");
 
-    size_t pos;
-    int rv;
+    size_t pos = 0;
+    int rv     = 0;
 
     /* "hello" → 1 + 5 + 1 = 7 bytes → pos=7 */
     const char *str1 = "\"hello\"";
@@ -233,20 +233,20 @@ void test_parse_quoted_string_content_verification(void)
     ASSERT_OK(rv);
     ASSERT_EQ(pos, 5); /* consumed 4 bytes from pos=1 */
 
-    /* maxlen is absolute: the prefix at index 0 also consumes the budget */
+    /* maxlen is relative to the initial position; the prefix is not counted. */
     pos = 1;
-    rv  = hwire_parse_quoted_string(str4, strlen(str4), &pos, 5);
+    rv  = hwire_parse_quoted_string(str4, strlen(str4), &pos, 4);
     ASSERT_OK(rv);
     ASSERT_EQ(pos, 5);
 
     pos = 1;
-    rv  = hwire_parse_quoted_string(str4, strlen(str4), &pos, 4);
+    rv  = hwire_parse_quoted_string(str4, strlen(str4), &pos, 3);
     ASSERT_EQ(rv, HWIRE_ELEN);
     ASSERT_EQ(pos, 4);
 
-    /* Input ending before the absolute budget remains retryable. */
+    /* Input ending before the relative budget remains retryable. */
     pos = 1;
-    rv  = hwire_parse_quoted_string(str4, 4, &pos, 5);
+    rv  = hwire_parse_quoted_string(str4, 4, &pos, 4);
     ASSERT_EQ(rv, HWIRE_EAGAIN);
     ASSERT_EQ(pos, 4);
 
@@ -263,7 +263,7 @@ void test_parse_quoted_string_content_verification(void)
     rv  = hwire_parse_quoted_string(str5, strlen(str5), &pos, 3);
     ASSERT_EQ(rv, HWIRE_ELEN);
 
-    /* An incomplete string at the exact absolute budget is not retryable. */
+    /* An incomplete string at the exact relative budget is not retryable. */
     const char *str6 = "\"abc";
     pos              = 0;
     rv               = hwire_parse_quoted_string(str6, strlen(str6), &pos, 4);
@@ -296,7 +296,7 @@ void test_parse_quoted_string_numeric_boundaries(void)
     pos = 1;
     rv  = hwire_parse_quoted_string(str, strlen(str), &pos, 1);
     ASSERT_EQ(rv, HWIRE_ELEN);
-    ASSERT_EQ(pos, 1);
+    ASSERT_EQ(pos, 2);
 
     pos = SIZE_MAX;
     rv  = hwire_parse_quoted_string(str, strlen(str), &pos, SIZE_MAX);
@@ -305,6 +305,11 @@ void test_parse_quoted_string_numeric_boundaries(void)
 
     pos = strlen(str);
     rv  = hwire_parse_quoted_string(str, strlen(str), &pos, 0);
+    ASSERT_EQ(rv, HWIRE_ELEN);
+    ASSERT_EQ(pos, strlen(str));
+
+    pos = strlen(str);
+    rv  = hwire_parse_quoted_string(str, strlen(str), &pos, 1);
     ASSERT_EQ(rv, HWIRE_EAGAIN);
     ASSERT_EQ(pos, strlen(str));
 
@@ -341,10 +346,9 @@ void test_parse_quoted_string_quoted_pair_budget(void)
               HWIRE_ELEN);
     ASSERT_EQ(pos, 1);
 
-    /* str[maxlen] is protected: an initial position at the absolute budget
-     * must return without examining that byte. */
+    /* A zero-byte relative budget must not examine the protected start byte. */
     pos = 2;
-    ASSERT_EQ(hwire_parse_quoted_string((const char *)buf, 3, &pos, 2),
+    ASSERT_EQ(hwire_parse_quoted_string((const char *)buf, 3, &pos, 0),
               HWIRE_ELEN);
     ASSERT_EQ(pos, 2);
 

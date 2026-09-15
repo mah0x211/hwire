@@ -47,8 +47,8 @@ static int parse_response_message(const char *buf, size_t len, size_t maxlen,
 }
 
 /*
- * MUST: leading CRLF/LF bytes count toward the cumulative message maxlen.
- * The terminating empty header line remains excluded from that budget.
+ * MUST: leading CRLF/LF bytes and the terminating empty header line count
+ * toward the cumulative message maxlen.
  */
 void test_leading_empty_lines_count_toward_maxlen(void)
 {
@@ -61,9 +61,9 @@ void test_leading_empty_lines_count_toward_maxlen(void)
         size_t counted_len;
     } cases[] = {
         {parse_request_message,  "\r\n\nGET / HTTP/1.1\r\nHost: x\r\n\r\n", 3,
-         28},
+         30},
         {parse_response_message, "\r\n\nHTTP/1.1 200 OK\r\nA: x\r\n\r\n",   3,
-         26},
+         28},
     };
 
     for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
@@ -89,9 +89,9 @@ void test_leading_empty_lines_count_toward_maxlen(void)
 }
 
 /*
- * MUST: input ending at or before maxlen remains retryable. If a byte exists
- * beyond a prefix that has exhausted maxlen, the parser returns HWIRE_ELEN
- * without examining that byte.
+ * MUST: input ending before maxlen remains retryable. Once a non-empty prefix
+ * exhausts maxlen, the parser returns HWIRE_ELEN without examining a later
+ * byte.
  */
 void test_leading_empty_lines_incomplete_boundaries(void)
 {
@@ -102,15 +102,19 @@ void test_leading_empty_lines_incomplete_boundaries(void)
         size_t maxlen;
         int expected;
     } cases[] = {
-        {"",        0, HWIRE_EAGAIN},
+        {"",        0, HWIRE_ELEN  },
         {"G",       0, HWIRE_ELEN  },
-        {"\n",      1, HWIRE_EAGAIN},
+        {"\n",      1, HWIRE_ELEN  },
+        {"\n",      2, HWIRE_EAGAIN},
         {"\nG",     1, HWIRE_ELEN  },
-        {"\r",      1, HWIRE_EAGAIN},
+        {"\r",      1, HWIRE_ELEN  },
+        {"\r",      2, HWIRE_EAGAIN},
         {"\r\n",    1, HWIRE_ELEN  },
-        {"\r\n",    2, HWIRE_EAGAIN},
+        {"\r\n",    2, HWIRE_ELEN  },
+        {"\r\n",    3, HWIRE_EAGAIN},
         {"\r\nG",   2, HWIRE_ELEN  },
-        {"\r\n\n",  3, HWIRE_EAGAIN},
+        {"\r\n\n",  3, HWIRE_ELEN  },
+        {"\r\n\n",  4, HWIRE_EAGAIN},
         {"\r\n\nG", 3, HWIRE_ELEN  },
     };
     static const parse_message_fn parsers[] = {
