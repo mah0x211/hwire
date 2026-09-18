@@ -229,41 +229,54 @@ static const unsigned char FCVCHAR[256] = {
 /**
  * @brief URI allowed characters (RFC 3986)
  *
- * unreserved / sub-delims / ":" / "@" / "/" / "?" / "%"
+ * Bit 0 marks path characters, bit 1 marks query characters, and bit 2 marks
+ * reg-name characters. Percent is a structural stop in every component;
+ * question mark is a stop only in paths.
+ *
+ * unreserved / sub-delims / ":" / "@" / "/" / "?"
  * unreserved = ALPHA / DIGIT / "-" / "." / "_" / "~"
  * sub-delims = "!" / "$" / "&" / "'" / "(" / ")" / "*" / "+" / "," / ";" / "="
  */
+enum {
+    URI_PATH_CHAR    = 1U,
+    URI_QUERY_CHAR   = 2U,
+    URI_REGNAME_CHAR = 4U
+};
+
 static const unsigned char URI_CHAR[256] = {
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // 0-15
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // 16-31
-    0, 1, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
-    1, // 32-47 ( ! # $ % & ' ( ) * + , - . / )
-    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 0, 1, // 48-63 ( 0-9 : ; < = > ? )
-    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, // 64-79 ( @ A-O )
-    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 1, // 80-95 ( P-Z [ \ ] ^ _ )
-    0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, // 96-111 ( ` a-o )
-    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 1,
+    0, 7, 0, 0, 7, 0, 7, 7, 7, 7, 7, 7, 7, 7, 7,
+    3, // 32-47 ( ! # $ % & ' ( ) * + , - . / )
+    7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 3, 7, 0, 7, 0, 2, // 48-63 ( 0-9 : ; < = > ? )
+    3, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, // 64-79 ( @ A-O )
+    7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 0, 0, 0, 0, 7, // 80-95 ( P-Z [ \ ] ^ _ )
+    0, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, // 96-111 ( ` a-o )
+    7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 0, 0, 0, 7,
     0, // 112-127 ( p-z { | } ~ DEL )
     // Extended ASCII (128-255) are NOT allowed in URI (must be unreserved)
     // Actually RFC 3986 says characters "not in the allowed set" must be
     // pct-encoded. So raw UTF-8 bytes > 127 are invalid in URI.
     0};
 
-static inline size_t strurichar_cmp(const unsigned char *str, size_t len)
+static inline size_t strurichar_cmp(const unsigned char *str, size_t len,
+                                    int is_query)
 {
-    size_t i = 0;
+    size_t i          = 0;
+    unsigned int mask = is_query ? URI_QUERY_CHAR : URI_PATH_CHAR;
 
     // Process 8 bytes at a time using bitwise OR (branchless)
     while (i + 8 <= len) {
-        int check = !URI_CHAR[str[i + 0]] | !URI_CHAR[str[i + 1]] |
-                    !URI_CHAR[str[i + 2]] | !URI_CHAR[str[i + 3]] |
-                    !URI_CHAR[str[i + 4]] | !URI_CHAR[str[i + 5]] |
-                    !URI_CHAR[str[i + 6]] | !URI_CHAR[str[i + 7]];
+        int check =
+            !(URI_CHAR[str[i + 0]] & mask) | !(URI_CHAR[str[i + 1]] & mask) |
+            !(URI_CHAR[str[i + 2]] & mask) | !(URI_CHAR[str[i + 3]] & mask) |
+            !(URI_CHAR[str[i + 4]] & mask) | !(URI_CHAR[str[i + 5]] & mask) |
+            !(URI_CHAR[str[i + 6]] & mask) | !(URI_CHAR[str[i + 7]] & mask);
 
         if (check) {
             // Find exact position of invalid character
             for (size_t j = 0; j < 8; j++) {
-                if (!URI_CHAR[str[i + j]]) {
+                if (!(URI_CHAR[str[i + j]] & mask)) {
                     return i + j;
                 }
             }
@@ -273,7 +286,7 @@ static inline size_t strurichar_cmp(const unsigned char *str, size_t len)
 
     // Handle remaining bytes
     while (i < len) {
-        if (!URI_CHAR[str[i]]) {
+        if (!(URI_CHAR[str[i]] & mask)) {
             return i;
         }
         i++;
@@ -282,12 +295,13 @@ static inline size_t strurichar_cmp(const unsigned char *str, size_t len)
 }
 
 /**
- * @brief Count consecutive URI characters (scalar reference)
+ * @brief Count consecutive URI path or query characters (scalar reference)
  *
  * Returns the number of consecutive bytes from the beginning of str that
- * belong to the URI_CHAR whitelist. SIMD implementations (strurichar_sse2,
- * strurichar_sse42, strurichar_neon) must return identical results; the
- * whitelist is defined by URI_CHAR above.
+ * belong to the component whitelist. Percent and, for a path, question mark
+ * are returned to the structural parser so it can validate pct-encoded and
+ * split the query without a second scan. SIMD implementations must return
+ * identical stop positions.
  */
 
 /**
@@ -383,53 +397,6 @@ static const unsigned char HEXDIGIT[256] = {
  * @name Internal Character Validation Functions
  * @{
  */
-
-/**
- * @brief Convert hexadecimal string to size_t
- *
- * Converts hexadecimal digits starting at `*ustr` to a size_t value. Updates
- * `ustr` to point to the first non-hexadecimal character.
- *
- * @param ustr Input: start pointer, Output: first non-hex character
- * @param tail Absolute exclusive scan tail
- * @param maxsize Maximum allowed value; returns HWIRE_ERANGE if exceeded
- * @return Converted value on success (0 if no hex digits found)
- * @return HWIRE_ERANGE if value exceeds maxsize (HWIRE_MAX_CHUNKSIZE =
- * UINT32_MAX)
- *
- * @note This function is used by hwire_parse_chunksize to parse the chunk-size
- * field.
- * @note HEXDIGIT table is used for fast digit lookup (1-16 for valid hex
- * digits).
- */
-static int64_t hex2size(const unsigned char **ustr, const unsigned char *tail,
-                        uint32_t maxsize)
-{
-    assert(ustr != NULL && *ustr != NULL);
-    const unsigned char *str = *ustr;
-    int64_t dec              = 0;
-
-    // hex to decimal
-    while (str < tail) {
-        unsigned char c = HEXDIGIT[*str++];
-        if (!c) {
-            // found non hexdigit
-            *ustr = str - 1;
-            return dec;
-        }
-        // accumulate digit
-        dec = (dec << 4) | (c - 1);
-
-        if (dec > (int64_t)maxsize) {
-            // result too large: exceeds maxsize (HWIRE_MAX_CHUNKSIZE =
-            // UINT32_MAX)
-            return HWIRE_ERANGE;
-        }
-    }
-
-    *ustr = str;
-    return dec;
-}
 
 /**
  * @brief Check if character is a valid tchar (token character)
@@ -642,42 +609,6 @@ static inline size_t strtchar(const unsigned char *str, size_t len,
     return strtchar_cmp(str, len);
 }
 
-/**
- * @brief Skip whitespace characters (SP and HT)
- *
- * Skips spaces (SP) and horizontal tabs (HT) in the input string, up to the
- * specified maximum length.
- *
- * @param ustr Input: current pointer; Output: first non-whitespace pointer
- * @param tail Exclusive scan tail
- *
- * @note This function is used to skip BWS (Bad Whitespace) in chunk-size
- * parsing.
- * @note Only SP and HT are considered whitespace (per RFC 7230).
- */
-static inline void skip_ws(const unsigned char **ustr,
-                           const unsigned char *tail)
-{
-    assert(ustr != NULL && *ustr != NULL);
-    const unsigned char *str = *ustr;
-
-    // skip SP and HT
-    while (str < tail) {
-        switch (*str++) {
-        case SP:
-        case HT:
-            continue;
-
-        default:
-            // stopped at non-whitespace
-            *ustr = str - 1;
-            return;
-        }
-    }
-    // update position
-    *ustr = str;
-}
-
 // strvchar_cmp: Compare characters in str against VCHAR set, with optional
 // field-vchar support. Returns the number of valid characters from the start of
 // str.
@@ -798,12 +729,12 @@ static inline size_t strvchar_neon(const unsigned char *str, size_t len,
 
 // strurichar_neon: NEON optimized implementation (16 bytes)
 //
-// Algorithm: Whitelist approach mirroring URI_CHAR — a byte is valid iff
-// 0x21 <= c <= 0x7E and c is not one of the excluded bytes
-// { 0x22-0x23, 0x3C, 0x3E, 0x5B-0x5E, 0x60, 0x7B-0x7D }.
+// Algorithm: Whitelist approach mirroring URI_CHAR, with percent returned for
+// pct-encoded validation and question mark returned as a path delimiter.
 // Each result lane is 0xFF (invalid) or 0x00 (valid); the first invalid
 // byte is located via the same two-lane ctz64 extraction as strvchar_neon.
-static inline size_t strurichar_neon(const unsigned char *str, size_t len)
+static inline size_t strurichar_neon(const unsigned char *str, size_t len,
+                                     int is_query)
 {
     size_t pos                = 0;
     const uint8x16_t first_ok = vdupq_n_u8(0x21);
@@ -830,7 +761,11 @@ static inline size_t strurichar_neon(const unsigned char *str, size_t len)
                                        vceqq_u8(data, vdupq_n_u8(0x3E))),
                               vceqq_u8(data, vdupq_n_u8(0x60)))));
 
-        uint8x16_t is_invalid = vorrq_u8(is_out, is_excl);
+        uint8x16_t is_pct   = vceqq_u8(data, vdupq_n_u8('%'));
+        uint8x16_t is_qmark = vandq_u8(vceqq_u8(data, vdupq_n_u8('?')),
+                                       vdupq_n_u8((uint8_t)-(is_query == 0)));
+        uint8x16_t is_invalid =
+            vorrq_u8(vorrq_u8(is_out, is_excl), vorrq_u8(is_pct, is_qmark));
 
         uint64x2_t qdata = vreinterpretq_u64_u8(is_invalid);
         uint64_t mask1   = vgetq_lane_u64(qdata, 0);
@@ -845,7 +780,7 @@ static inline size_t strurichar_neon(const unsigned char *str, size_t len)
     }
 
     // Fall back for remaining bytes (< 16 bytes)
-    return pos + strurichar_cmp(str + pos, len - pos);
+    return pos + strurichar_cmp(str + pos, len - pos, is_query);
 }
 
 #endif
@@ -944,12 +879,12 @@ static inline __m128i in_range_sse2(__m128i data_shifted, int lo, int hi)
 
 // strurichar_sse2: SSE2 optimized implementation (16 bytes)
 //
-// Algorithm: Whitelist approach mirroring URI_CHAR — a byte is valid iff
-// 0x21 <= c <= 0x7E and c is not one of the excluded bytes
-// { 0x22-0x23, 0x3C, 0x3E, 0x5B-0x5E, 0x60, 0x7B-0x7D }.
+// Algorithm: Whitelist approach mirroring URI_CHAR, with percent returned for
+// pct-encoded validation and question mark returned as a path delimiter.
 // Unsigned range tests use the sign-flip (XOR 0x80) technique documented in
 // strvchar_sse2. The first invalid byte is located via movemask + ctz32.
-static inline size_t strurichar_sse2(const unsigned char *str, size_t len)
+static inline size_t strurichar_sse2(const unsigned char *str, size_t len,
+                                     int is_query)
 {
     size_t pos              = 0;
     const __m128i sign_flip = _mm_set1_epi8(SIMD_SIGN_FLIP);
@@ -978,6 +913,11 @@ static inline size_t strurichar_sse2(const unsigned char *str, size_t len)
                     in_range_sse2(data_shifted, 0x22, 0x23),
                     _mm_or_si128(in_range_sse2(data_shifted, 0x5B, 0x5E),
                                  in_range_sse2(data_shifted, 0x7B, 0x7D)))));
+        __m128i is_pct = _mm_cmpeq_epi8(data, _mm_set1_epi8('%'));
+        __m128i is_qmark =
+            _mm_and_si128(_mm_cmpeq_epi8(data, _mm_set1_epi8('?')),
+                          _mm_set1_epi8((char)-(is_query == 0)));
+        is_invalid = _mm_or_si128(is_invalid, _mm_or_si128(is_pct, is_qmark));
 
         int mask = _mm_movemask_epi8(is_invalid);
         if (mask) {
@@ -986,7 +926,7 @@ static inline size_t strurichar_sse2(const unsigned char *str, size_t len)
         pos += 16;
     }
 
-    return pos + strurichar_cmp(str + pos, len - pos);
+    return pos + strurichar_cmp(str + pos, len - pos, is_query);
 }
 
 # endif /* !defined(__SSE4_2__) */
@@ -1051,26 +991,29 @@ static inline size_t strvchar_sse42(const unsigned char *str, size_t len,
 
 // strurichar_sse42: SSE4.2 optimized implementation using PCMPESTRI
 //
-// Algorithm: Whitelist approach — the URI_CHAR whitelist decomposes into
-// 7 ranges (0x21, 0x24-0x3B, 0x3D, 0x3F-0x5A, 0x5F, 0x61-0x7A, 0x7E = 14
-// bytes of range data, within the 8-range PCMPESTRI limit). Negative
-// polarity inverts the per-byte result so the instruction returns the
-// index of the first byte NOT in any allowed range (= first invalid byte).
-static inline size_t strurichar_sse42(const unsigned char *str, size_t len)
+// Algorithm: Path and query whitelists each decompose into eight ranges.
+// Percent is excluded so the structural parser can validate its two hex
+// digits; question mark is excluded only from the path ranges.
+static inline size_t strurichar_sse42(const unsigned char *str, size_t len,
+                                      int is_query)
 {
     size_t pos = 0;
-    static const char ALIGNED(16) URI_RANGES[16] =
-        "\x21\x21\x24\x3b\x3d\x3d\x3f\x5a\x5f\x5f\x61\x7a\x7e\x7e";
+    static const char ALIGNED(16) PATH_RANGES[16] =
+        "\x21\x21\x24\x24\x26\x3b\x3d\x3d"
+        "\x40\x5a\x5f\x5f\x61\x7a\x7e\x7e";
+    static const char ALIGNED(16) QUERY_RANGES[16] =
+        "\x21\x21\x24\x24\x26\x3b\x3d\x3d"
+        "\x3f\x5a\x5f\x5f\x61\x7a\x7e\x7e";
 
-    const __m128i ranges =
-        _mm_loadu_si128((const __m128i *)(const void *)URI_RANGES);
+    const __m128i ranges = _mm_loadu_si128(
+        (const __m128i *)(const void *)(is_query ? QUERY_RANGES : PATH_RANGES));
 
     while (pos + 16 <= len) {
         __m128i data =
             _mm_loadu_si128((const __m128i *)(const void *)(str + pos));
 
         int idx =
-            _mm_cmpestri(ranges, 14, data, 16,
+            _mm_cmpestri(ranges, 16, data, 16,
                          _SIDD_LEAST_SIGNIFICANT | _SIDD_CMP_RANGES |
                              _SIDD_UBYTE_OPS | _SIDD_MASKED_NEGATIVE_POLARITY);
         if (idx != 16) {
@@ -1079,7 +1022,7 @@ static inline size_t strurichar_sse42(const unsigned char *str, size_t len)
         pos += 16;
     }
 
-    return pos + strurichar_cmp(str + pos, len - pos);
+    return pos + strurichar_cmp(str + pos, len - pos, is_query);
 }
 
 #endif
@@ -1111,25 +1054,25 @@ static inline size_t strvchar(const unsigned char *str, size_t len)
     return strvchar_cmp(str, len, 0, &endc);
 }
 
-// strurichar: count consecutive URI characters (RFC 3986 whitelist).
-// Dispatches to the SIMD implementation for len >= 16. AVX2 builds
-// define __SSE4_2__ and therefore take the SSE4.2 path as well.
-static inline size_t strurichar(const unsigned char *str, size_t len)
+// strurichar: count consecutive RFC 3986 path/query characters, stopping at
+// percent and path/query delimiters needed by the structural parser.
+static inline size_t strurichar(const unsigned char *str, size_t len,
+                                int is_query)
 {
 #if defined(__SSE4_2__)
     if (likely(len >= 16)) {
-        return strurichar_sse42(str, len);
+        return strurichar_sse42(str, len, is_query);
     }
 #elif defined(__SSE2__)
     if (likely(len >= 16)) {
-        return strurichar_sse2(str, len);
+        return strurichar_sse2(str, len, is_query);
     }
 #elif defined(__aarch64__) || (defined(__arm__) && defined(__ARM_NEON))
     if (likely(len >= 16)) {
-        return strurichar_neon(str, len);
+        return strurichar_neon(str, len, is_query);
     }
 #endif
-    return strurichar_cmp(str, len);
+    return strurichar_cmp(str, len, is_query);
 }
 
 static inline size_t strfcchar(const unsigned char *str, size_t len,
@@ -1469,6 +1412,42 @@ static int parse_parameter(const unsigned char **ustr,
 }
 
 /**
+ * @brief Skip whitespace characters (SP and HT)
+ *
+ * Skips spaces (SP) and horizontal tabs (HT) in the input string, up to the
+ * specified maximum length.
+ *
+ * @param ustr Input: current pointer; Output: first non-whitespace pointer
+ * @param tail Exclusive scan tail
+ *
+ * @note This function is used to skip BWS (Bad Whitespace) in chunk-size
+ * parsing.
+ * @note Only SP and HT are considered whitespace (per RFC 7230).
+ */
+static inline void skip_ws(const unsigned char **ustr,
+                           const unsigned char *tail)
+{
+    assert(ustr != NULL && *ustr != NULL);
+    const unsigned char *str = *ustr;
+
+    // skip SP and HT
+    while (str < tail) {
+        switch (*str++) {
+        case SP:
+        case HT:
+            continue;
+
+        default:
+            // stopped at non-whitespace
+            *ustr = str - 1;
+            return;
+        }
+    }
+    // update position
+    *ustr = str;
+}
+
+/**
  * @brief Parse parameters from a semicolon-separated list
  *
  * Parses parameters from a semicolon-separated list.
@@ -1586,6 +1565,53 @@ CHECK_PARAM:
 
     // propagate error from parse_parameter
     return rv;
+}
+
+/**
+ * @brief Convert hexadecimal string to size_t
+ *
+ * Converts hexadecimal digits starting at `*ustr` to a size_t value. Updates
+ * `ustr` to point to the first non-hexadecimal character.
+ *
+ * @param ustr Input: start pointer, Output: first non-hex character
+ * @param tail Absolute exclusive scan tail
+ * @param maxsize Maximum allowed value; returns HWIRE_ERANGE if exceeded
+ * @return Converted value on success (0 if no hex digits found)
+ * @return HWIRE_ERANGE if value exceeds maxsize (HWIRE_MAX_CHUNKSIZE =
+ * UINT32_MAX)
+ *
+ * @note This function is used by hwire_parse_chunksize to parse the chunk-size
+ * field.
+ * @note HEXDIGIT table is used for fast digit lookup (1-16 for valid hex
+ * digits).
+ */
+static int64_t hex2size(const unsigned char **ustr, const unsigned char *tail,
+                        uint32_t maxsize)
+{
+    assert(ustr != NULL && *ustr != NULL);
+    const unsigned char *str = *ustr;
+    int64_t dec              = 0;
+
+    // hex to decimal
+    while (str < tail) {
+        unsigned char c = HEXDIGIT[*str++];
+        if (!c) {
+            // found non hexdigit
+            *ustr = str - 1;
+            return dec;
+        }
+        // accumulate digit
+        dec = (dec << 4) | (c - 1);
+
+        if (dec > (int64_t)maxsize) {
+            // result too large: exceeds maxsize (HWIRE_MAX_CHUNKSIZE =
+            // UINT32_MAX)
+            return HWIRE_ERANGE;
+        }
+    }
+
+    *ustr = str;
+    return dec;
 }
 
 /** @} */ /* end of String Parsing Functions */
@@ -2075,6 +2101,675 @@ int hwire_parse_headers(hwire_ctx_t *ctx, const char *str, size_t len,
  * @{
  */
 
+static inline int uri_is_alpha(unsigned char c)
+{
+    return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
+}
+
+static inline int uri_is_digit(unsigned char c)
+{
+    return c >= '0' && c <= '9';
+}
+
+static inline int uri_is_unreserved(unsigned char c)
+{
+    return uri_is_alpha(c) || uri_is_digit(c) || c == '-' || c == '.' ||
+           c == '_' || c == '~';
+}
+
+static inline int uri_is_sub_delim(unsigned char c)
+{
+    return c == '!' || c == '$' || c == '&' || c == '\'' || c == '(' ||
+           c == ')' || c == '*' || c == '+' || c == ',' || c == ';' || c == '=';
+}
+
+static inline int uri_incomplete(const unsigned char *head,
+                                 const unsigned char *tail, size_t maxlen)
+{
+    return ((size_t)(tail - head) >= maxlen) ? HWIRE_ELEN : HWIRE_EAGAIN;
+}
+
+static inline int parse_pct_encoded(const unsigned char **ustr,
+                                    const unsigned char *head,
+                                    const unsigned char *tail, size_t maxlen)
+{
+    const unsigned char *str = *ustr;
+
+    if (tail - str < 3) {
+        return uri_incomplete(head, tail, maxlen);
+    } else if (HEXDIGIT[str[1]] == 0 || HEXDIGIT[str[2]] == 0) {
+        return HWIRE_EURI;
+    }
+    *ustr = str + 3;
+    return HWIRE_OK;
+}
+
+// Parse query content starting after '?' and consume the trailing SP.
+static int parse_query(const unsigned char **ustr, const unsigned char *head,
+                       const unsigned char *tail, size_t maxlen,
+                       hwire_str_t *query)
+{
+    const unsigned char *pstr = *ustr;
+    const unsigned char *str  = pstr;
+    int rv                    = 0;
+
+    query->ptr = (const char *)pstr;
+    while (str < tail) {
+        str += strurichar(str, (size_t)(tail - str), 1);
+        if (str == tail) {
+            return uri_incomplete(head, tail, maxlen);
+        } else if (*str == '%') {
+            rv = parse_pct_encoded(&str, head, tail, maxlen);
+            if (rv != HWIRE_OK) {
+                return rv;
+            }
+        } else if (*str == SP) {
+            goto QUERY_END;
+        } else {
+            return HWIRE_EURI;
+        }
+    }
+
+    return uri_incomplete(head, tail, maxlen);
+
+QUERY_END:
+    query->len = (size_t)(str - pstr);
+    *ustr      = str + 1;
+    return HWIRE_OK;
+}
+
+static int parse_path_query(const unsigned char **ustr,
+                            const unsigned char *head,
+                            const unsigned char *tail, size_t maxlen,
+                            hwire_str_t *path, hwire_str_t *query)
+{
+    const unsigned char *pstr = *ustr;
+    const unsigned char *str  = pstr;
+    int rv                    = 0;
+
+    while (str < tail) {
+        str += strurichar(str, (size_t)(tail - str), 0);
+        if (str == tail) {
+            return uri_incomplete(head, tail, maxlen);
+        } else if (*str == '%') {
+            rv = parse_pct_encoded(&str, head, tail, maxlen);
+            if (rv != HWIRE_OK) {
+                return rv;
+            }
+        } else if (*str == '?' || *str == SP) {
+            goto PATH_END;
+        } else {
+            return HWIRE_EURI;
+        }
+    }
+
+    return uri_incomplete(head, tail, maxlen);
+
+PATH_END:
+    path->ptr = (const char *)pstr;
+    path->len = (size_t)(str - pstr);
+    if (*str == SP) {
+        *query = (hwire_str_t){0};
+        *ustr  = str + 1;
+        return HWIRE_OK;
+    }
+    *ustr = str + 1;
+    return parse_query(ustr, head, tail, maxlen, query);
+}
+
+// Parse IPv4address and leave ustr at the byte after its fourth dec-octet.
+static int parse_ip_v4(const unsigned char **ustr, const unsigned char *head,
+                       const unsigned char *tail, size_t maxlen)
+{
+    const unsigned char *str = *ustr;
+
+    for (size_t part = 0; part < 4; part++) {
+        const unsigned char *pstr = str;
+        size_t digits             = 0;
+        unsigned int value        = 0;
+
+        while (str < tail && uri_is_digit(*str)) {
+            if (++digits > 3) {
+                return HWIRE_EURI;
+            }
+            value = value * 10U + (unsigned int)(*str - '0');
+            str++;
+        }
+
+        if (value > 255U || (digits > 1 && *pstr == '0')) {
+            return HWIRE_EURI;
+        } else if (part == 3 && digits != 0) {
+            *ustr = str;
+            return HWIRE_OK;
+        } else if (str >= tail) {
+            return uri_incomplete(head, tail, maxlen);
+        } else if (digits == 0 || *str != '.') {
+            return HWIRE_EURI;
+        }
+        str++;
+    }
+    return HWIRE_EURI;
+}
+
+static int parse_ip_v6(const unsigned char **ustr, const unsigned char *head,
+                       const unsigned char *tail, size_t maxlen)
+{
+    const unsigned char *str         = *ustr;
+    const unsigned char *group_start = NULL;
+    size_t groups                    = 0;
+    size_t digits                    = 0;
+    unsigned char c                  = 0;
+    int compressed                   = 0;
+    int rv                           = 0;
+
+#define CHECK_LEN()                                                            \
+    do {                                                                       \
+        if (str >= tail) {                                                     \
+            return uri_incomplete(head, tail, maxlen);                         \
+        }                                                                      \
+    } while (0)
+
+    c = *str;
+    if (c == ':') {
+        str++;
+        CHECK_LEN();
+        if (*str != ':') {
+            return HWIRE_EURI;
+        }
+        str++;
+        compressed = 1;
+    }
+
+IPV6_GROUP_START:
+    CHECK_LEN();
+    if (*str == ']') {
+        if (!compressed || groups >= 8) {
+            return HWIRE_EURI;
+        }
+        goto IPV6_END;
+    }
+    group_start = str;
+    digits      = 0;
+
+IPV6_GROUP:
+    CHECK_LEN();
+    c = *str;
+    if (HEXDIGIT[c] != 0) {
+        if (++digits > 4) {
+            return HWIRE_EURI;
+        }
+        str++;
+        goto IPV6_GROUP;
+    } else if (c == '.') {
+        if (groups > 6) {
+            return HWIRE_EURI;
+        }
+        str = group_start;
+        rv  = parse_ip_v4(&str, head, tail, maxlen);
+        if (rv != HWIRE_OK) {
+            return rv;
+        }
+        CHECK_LEN();
+        if (*str != ']') {
+            return HWIRE_EURI;
+        }
+        groups += 2;
+        if ((!compressed && groups != 8) || (compressed && groups >= 8)) {
+            return HWIRE_EURI;
+        }
+        goto IPV6_END;
+    } else if (digits == 0) {
+        return HWIRE_EURI;
+    }
+    groups++;
+    if (groups > 8) {
+        return HWIRE_EURI;
+    } else if (c == ']') {
+        if ((!compressed && groups != 8) || (compressed && groups >= 8)) {
+            return HWIRE_EURI;
+        }
+        goto IPV6_END;
+    } else if (c != ':') {
+        return HWIRE_EURI;
+    }
+    str++;
+    CHECK_LEN();
+    if (*str == ':') {
+        if (compressed) {
+            return HWIRE_EURI;
+        }
+        compressed = 1;
+        str++;
+    }
+    goto IPV6_GROUP_START;
+
+IPV6_END:
+    *ustr = str;
+    return HWIRE_OK;
+
+#undef CHECK_LEN
+}
+
+static int parse_ip_vfuture(const unsigned char **ustr,
+                            const unsigned char *head,
+                            const unsigned char *tail, size_t maxlen)
+{
+    const unsigned char *str           = *ustr;
+    const unsigned char *version_start = str;
+    const unsigned char *value_start   = NULL;
+    unsigned char c                    = 0;
+
+    while (str < tail && HEXDIGIT[*str] != 0) {
+        str++;
+    }
+    if (str == tail) {
+        return uri_incomplete(head, tail, maxlen);
+    } else if (str == version_start || *str != '.') {
+        return HWIRE_EURI;
+    }
+    str++;
+    value_start = str;
+
+    while (str < tail) {
+        c = *str;
+        if (c == ']') {
+            if (str == value_start) {
+                return HWIRE_EURI;
+            }
+            *ustr = str;
+            return HWIRE_OK;
+        } else if (!uri_is_unreserved(c) && !uri_is_sub_delim(c) && c != ':') {
+            return HWIRE_EURI;
+        }
+        str++;
+    }
+    return uri_incomplete(head, tail, maxlen);
+}
+
+// Parse IP-literal content starting after '[' and leave ustr after ']'.
+static int parse_ip_literal(const unsigned char **ustr,
+                            const unsigned char *head,
+                            const unsigned char *tail, size_t maxlen)
+{
+    const unsigned char *str = *ustr;
+    int rv                   = 0;
+
+    if (str >= tail) {
+        return uri_incomplete(head, tail, maxlen);
+    } else if (*str == 'v' || *str == 'V') {
+        str++;
+        rv = parse_ip_vfuture(&str, head, tail, maxlen);
+    } else {
+        rv = parse_ip_v6(&str, head, tail, maxlen);
+    }
+
+    if (rv != HWIRE_OK) {
+        return rv;
+    }
+    *ustr = str + 1;
+    return HWIRE_OK;
+}
+
+static int parse_authority_form(const unsigned char **ustr,
+                                const unsigned char *head,
+                                const unsigned char *tail, size_t maxlen,
+                                hwire_request_t *req)
+{
+    const unsigned char *str        = *ustr;
+    const unsigned char *host_start = str;
+    const unsigned char *host_end   = NULL;
+    const unsigned char *port_start = NULL;
+    unsigned char c                 = 0;
+    int rv                          = 0;
+
+    if (str >= tail) {
+        return uri_incomplete(head, tail, maxlen);
+    } else if (*str == '[') {
+        str++;
+        rv = parse_ip_literal(&str, head, tail, maxlen);
+        if (rv != HWIRE_OK) {
+            return rv;
+        }
+        host_end = str;
+        if (str >= tail) {
+            return uri_incomplete(head, tail, maxlen);
+        } else if (*str != ':') {
+            return HWIRE_EURI;
+        }
+        str++;
+        goto PORT_FIRST;
+    }
+
+REG_NAME:
+    if (str >= tail) {
+        return uri_incomplete(head, tail, maxlen);
+    }
+    c = *str;
+    if (likely(URI_CHAR[c] & URI_REGNAME_CHAR)) {
+        str++;
+        goto REG_NAME;
+    } else if (c == '%') {
+        rv = parse_pct_encoded(&str, head, tail, maxlen);
+        if (rv != HWIRE_OK) {
+            return rv;
+        }
+        goto REG_NAME;
+    } else if (c != ':' || str == host_start) {
+        return HWIRE_EURI;
+    }
+    host_end = str;
+    str++;
+    goto PORT_FIRST;
+
+PORT_FIRST:
+    if (str >= tail) {
+        return uri_incomplete(head, tail, maxlen);
+    } else if (!uri_is_digit(*str)) {
+        return HWIRE_EURI;
+    }
+    port_start = str;
+
+PORT:
+    str++;
+    if (str >= tail) {
+        return uri_incomplete(head, tail, maxlen);
+    } else if (uri_is_digit(*str)) {
+        goto PORT;
+    } else if (*str != SP) {
+        return HWIRE_EURI;
+    }
+
+    req->uri.ptr  = (const char *)host_start;
+    req->uri.len  = (size_t)(str - host_start);
+    req->uri_type = HWIRE_AUTHORITY_URI;
+    req->host.ptr = (const char *)host_start;
+    req->host.len = (size_t)(host_end - host_start);
+    req->port.ptr = (const char *)port_start;
+    req->port.len = (size_t)(str - port_start);
+    req->scheme   = (hwire_str_t){0};
+    req->userinfo = (hwire_str_t){0};
+    req->path     = (hwire_str_t){0};
+    req->query    = (hwire_str_t){0};
+    *ustr         = str + 1;
+    return HWIRE_OK;
+}
+
+static int parse_origin_form(const unsigned char **ustr,
+                             const unsigned char *head,
+                             const unsigned char *tail, size_t maxlen,
+                             hwire_request_t *req)
+{
+    const unsigned char *pstr = *ustr;
+    int rv =
+        parse_path_query(ustr, head, tail, maxlen, &req->path, &req->query);
+
+    if (rv != HWIRE_OK) {
+        return rv;
+    }
+    req->uri.ptr  = (const char *)pstr;
+    req->uri.len  = (size_t)(*ustr - pstr - 1);
+    req->uri_type = HWIRE_ORIGIN_URI;
+    req->scheme   = (hwire_str_t){0};
+    req->userinfo = (hwire_str_t){0};
+    req->host     = (hwire_str_t){0};
+    req->port     = (hwire_str_t){0};
+    return HWIRE_OK;
+}
+
+static int parse_uri_authority(const unsigned char **ustr,
+                               const unsigned char *head,
+                               const unsigned char *tail, size_t maxlen,
+                               hwire_request_t *req)
+{
+    const unsigned char *pstr       = *ustr;
+    const unsigned char *str        = pstr;
+    const unsigned char *host_start = pstr;
+    const unsigned char *host_end   = NULL;
+    const unsigned char *port_start = NULL;
+    unsigned char c                 = 0;
+    int has_userinfo                = 0;
+    int port_valid                  = 1;
+    int rv                          = 0;
+
+AUTHORITY_START:
+    host_start = str;
+    host_end   = NULL;
+    port_start = NULL;
+    port_valid = 1;
+    if (str >= tail) {
+        return uri_incomplete(head, tail, maxlen);
+    } else if (*str == '[') {
+        str++;
+        rv = parse_ip_literal(&str, head, tail, maxlen);
+        if (rv != HWIRE_OK) {
+            return rv;
+        }
+        host_end = str;
+        goto IP_LITERAL_END;
+    }
+
+    // Before '@', a colon and its suffix remain a provisional port because
+    // colon is also valid in userinfo. A raw '@' restarts this loop at host.
+AUTHORITY_COMPONENT:
+    if (str >= tail) {
+        return uri_incomplete(head, tail, maxlen);
+    }
+    c = *str;
+    if (likely(URI_CHAR[c] & URI_REGNAME_CHAR)) {
+        if (port_start != NULL && !uri_is_digit(c)) {
+            port_valid = 0;
+        }
+        str++;
+        goto AUTHORITY_COMPONENT;
+    } else if (c == '%') {
+        if (port_start != NULL) {
+            port_valid = 0;
+        }
+        rv = parse_pct_encoded(&str, head, tail, maxlen);
+        if (rv != HWIRE_OK) {
+            return rv;
+        }
+        goto AUTHORITY_COMPONENT;
+    } else if (c == ':') {
+        if (port_start == NULL) {
+            host_end   = str;
+            port_start = str + 1;
+        } else {
+            port_valid = 0;
+        }
+        str++;
+        goto AUTHORITY_COMPONENT;
+    } else if (c == '@') {
+        if (has_userinfo) {
+            return HWIRE_EURI;
+        }
+        req->userinfo.ptr = (const char *)pstr;
+        req->userinfo.len = (size_t)(str - pstr);
+        has_userinfo      = 1;
+        str++;
+        goto AUTHORITY_START;
+    } else if (c == '/' || c == '?' || c == SP) {
+        if (!port_valid) {
+            return HWIRE_EURI;
+        } else if (host_end == NULL) {
+            host_end = str;
+        }
+        goto AUTHORITY_END;
+    }
+    return HWIRE_EURI;
+
+IP_LITERAL_END:
+    if (str >= tail) {
+        return uri_incomplete(head, tail, maxlen);
+    }
+    c = *str;
+    if (c == ':') {
+        port_start = ++str;
+        goto IP_LITERAL_PORT;
+    } else if (c != '/' && c != '?' && c != SP) {
+        return HWIRE_EURI;
+    }
+    goto AUTHORITY_END;
+
+IP_LITERAL_PORT:
+    if (str >= tail) {
+        return uri_incomplete(head, tail, maxlen);
+    }
+    c = *str;
+    if (uri_is_digit(c)) {
+        str++;
+        goto IP_LITERAL_PORT;
+    } else if (c != '/' && c != '?' && c != SP) {
+        return HWIRE_EURI;
+    }
+
+AUTHORITY_END:
+    if (port_start != NULL) {
+        req->port.ptr = (const char *)port_start;
+        req->port.len = (size_t)(str - port_start);
+    } else {
+        req->port = (hwire_str_t){0};
+    }
+    if (!has_userinfo) {
+        req->userinfo = (hwire_str_t){0};
+    }
+    req->host.ptr = (const char *)host_start;
+    req->host.len = (size_t)(host_end - host_start);
+    *ustr         = str;
+    return HWIRE_OK;
+}
+
+// Parse an RFC 3986 scheme and leave ustr at the byte after its colon.
+static int parse_uri_scheme(const unsigned char **ustr,
+                            const unsigned char *head,
+                            const unsigned char *tail, size_t maxlen,
+                            hwire_str_t *scheme)
+{
+    const unsigned char *pstr = *ustr;
+    const unsigned char *str  = pstr;
+
+    if (tail - str < 2) {
+        return uri_incomplete(head, tail, maxlen);
+    } else if (!uri_is_alpha(*str)) {
+        return HWIRE_EURI;
+    }
+    str++;
+
+    while (*str != ':') {
+        if (!uri_is_alpha(*str) && !uri_is_digit(*str) && *str != '+' &&
+            *str != '-' && *str != '.') {
+            return HWIRE_EURI;
+        }
+        str++;
+        if (str >= tail) {
+            return uri_incomplete(head, tail, maxlen);
+        }
+    }
+    scheme->ptr = (const char *)pstr;
+    scheme->len = (size_t)(str - pstr);
+    *ustr       = str + 1;
+    return HWIRE_OK;
+}
+
+static int parse_absolute_form(const unsigned char **ustr,
+                               const unsigned char *head,
+                               const unsigned char *tail, size_t maxlen,
+                               hwire_request_t *req)
+{
+    const unsigned char *pstr = *ustr;
+    const unsigned char *str  = pstr;
+    int has_authority         = 0;
+    int rv = parse_uri_scheme(&str, head, tail, maxlen, &req->scheme);
+
+    if (rv != HWIRE_OK) {
+        return rv;
+    } else if (str >= tail) {
+        return uri_incomplete(head, tail, maxlen);
+    } else if (*str == '/') {
+        if (tail - str < 2) {
+            return uri_incomplete(head, tail, maxlen);
+        } else if (str[1] == '/') {
+            str += 2;
+            rv = parse_uri_authority(&str, head, tail, maxlen, req);
+            if (rv != HWIRE_OK) {
+                return rv;
+            }
+            has_authority = 1;
+        }
+    }
+
+    rv = parse_path_query(&str, head, tail, maxlen, &req->path, &req->query);
+    if (rv != HWIRE_OK) {
+        return rv;
+    }
+    req->uri.ptr  = (const char *)pstr;
+    req->uri.len  = (size_t)(str - pstr - 1);
+    req->uri_type = HWIRE_ABSOLUTE_URI;
+    if (!has_authority) {
+        req->userinfo = (hwire_str_t){0};
+        req->host     = (hwire_str_t){0};
+        req->port     = (hwire_str_t){0};
+    }
+    *ustr = str;
+    return HWIRE_OK;
+}
+
+static inline int method_is(const hwire_str_t *method, const char *name,
+                            size_t namelen)
+{
+    return method->len == namelen && memcmp(method->ptr, name, namelen) == 0;
+}
+
+static int parse_asterisk_form(const unsigned char **ustr, hwire_request_t *req)
+{
+    const unsigned char *str = *ustr;
+
+    if (!method_is(&req->method, "OPTIONS", 7)) {
+        return HWIRE_EURI;
+    }
+    req->uri.ptr  = (const char *)str;
+    req->uri.len  = 1;
+    req->uri_type = HWIRE_ASTERISK_URI;
+    req->path     = (hwire_str_t){0};
+    req->query    = (hwire_str_t){0};
+    req->scheme   = (hwire_str_t){0};
+    req->userinfo = (hwire_str_t){0};
+    req->host     = (hwire_str_t){0};
+    req->port     = (hwire_str_t){0};
+    *ustr         = str + 2;
+    return HWIRE_OK;
+}
+
+/**
+ * @brief Parse and decompose an RFC 9112 request-target
+ */
+static int parse_uri(const unsigned char **ustr, const unsigned char *head,
+                     const unsigned char *tail, size_t maxlen,
+                     hwire_request_t *req)
+{
+    const unsigned char *str = *ustr;
+
+    if (str >= tail) {
+        return uri_incomplete(head, tail, maxlen);
+    }
+
+    if (*str == '*') {
+        if (tail - str < 2) {
+            return uri_incomplete(head, tail, maxlen);
+        } else if (str[1] == SP) {
+            return parse_asterisk_form(ustr, req);
+        } else if (!method_is(&req->method, "CONNECT", 7)) {
+            return HWIRE_EURI;
+        }
+        return parse_authority_form(ustr, head, tail, maxlen, req);
+    } else if (method_is(&req->method, "CONNECT", 7)) {
+        return parse_authority_form(ustr, head, tail, maxlen, req);
+    } else if (*str == '/') {
+        return parse_origin_form(ustr, head, tail, maxlen, req);
+    }
+    return parse_absolute_form(ustr, head, tail, maxlen, req);
+}
+
 /**
  * @brief Parse HTTP version string
  *
@@ -2111,46 +2806,6 @@ static int parse_version(const unsigned char **ustr, const unsigned char *head,
     }
     return HWIRE_EVERSION;
 #undef VER_LEN
-}
-
-/**
- * @brief Parse request-target (URI)
- *
- * Scans the request-target until a space (SP) is found.
- * Defines the request-target as origin-form / absolute-form /
- * authority-form / asterisk-form (RFC 7230 3.1.1 / RFC 9112 3.2).
- *
- * @param ustr Input: start pointer, Output: pointer after URI and SP
- * @param head Parser entry pointer
- * @param tail Exclusive scan tail
- * @param maxlen Maximum number of bytes examined from head
- * @param uri Output: URI string slice
- * @return HWIRE_OK on success
- * @return HWIRE_EAGAIN if more data is needed
- * @return HWIRE_ELEN if URI exceeds maxlen
- * @return HWIRE_EURI if invalid character is found
- */
-static int parse_uri(const unsigned char **ustr, const unsigned char *head,
-                     const unsigned char *tail, size_t maxlen, hwire_str_t *uri)
-{
-    assert(ustr != NULL && *ustr != NULL);
-    const unsigned char *pstr = *ustr;
-    size_t uri_len            = strurichar(pstr, (size_t)(tail - pstr));
-    const unsigned char *str  = pstr + uri_len;
-
-    if (str < tail) {
-        if (*str++ == SP) {
-            if (uri_len == 0) {
-                return HWIRE_EURI;
-            }
-            uri->ptr = (const char *)pstr;
-            uri->len = uri_len;
-            *ustr    = str;
-            return HWIRE_OK;
-        }
-        return HWIRE_EURI;
-    }
-    return ((size_t)(tail - head) >= maxlen) ? HWIRE_ELEN : HWIRE_EAGAIN;
 }
 
 /**
@@ -2209,8 +2864,8 @@ int hwire_parse_request(hwire_ctx_t *ctx, const char *str, size_t len,
     const unsigned char *ustr = (const unsigned char *)str;
     const unsigned char *head = ustr;
     const unsigned char *tail = ustr + len;
-    hwire_request_t req       = {0};
-    int rv                    = 0;
+    hwire_request_t req;
+    int rv = 0;
 
     if (unlikely(*pos >= len)) {
         return (*pos == len && maxlen == 0) ? HWIRE_ELEN : HWIRE_EAGAIN;
@@ -2253,7 +2908,7 @@ SKIP_NEXT_CRLF:
     // parse-uri (find SP delimiter)
     // request-target = origin-form / absolute-form / authority-form /
     // asterik-form RFC 7230 3.1.1 / RFC 9112 3.2: Request Target
-    rv = parse_uri(&ustr, head, tail, maxlen, &req.uri);
+    rv = parse_uri(&ustr, head, tail, maxlen, &req);
     if (rv != HWIRE_OK) {
         return rv;
     }

@@ -1,9 +1,10 @@
 /*
- * Exhaustive equivalence tests for the URI-character whitelist scan
+ * Exhaustive equivalence tests for the RFC 3986 path/query character scan
  * (strurichar) exercised through hwire_parse_request.
  *
- * The whitelist (URI_CHAR in src/hwire.c) is:
- *   '!'  '$'-';'  '='  '?'-'Z'  '_'  'a'-'z'  '~'
+ * The accepted bytes are pchar / "/" in a path and pchar / "/" / "?" in
+ * a query. Percent is returned to the structural parser for pct-encoded
+ * validation, and the first question mark switches from path to query.
  * The SIMD implementations (NEON / SSE2 / SSE4.2 PCMPESTRI) must return
  * exactly the same stop position as the scalar reference for every byte
  * value and every offset, including the 16-byte block boundaries.
@@ -21,7 +22,7 @@ static int capture_request_cb(hwire_ctx_t *ctx, hwire_request_t *req)
     return 0;
 }
 
-/* the URI whitelist as documented (must match URI_CHAR in src/hwire.c) */
+/* Valid raw bytes across an origin-form path and its optional query. */
 static int uri_allowed(unsigned char c)
 {
     return c == '!' || (c >= '$' && c <= ';') || c == '=' ||
@@ -29,10 +30,16 @@ static int uri_allowed(unsigned char c)
            c == '~';
 }
 
+static int uri_hexdigit(unsigned char c)
+{
+    return (c >= '0' && c <= '9') || (c >= 'A' && c <= 'F') ||
+           (c >= 'a' && c <= 'f');
+}
+
 static hwire_ctx_t make_ctx(char *key_storage)
 {
     hwire_ctx_t cb = {
-        .key_lc = {.buf = key_storage, .size = TEST_KEY_SIZE, .len = 0},
+        .key_lc     = {.buf = key_storage, .size = TEST_KEY_SIZE, .len = 0},
         .request_cb = capture_request_cb,
         .header_cb  = mock_header_cb
     };
@@ -140,8 +147,8 @@ void test_strurichar_length_sweep(void)
     /* empty target is rejected */
     {
         size_t pos = 0;
-        int rv = hwire_parse_request(&cb, "GET  HTTP/1.1\r\n\r\n", 18, &pos,
-                                     1024, 10);
+        int rv     = hwire_parse_request(&cb, "GET  HTTP/1.1\r\n\r\n", 18, &pos,
+                                         1024, 10);
         ASSERT_EQ(rv, HWIRE_EURI);
     }
 
@@ -151,42 +158,50 @@ void test_strurichar_length_sweep(void)
 /*
  * Deterministic fuzz: random target bytes drawn from the full byte range;
  * the expected verdict and URI length are derived from the documented
- * whitelist (first disallowed byte decides: SP ends the target, anything
- * else is HWIRE_EURI).
+ * component grammar. A percent sign must be followed by two hexadecimal
+ * digits; SP ends the target and any other disallowed byte is HWIRE_EURI.
  */
 void test_strurichar_fuzz(void)
 {
     TEST_START("test_strurichar_fuzz");
 
     char key_storage[TEST_KEY_SIZE];
-    hwire_ctx_t cb = make_ctx(key_storage);
+    hwire_ctx_t cb    = make_ctx(key_storage);
     unsigned long rng = 0x9E3779B97F4A7C15UL;
 
     for (int iter = 0; iter < 20000; iter++) {
         unsigned char buf[160];
-        size_t tlen = (rng = rng * 6364136223846793005UL + 1442695040888963407UL,
-                       (rng >> 33) % 56);
+        size_t tlen =
+            (rng = rng * 6364136223846793005UL + 1442695040888963407UL,
+             (rng >> 33) % 56);
         size_t len = 0;
         memcpy(buf, "GET /", 5);
         len = 5;
         for (size_t i = 0; i < tlen; i++) {
-            rng = rng * 6364136223846793005UL + 1442695040888963407UL;
+            rng        = rng * 6364136223846793005UL + 1442695040888963407UL;
             buf[len++] = (unsigned char)((rng >> 33) & 0xFF);
         }
         memcpy(buf + len, " HTTP/1.1\r\n\r\n", 13);
         len += 13;
 
-        /* expected: scan the random target for the first disallowed byte */
+        /* expected: scan the random target for the first invalid sequence */
         size_t first_bad = tlen;
         for (size_t i = 0; i < tlen; i++) {
-            if (!uri_allowed(buf[5 + i])) {
+            if (buf[5 + i] == '%') {
+                if (tlen - i < 3 || !uri_hexdigit(buf[5 + i + 1]) ||
+                    !uri_hexdigit(buf[5 + i + 2])) {
+                    first_bad = i;
+                    break;
+                }
+                i += 2;
+            } else if (!uri_allowed(buf[5 + i])) {
                 first_bad = i;
                 break;
             }
         }
         size_t pos = 0;
-        int rv = hwire_parse_request(&cb, (const char *)buf, len, &pos, 1024,
-                                     10);
+        int rv =
+            hwire_parse_request(&cb, (const char *)buf, len, &pos, 1024, 10);
         if (first_bad == tlen) {
             /* all bytes allowed: the trailing SP ends the target "/" + tlen */
             ASSERT_OK(rv);
