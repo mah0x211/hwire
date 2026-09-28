@@ -259,11 +259,10 @@ static const unsigned char URI_CHAR[256] = {
     // pct-encoded. So raw UTF-8 bytes > 127 are invalid in URI.
     0};
 
-static inline size_t strurichar_cmp(const unsigned char *str, size_t len,
-                                    int is_query)
+static inline size_t strurichar_cmp(const unsigned char *str, size_t len)
 {
-    size_t i          = 0;
-    unsigned int mask = is_query ? URI_QUERY_CHAR : URI_PATH_CHAR;
+    size_t i                = 0;
+    const unsigned int mask = URI_PATH_CHAR;
 
     // Process 8 bytes at a time using bitwise OR (branchless)
     while (i + 8 <= len) {
@@ -295,10 +294,10 @@ static inline size_t strurichar_cmp(const unsigned char *str, size_t len,
 }
 
 /**
- * @brief Count consecutive URI path or query characters (scalar reference)
+ * @brief Count consecutive URI path characters (scalar reference)
  *
  * Returns the number of consecutive bytes from the beginning of str that
- * belong to the component whitelist. Percent and, for a path, question mark
+ * belong to the path whitelist. Percent and question mark
  * are returned to the structural parser so it can validate pct-encoded and
  * split the query without a second scan. SIMD implementations must return
  * identical stop positions.
@@ -733,8 +732,7 @@ static inline size_t strvchar_neon(const unsigned char *str, size_t len,
 // pct-encoded validation and question mark returned as a path delimiter.
 // Each result lane is 0xFF (invalid) or 0x00 (valid); the first invalid
 // byte is located via the same two-lane ctz64 extraction as strvchar_neon.
-static inline size_t strurichar_neon(const unsigned char *str, size_t len,
-                                     int is_query)
+static inline size_t strurichar_neon(const unsigned char *str, size_t len)
 {
     size_t pos                = 0;
     const uint8x16_t first_ok = vdupq_n_u8(0x21);
@@ -762,8 +760,7 @@ static inline size_t strurichar_neon(const unsigned char *str, size_t len,
                               vceqq_u8(data, vdupq_n_u8(0x60)))));
 
         uint8x16_t is_pct   = vceqq_u8(data, vdupq_n_u8('%'));
-        uint8x16_t is_qmark = vandq_u8(vceqq_u8(data, vdupq_n_u8('?')),
-                                       vdupq_n_u8((uint8_t)-(is_query == 0)));
+        uint8x16_t is_qmark = vceqq_u8(data, vdupq_n_u8('?'));
         uint8x16_t is_invalid =
             vorrq_u8(vorrq_u8(is_out, is_excl), vorrq_u8(is_pct, is_qmark));
 
@@ -780,7 +777,7 @@ static inline size_t strurichar_neon(const unsigned char *str, size_t len,
     }
 
     // Fall back for remaining bytes (< 16 bytes)
-    return pos + strurichar_cmp(str + pos, len - pos, is_query);
+    return pos + strurichar_cmp(str + pos, len - pos);
 }
 
 #endif
@@ -883,8 +880,7 @@ static inline __m128i in_range_sse2(__m128i data_shifted, int lo, int hi)
 // pct-encoded validation and question mark returned as a path delimiter.
 // Unsigned range tests use the sign-flip (XOR 0x80) technique documented in
 // strvchar_sse2. The first invalid byte is located via movemask + ctz32.
-static inline size_t strurichar_sse2(const unsigned char *str, size_t len,
-                                     int is_query)
+static inline size_t strurichar_sse2(const unsigned char *str, size_t len)
 {
     size_t pos              = 0;
     const __m128i sign_flip = _mm_set1_epi8(SIMD_SIGN_FLIP);
@@ -913,10 +909,8 @@ static inline size_t strurichar_sse2(const unsigned char *str, size_t len,
                     in_range_sse2(data_shifted, 0x22, 0x23),
                     _mm_or_si128(in_range_sse2(data_shifted, 0x5B, 0x5E),
                                  in_range_sse2(data_shifted, 0x7B, 0x7D)))));
-        __m128i is_pct = _mm_cmpeq_epi8(data, _mm_set1_epi8('%'));
-        __m128i is_qmark =
-            _mm_and_si128(_mm_cmpeq_epi8(data, _mm_set1_epi8('?')),
-                          _mm_set1_epi8((char)-(is_query == 0)));
+        __m128i is_pct   = _mm_cmpeq_epi8(data, _mm_set1_epi8('%'));
+        __m128i is_qmark = _mm_cmpeq_epi8(data, _mm_set1_epi8('?'));
         is_invalid = _mm_or_si128(is_invalid, _mm_or_si128(is_pct, is_qmark));
 
         int mask = _mm_movemask_epi8(is_invalid);
@@ -926,7 +920,7 @@ static inline size_t strurichar_sse2(const unsigned char *str, size_t len,
         pos += 16;
     }
 
-    return pos + strurichar_cmp(str + pos, len - pos, is_query);
+    return pos + strurichar_cmp(str + pos, len - pos);
 }
 
 # endif /* !defined(__SSE4_2__) */
@@ -993,20 +987,15 @@ static inline size_t strvchar_sse42(const unsigned char *str, size_t len,
 //
 // Algorithm: Path and query whitelists each decompose into eight ranges.
 // Percent is excluded so the structural parser can validate its two hex
-// digits; question mark is excluded only from the path ranges.
-static inline size_t strurichar_sse42(const unsigned char *str, size_t len,
-                                      int is_query)
+// digits; question mark is excluded from the path ranges.
+static inline size_t strurichar_sse42(const unsigned char *str, size_t len)
 {
     size_t pos = 0;
     static const char ALIGNED(16) PATH_RANGES[16] =
         "\x21\x21\x24\x24\x26\x3b\x3d\x3d"
         "\x40\x5a\x5f\x5f\x61\x7a\x7e\x7e";
-    static const char ALIGNED(16) QUERY_RANGES[16] =
-        "\x21\x21\x24\x24\x26\x3b\x3d\x3d"
-        "\x3f\x5a\x5f\x5f\x61\x7a\x7e\x7e";
-
-    const __m128i ranges = _mm_loadu_si128(
-        (const __m128i *)(const void *)(is_query ? QUERY_RANGES : PATH_RANGES));
+    const __m128i ranges =
+        _mm_loadu_si128((const __m128i *)(const void *)PATH_RANGES);
 
     while (pos + 16 <= len) {
         __m128i data =
@@ -1022,7 +1011,7 @@ static inline size_t strurichar_sse42(const unsigned char *str, size_t len,
         pos += 16;
     }
 
-    return pos + strurichar_cmp(str + pos, len - pos, is_query);
+    return pos + strurichar_cmp(str + pos, len - pos);
 }
 
 #endif
@@ -1054,25 +1043,24 @@ static inline size_t strvchar(const unsigned char *str, size_t len)
     return strvchar_cmp(str, len, 0, &endc);
 }
 
-// strurichar: count consecutive RFC 3986 path/query characters, stopping at
-// percent and path/query delimiters needed by the structural parser.
-static inline size_t strurichar(const unsigned char *str, size_t len,
-                                int is_query)
+// strurichar: count consecutive RFC 3986 path characters, stopping at
+// percent and question mark for the structural parser.
+static inline size_t strurichar(const unsigned char *str, size_t len)
 {
 #if defined(__SSE4_2__)
     if (likely(len >= 16)) {
-        return strurichar_sse42(str, len, is_query);
+        return strurichar_sse42(str, len);
     }
 #elif defined(__SSE2__)
     if (likely(len >= 16)) {
-        return strurichar_sse2(str, len, is_query);
+        return strurichar_sse2(str, len);
     }
 #elif defined(__aarch64__) || (defined(__arm__) && defined(__ARM_NEON))
     if (likely(len >= 16)) {
-        return strurichar_neon(str, len, is_query);
+        return strurichar_neon(str, len);
     }
 #endif
-    return strurichar_cmp(str, len, is_query);
+    return strurichar_cmp(str, len);
 }
 
 static inline size_t strfcchar(const unsigned char *str, size_t len,
@@ -2144,40 +2132,6 @@ static inline int parse_pct_encoded(const unsigned char **ustr,
     return HWIRE_OK;
 }
 
-// Parse query content starting after '?' and consume the trailing SP.
-static int parse_query(const unsigned char **ustr, const unsigned char *head,
-                       const unsigned char *tail, size_t maxlen,
-                       hwire_str_t *query)
-{
-    const unsigned char *pstr = *ustr;
-    const unsigned char *str  = pstr;
-    int rv                    = 0;
-
-    query->ptr = (const char *)pstr;
-    while (str < tail) {
-        str += strurichar(str, (size_t)(tail - str), 1);
-        if (str == tail) {
-            return uri_incomplete(head, tail, maxlen);
-        } else if (*str == '%') {
-            rv = parse_pct_encoded(&str, head, tail, maxlen);
-            if (rv != HWIRE_OK) {
-                return rv;
-            }
-        } else if (*str == SP) {
-            goto QUERY_END;
-        } else {
-            return HWIRE_EURI;
-        }
-    }
-
-    return uri_incomplete(head, tail, maxlen);
-
-QUERY_END:
-    query->len = (size_t)(str - pstr);
-    *ustr      = str + 1;
-    return HWIRE_OK;
-}
-
 static int parse_path_query(const unsigned char **ustr,
                             const unsigned char *head,
                             const unsigned char *tail, size_t maxlen,
@@ -2187,34 +2141,40 @@ static int parse_path_query(const unsigned char **ustr,
     const unsigned char *str  = pstr;
     int rv                    = 0;
 
+    *path  = (hwire_str_t){0};
+    *query = (hwire_str_t){0};
     while (str < tail) {
-        str += strurichar(str, (size_t)(tail - str), 0);
+        str += strurichar(str, (size_t)(tail - str));
         if (str == tail) {
             return uri_incomplete(head, tail, maxlen);
+        } else if (*str == SP) {
+            if (path->ptr == NULL) {
+                path->ptr = (const char *)pstr;
+                path->len = (size_t)(str - pstr);
+            } else {
+                query->len = (size_t)(str - (const unsigned char *)query->ptr);
+            }
+            *ustr = str + 1;
+            return HWIRE_OK;
         } else if (*str == '%') {
             rv = parse_pct_encoded(&str, head, tail, maxlen);
             if (rv != HWIRE_OK) {
                 return rv;
             }
-        } else if (*str == '?' || *str == SP) {
-            goto PATH_END;
+        } else if (*str == '?') {
+            // Later question marks are query data, not new delimiters.
+            if (query->ptr == NULL) {
+                path->ptr  = (const char *)pstr;
+                path->len  = (size_t)(str - pstr);
+                query->ptr = (const char *)(str + 1);
+            }
+            str++;
         } else {
             return HWIRE_EURI;
         }
     }
 
     return uri_incomplete(head, tail, maxlen);
-
-PATH_END:
-    path->ptr = (const char *)pstr;
-    path->len = (size_t)(str - pstr);
-    if (*str == SP) {
-        *query = (hwire_str_t){0};
-        *ustr  = str + 1;
-        return HWIRE_OK;
-    }
-    *ustr = str + 1;
-    return parse_query(ustr, head, tail, maxlen, query);
 }
 
 // Parse IPv4address and leave ustr at the byte after its fourth dec-octet.
