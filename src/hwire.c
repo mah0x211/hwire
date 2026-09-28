@@ -2144,40 +2144,6 @@ static inline int parse_pct_encoded(const unsigned char **ustr,
     return HWIRE_OK;
 }
 
-// Parse query content starting after '?' and consume the trailing SP.
-static int parse_query(const unsigned char **ustr, const unsigned char *head,
-                       const unsigned char *tail, size_t maxlen,
-                       hwire_str_t *query)
-{
-    const unsigned char *pstr = *ustr;
-    const unsigned char *str  = pstr;
-    int rv                    = 0;
-
-    query->ptr = (const char *)pstr;
-    while (str < tail) {
-        str += strurichar(str, (size_t)(tail - str), 1);
-        if (str == tail) {
-            return uri_incomplete(head, tail, maxlen);
-        } else if (*str == '%') {
-            rv = parse_pct_encoded(&str, head, tail, maxlen);
-            if (rv != HWIRE_OK) {
-                return rv;
-            }
-        } else if (*str == SP) {
-            goto QUERY_END;
-        } else {
-            return HWIRE_EURI;
-        }
-    }
-
-    return uri_incomplete(head, tail, maxlen);
-
-QUERY_END:
-    query->len = (size_t)(str - pstr);
-    *ustr      = str + 1;
-    return HWIRE_OK;
-}
-
 static int parse_path_query(const unsigned char **ustr,
                             const unsigned char *head,
                             const unsigned char *tail, size_t maxlen,
@@ -2187,34 +2153,40 @@ static int parse_path_query(const unsigned char **ustr,
     const unsigned char *str  = pstr;
     int rv                    = 0;
 
+    *path  = (hwire_str_t){0};
+    *query = (hwire_str_t){0};
     while (str < tail) {
         str += strurichar(str, (size_t)(tail - str), 0);
         if (str == tail) {
             return uri_incomplete(head, tail, maxlen);
+        } else if (*str == SP) {
+            if (path->ptr == NULL) {
+                path->ptr = (const char *)pstr;
+                path->len = (size_t)(str - pstr);
+            } else {
+                query->len = (size_t)(str - (const unsigned char *)query->ptr);
+            }
+            *ustr = str + 1;
+            return HWIRE_OK;
         } else if (*str == '%') {
             rv = parse_pct_encoded(&str, head, tail, maxlen);
             if (rv != HWIRE_OK) {
                 return rv;
             }
-        } else if (*str == '?' || *str == SP) {
-            goto PATH_END;
+        } else if (*str == '?') {
+            // Later question marks are query data, not new delimiters.
+            if (query->ptr == NULL) {
+                path->ptr  = (const char *)pstr;
+                path->len  = (size_t)(str - pstr);
+                query->ptr = (const char *)(str + 1);
+            }
+            str++;
         } else {
             return HWIRE_EURI;
         }
     }
 
     return uri_incomplete(head, tail, maxlen);
-
-PATH_END:
-    path->ptr = (const char *)pstr;
-    path->len = (size_t)(str - pstr);
-    if (*str == SP) {
-        *query = (hwire_str_t){0};
-        *ustr  = str + 1;
-        return HWIRE_OK;
-    }
-    *ustr = str + 1;
-    return parse_query(ustr, head, tail, maxlen, query);
 }
 
 // Parse IPv4address and leave ustr at the byte after its fourth dec-octet.
