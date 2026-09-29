@@ -89,18 +89,18 @@ typedef enum {
 /**
  * @brief String slice (length + pointer)
  *
- * Points to the input buffer without copying. The caller must ensure
- * the input buffer remains valid during use.
+ * Points to the input buffer unless an API explicitly supplies a separate
+ * output buffer. The caller must keep the referenced buffer valid during use.
  */
 typedef struct {
     size_t len;      /**< String length */
-    const char *ptr; /**< String pointer (references input buffer) */
+    const char *ptr; /**< String pointer (references caller-owned storage) */
 } hwire_str_t;
 
 /**
- * @brief Buffer structure for non-destructive lowercase conversion
+ * @brief Caller-owned output buffer
  *
- * User-allocated buffer for storing lowercase-converted keys.
+ * Used for lowercase-converted keys or decoded query parameters.
  */
 typedef struct {
     size_t size; /**< Buffer capacity */
@@ -130,6 +130,11 @@ typedef struct {
  * @brief Parameter (key-value pair alias)
  */
 typedef hwire_kv_pair_t hwire_param_t;
+
+/**
+ * @brief Query parameter (key-value pair alias)
+ */
+typedef hwire_kv_pair_t hwire_query_param_t;
 
 /**
  * @brief Header field (key-value pair alias)
@@ -187,14 +192,26 @@ typedef struct {
 /**
  * @brief Parser context
  *
- * Holds the user-context pointer, the lowercase-key buffer, and all callback
- * functions. Allocate on the stack or heap, zero-initialize, then set the
- * required callbacks and key_lc.buf/size before passing to parse functions.
+ * Holds the user-context pointer, caller-owned output buffers, and callbacks.
+ * Allocate on the stack or heap, zero-initialize, then set the required
+ * callbacks before passing to parse functions. Set key_lc.buf/size when a
+ * parser needs lowercase field names; hwire_parse_query uses qrybuf instead.
  */
 typedef struct hwire_ctx_st {
     void *uctx;         /**< User context pointer (not used by the library) */
     hwire_buf_t key_lc; /**< Lowercase key buffer; caller must allocate
                            key_lc.buf and set key_lc.size before parsing */
+    hwire_buf_t qrybuf; /**< Decoded query buffer; caller must allocate
+                           qrybuf.buf and set qrybuf.size before
+                           hwire_parse_query */
+
+    /**
+     * Called for each nonempty segment parsed by hwire_parse_query.
+     * Key and value reference qrybuf. A missing '=' has value.ptr == NULL;
+     * an empty value after '=' has value.ptr != NULL and value.len == 0.
+     * @return 0 to continue, non-zero to stop (HWIRE_ECALLBACK)
+     */
+    int (*query_cb)(struct hwire_ctx_st *ctx, hwire_query_param_t *param);
 
     /**
      * Called for each parameter parsed by hwire_parse_parameters.
@@ -397,6 +414,49 @@ int hwire_parse_quoted_string(const char *str, size_t len, size_t *pos,
 int hwire_parse_parameters(hwire_ctx_t *ctx, const char *str, size_t len,
                            size_t *pos, size_t maxlen, uint8_t maxnparams,
                            int skip_leading_semicolon);
+
+/**
+ * @brief Parse URI query parameters (without the leading '?')
+ *
+ * Split on literal '&' and the first literal '=' in each nonempty segment.
+ * Empty segments are skipped; empty keys and values are preserved. ';' and
+ * further '=' are ordinary data. Duplicate keys are delivered in input order.
+ * Percent escapes must contain two hex digits. Percent escapes and '+' are
+ * decoded into caller-owned storage ('+' becomes SP); the input is unchanged.
+ * Encoded delimiters are data, not separators. Decoding is byte-oriented,
+ * including %00, with no NUL terminators or Unicode normalization. The
+ * caller must keep qrybuf.buf alive while using callback slices. The buffer
+ * must not overlap the input. A buffer of at least the raw query length
+ * suffices. ctx->qrybuf.len is reset to zero on valid entry and tracks
+ * accepted output.
+ *
+ * @param ctx Context with query_cb and qrybuf.buf/size set (key_lc is unused)
+ * @param str Input containing the query (must not be NULL)
+ * @param len Number of available bytes in str
+ * @param pos Input: query start offset; output: parser position. An initial
+ * offset greater than len returns HWIRE_EILSEQ unchanged.
+ * @param maxlen Maximum number of query bytes examined from the initial *pos
+ * @param maxnparams Maximum number of nonempty segments delivered
+ *
+ * ctx->qrybuf.buf must be non-NULL even for an empty query. Its size may be
+ * zero if no decoded bytes are needed.
+ * @return HWIRE_OK on success, with *pos == len
+ * @return HWIRE_EAGAIN if a percent escape needs more available input before
+ * the maxlen budget is exhausted
+ * @return HWIRE_EURI for invalid query characters or percent hex digits
+ * @return HWIRE_ELEN if the byte budget ends with more input or during a
+ * percent escape
+ * @return HWIRE_ENOBUFS if the parameter limit or decode buffer is exhausted
+ * @return HWIRE_ECALLBACK if query_cb returns non-zero
+ * @return HWIRE_EILSEQ if the initial *pos is greater than len
+ *
+ * On failure within a segment, *pos points to its first byte. A segment
+ * ending at the maxlen boundary may be delivered before the outer parser
+ * returns HWIRE_ELEN; then *pos points at that boundary. Earlier callback
+ * deliveries are not rolled back.
+ */
+int hwire_parse_query(hwire_ctx_t *ctx, const char *str, size_t len,
+                      size_t *pos, size_t maxlen, uint16_t maxnparams);
 
 /** @} */ /* end of String Parsing Functions */
 
