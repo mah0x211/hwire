@@ -28,7 +28,7 @@ static inline uint64_t fold_word(uint64_t word)
 }
 
 /**
- * Compute SipHash-2-4 over a borrowed slice. In CI mode, fold each byte while
+ * Compute SipHash-1-3 over a borrowed slice. In CI mode, fold each byte while
  * loading it, without allocating a normalized copy. An empty slice may have
  * a NULL data pointer. The byte loads avoid alignment and aliasing assumptions.
  */
@@ -79,7 +79,6 @@ static uint64_t hash_key(const hwire_table_key_t *key, const char *data,
         }
         v3 ^= m;
         SIPROUND;
-        SIPROUND;
         v0 ^= m;
         i += 8u;
     }
@@ -95,10 +94,8 @@ static uint64_t hash_key(const hwire_table_key_t *key, const char *data,
 
     v3 ^= b;
     SIPROUND;
-    SIPROUND;
     v0 ^= b;
     v2 ^= UINT64_C(0xff);
-    SIPROUND;
     SIPROUND;
     SIPROUND;
     SIPROUND;

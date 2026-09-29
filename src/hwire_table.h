@@ -36,7 +36,7 @@ extern "C" {
                                32768)
 
 /**
- * SipHash-2-4 key. Supply 128 secret bits when hash-flood resistance matters.
+ * SipHash-1-3 key. Supply 128 secret bits when hash-flood resistance matters.
  */
 typedef struct {
     uint64_t words[2];

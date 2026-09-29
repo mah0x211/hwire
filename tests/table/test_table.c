@@ -235,6 +235,34 @@ static void test_reference_groups(void)
     }
 }
 
+static void test_long_keys(void)
+{
+    init();
+    const char mixed[] = "Content-Type-Long";
+    const char lower[] = "content-type-long";
+    const char upper[] = "CONTENT-TYPE-LONG";
+    const size_t len   = sizeof mixed - 1u;
+    hwire_kv_pair_t kv = pair(mixed, len, "A", 1);
+    const hwire_table_entry_t *first = push(&table, &kv);
+    assert(hwire_table_get(&table, mixed, len) == first);
+    assert(hwire_table_get(&table, lower, len) == NULL);
+    assert(hwire_table_get_ci(&table, upper, len) == first);
+    kv = pair(lower, len, "B", 1);
+    const hwire_table_entry_t *second = push(&table, &kv);
+    kv = pair(mixed, len, "C", 1);
+    const hwire_table_entry_t *third = push(&table, &kv);
+    assert(hwire_table_get(&table, lower, len) == second);
+    assert(hwire_table_get(&table, mixed, len) == first);
+    assert(hwire_table_get_ci(&table, lower, len) == first);
+    assert(hwire_table_next(&table, first) == third);
+    assert(hwire_table_next(&table, third) == NULL);
+    assert(hwire_table_next_ci(&table, first) == second);
+    assert(hwire_table_next_ci(&table, second) == third);
+    assert(hwire_table_next_ci(&table, third) == NULL);
+    assert(hwire_table_get(&table, "Content-Type-Lonx", len) == NULL);
+    assert(hwire_table_get_ci(&table, "CONTENT-TYPE-LONX", len) == NULL);
+}
+
 int main(void)
 {
     test_capacity();
@@ -243,6 +271,7 @@ int main(void)
     test_full_unique();
     test_capacity_one_and_invalid_push();
     test_reference_groups();
+    test_long_keys();
     puts("table tests passed");
     return 0;
 }
