@@ -24,11 +24,14 @@ TEST_SRCS = $(wildcard $(TEST_DIR)/test_*.c)
 TEST_CASES = $(filter-out $(TEST_DIR)/test_helpers.c, $(TEST_SRCS))
 # Test executables
 TEST_EXES = $(patsubst $(TEST_DIR)/%.c, $(OBJ_DIR)/%, $(TEST_CASES))
+TABLE_TEST_EXES = $(OBJ_DIR)/table_test_table $(OBJ_DIR)/table_test_siphash
+COV_EXES = $(TEST_EXES) $(TABLE_TEST_EXES)
+COV_OBJECTS = $(patsubst %,-object=%,$(wordlist 2,$(words $(COV_EXES)),$(COV_EXES)))
 
 # Common dependencies for tests
 TEST_DEPS = $(TARGET_SRC) $(TEST_DIR)/test_helpers.c
 
-.PHONY: all test test-nosimd coverage html-coverage analyze clean
+.PHONY: all test table-test test-nosimd coverage html-coverage analyze clean
 
 all: test
 
@@ -45,6 +48,19 @@ test: $(OBJ_DIR) $(TEST_EXES)
 	done
 	@echo "All tests passed!"
 
+# Build and run the optional table tests without linking hwire.c.
+table-test: $(TABLE_TEST_EXES)
+	@for exe in $(TABLE_TEST_EXES); do \
+		echo "Running $$exe"; \
+		./$$exe || exit 1; \
+	done
+
+$(OBJ_DIR)/table_test_table: $(TEST_DIR)/table/test_table.c $(SRC_DIR)/hwire_table.c $(SRC_DIR)/hwire_table.h $(SRC_DIR)/hwire.h | $(OBJ_DIR)
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(TEST_DIR)/table/test_table.c $(SRC_DIR)/hwire_table.c
+
+$(OBJ_DIR)/table_test_siphash: $(TEST_DIR)/table/test_siphash.c $(SRC_DIR)/hwire_table.c $(SRC_DIR)/hwire_table.h $(SRC_DIR)/hwire.h | $(OBJ_DIR)
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(TEST_DIR)/table/test_siphash.c
+
 # Compile and run tests without SIMD
 test-nosimd:
 	$(MAKE) clean
@@ -58,21 +74,21 @@ $(OBJ_DIR)/%: $(TEST_DIR)/%.c $(TEST_DEPS)
 coverage:
 	$(MAKE) clean
 	mkdir -p $(OBJ_DIR) $(COV_DIR)
-	$(MAKE) $(TEST_EXES) CFLAGS="$(CFLAGS) $(COV_FLAGS)" LDFLAGS="$(LDFLAGS) $(COV_FLAGS)"
+	$(MAKE) $(COV_EXES) CFLAGS="$(CFLAGS) $(COV_FLAGS)" LDFLAGS="$(LDFLAGS) $(COV_FLAGS)"
 	@echo "Running tests..."
-	@for exe in $(TEST_EXES); do \
+	@for exe in $(COV_EXES); do \
 		echo "Running $$exe"; \
 		LLVM_PROFILE_FILE="$(COV_DIR)/%m.profraw" ./$$exe || exit 1; \
 	done
 	@echo "All tests passed!"
 	@echo "Generating coverage report..."
 	llvm-profdata merge -sparse $(COV_DIR)/*.profraw -o $(COV_DIR)/coverage.profdata
-	llvm-cov export -format=lcov $(TEST_EXES) -instr-profile=$(COV_DIR)/coverage.profdata $(SRC_DIR)/hwire.c > $(COV_DIR)/coverage.info
+	llvm-cov export -format=lcov $(firstword $(COV_EXES)) $(COV_OBJECTS) -instr-profile=$(COV_DIR)/coverage.profdata --sources $(SRC_DIR)/hwire.c $(SRC_DIR)/hwire_table.c > $(COV_DIR)/coverage.info
 	@echo "Coverage report generated in $(COV_DIR)/coverage.info"
 
 # HTML coverage report (local use)
 html-coverage: coverage
-	llvm-cov show -format=html $(TEST_EXES) -instr-profile=$(COV_DIR)/coverage.profdata $(SRC_DIR)/hwire.c --output-dir=$(COV_DIR)/html
+	llvm-cov show -format=html $(firstword $(COV_EXES)) $(COV_OBJECTS) -instr-profile=$(COV_DIR)/coverage.profdata --sources $(SRC_DIR)/hwire.c $(SRC_DIR)/hwire_table.c --output-dir=$(COV_DIR)/html
 	@echo "HTML coverage report generated in $(COV_DIR)/html/index.html"
 
 # Static analysis with scan-build
