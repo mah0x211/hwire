@@ -229,30 +229,36 @@ static const unsigned char FCVCHAR[256] = {
 /**
  * @brief URI allowed characters (RFC 3986)
  *
- * Bit 0 marks path characters, bit 1 marks query characters, and bit 2 marks
- * reg-name characters. Percent is a structural stop in every component;
- * question mark is a stop only in paths.
+ * Bit 0 marks path characters, bit 1 marks query characters, bit 2 marks
+ * reg-name characters, and bit 3 marks ordinary query-pair characters.
+ * Percent is a structural stop in every component; question mark is a stop
+ * only in paths. Literal '&', '=', and '+' stop query-pair scanning.
  *
  * unreserved / sub-delims / ":" / "@" / "/" / "?"
  * unreserved = ALPHA / DIGIT / "-" / "." / "_" / "~"
  * sub-delims = "!" / "$" / "&" / "'" / "(" / ")" / "*" / "+" / "," / ";" / "="
  */
 enum {
-    URI_PATH_CHAR    = 1U,
-    URI_QUERY_CHAR   = 2U,
-    URI_REGNAME_CHAR = 4U
+    URI_PATH_CHAR       = 1U,
+    URI_QUERY_CHAR      = 2U,
+    URI_REGNAME_CHAR    = 4U,
+    URI_QUERY_PAIR_CHAR = 8U
 };
 
 static const unsigned char URI_CHAR[256] = {
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // 0-15
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // 16-31
-    0, 7, 0, 0, 7, 0, 7, 7, 7, 7, 7, 7, 7, 7, 7,
-    3, // 32-47 ( ! # $ % & ' ( ) * + , - . / )
-    7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 3, 7, 0, 7, 0, 2, // 48-63 ( 0-9 : ; < = > ? )
-    3, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, // 64-79 ( @ A-O )
-    7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 0, 0, 0, 0, 7, // 80-95 ( P-Z [ \ ] ^ _ )
-    0, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, // 96-111 ( ` a-o )
-    7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 0, 0, 0, 7,
+    0, 15, 0, 0, 15, 0, 7, 15, 15, 15, 15, 7, 15, 15, 15,
+    11, // 32-47 ( ! # $ % & ' ( ) * + , - . / )
+    15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 11, 15, 0, 7, 0,
+    10, // 48-63 ( 0-9 : ; < = > ? )
+    11, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15,
+    15, // 64-79 ( @ A-O )
+    15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 0, 0, 0, 0,
+    15, // 80-95 ( P-Z [ \ ] ^ _ )
+    0, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15,
+    15, // 96-111 ( ` a-o )
+    15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 0, 0, 0, 15,
     0, // 112-127 ( p-z { | } ~ DEL )
     // Extended ASCII (128-255) are NOT allowed in URI (must be unreserved)
     // Actually RFC 3986 says characters "not in the allowed set" must be
@@ -287,6 +293,26 @@ static inline size_t strurichar_cmp(const unsigned char *str, size_t len)
     while (i < len) {
         if (!(URI_CHAR[str[i]] & mask)) {
             return i;
+        }
+        i++;
+    }
+    return i;
+}
+
+/**
+ * @brief Count consecutive ordinary query-pair bytes (scalar reference)
+ *
+ * Examine at most len bytes. Stop before '%', '&', '+', '=', or a byte outside
+ * the RFC 3986 query grammar; the caller handles delimiters and decoding.
+ * Return len if every byte is ordinary.
+ */
+static inline size_t strqrychar_cmp(const unsigned char *str, size_t len)
+{
+    size_t i = 0;
+    while (i < len) {
+        unsigned char c = str[i];
+        if (!(URI_CHAR[c] & URI_QUERY_PAIR_CHAR)) {
+            break;
         }
         i++;
     }
@@ -780,6 +806,57 @@ static inline size_t strurichar_neon(const unsigned char *str, size_t len)
     return pos + strurichar_cmp(str + pos, len - pos);
 }
 
+/**
+ * @brief Count ordinary query-pair bytes using NEON
+ *
+ * Read only complete 16-byte blocks within len, then use strqrychar_cmp for
+ * the remainder. Return the same first-stop offset as the scalar reference.
+ */
+static inline size_t strqrychar_neon(const unsigned char *str, size_t len)
+{
+    size_t pos                = 0;
+    const uint8x16_t first_ok = vdupq_n_u8(0x21);
+    const uint8x16_t last_ok  = vdupq_n_u8(0x7E);
+
+    while (pos + 16 <= len) {
+        uint8x16_t data = vld1q_u8(str + pos);
+        uint8x16_t is_out =
+            vorrq_u8(vcltq_u8(data, first_ok), vcgtq_u8(data, last_ok));
+        uint8x16_t in_2223 = vandq_u8(vcgeq_u8(data, vdupq_n_u8(0x22)),
+                                      vcleq_u8(data, vdupq_n_u8(0x23)));
+        uint8x16_t in_5b5e = vandq_u8(vcgeq_u8(data, vdupq_n_u8(0x5B)),
+                                      vcleq_u8(data, vdupq_n_u8(0x5E)));
+        uint8x16_t in_7b7d = vandq_u8(vcgeq_u8(data, vdupq_n_u8(0x7B)),
+                                      vcleq_u8(data, vdupq_n_u8(0x7D)));
+        uint8x16_t is_excl = vorrq_u8(
+            vorrq_u8(in_2223, in_5b5e),
+            vorrq_u8(in_7b7d,
+                     vorrq_u8(vorrq_u8(vceqq_u8(data, vdupq_n_u8(0x3C)),
+                                       vceqq_u8(data, vdupq_n_u8(0x3E))),
+                              vceqq_u8(data, vdupq_n_u8(0x60)))));
+        uint8x16_t is_structural =
+            vorrq_u8(vorrq_u8(vceqq_u8(data, vdupq_n_u8('%')),
+                              vceqq_u8(data, vdupq_n_u8('&'))),
+                     vorrq_u8(vceqq_u8(data, vdupq_n_u8('+')),
+                              vceqq_u8(data, vdupq_n_u8('='))));
+        uint8x16_t is_invalid =
+            vorrq_u8(vorrq_u8(is_out, is_excl), is_structural);
+
+        uint64x2_t qdata = vreinterpretq_u64_u8(is_invalid);
+        uint64_t mask1   = vgetq_lane_u64(qdata, 0);
+        if (mask1) {
+            return pos + (size_t)(ctz64(mask1) >> 3);
+        }
+        uint64_t mask2 = vgetq_lane_u64(qdata, 1);
+        if (mask2) {
+            return pos + 8 + (size_t)(ctz64(mask2) >> 3);
+        }
+        pos += 16;
+    }
+
+    return pos + strqrychar_cmp(str + pos, len - pos);
+}
+
 #endif
 
 #if defined(__SSE2__)
@@ -923,6 +1000,52 @@ static inline size_t strurichar_sse2(const unsigned char *str, size_t len)
     return pos + strurichar_cmp(str + pos, len - pos);
 }
 
+/**
+ * @brief Count ordinary query-pair bytes using SSE2
+ *
+ * Read only complete 16-byte blocks within len, then use strqrychar_cmp for
+ * the remainder. Return the same first-stop offset as the scalar reference.
+ */
+static inline size_t strqrychar_sse2(const unsigned char *str, size_t len)
+{
+    size_t pos              = 0;
+    const __m128i sign_flip = _mm_set1_epi8(SIMD_SIGN_FLIP);
+    const __m128i first_cmp = _mm_set1_epi8(0x21 ^ SIMD_SIGN_FLIP);
+    const __m128i last_cmp  = _mm_set1_epi8(0x7E ^ SIMD_SIGN_FLIP);
+
+    while (pos + 16 <= len) {
+        __m128i data =
+            _mm_loadu_si128((const __m128i *)(const void *)(str + pos));
+        __m128i data_shifted = _mm_xor_si128(data, sign_flip);
+        __m128i is_before    = _mm_cmpgt_epi8(first_cmp, data_shifted);
+        __m128i is_after     = _mm_cmpgt_epi8(data_shifted, last_cmp);
+        __m128i is_excl      = _mm_or_si128(
+            _mm_or_si128(_mm_cmpeq_epi8(data, _mm_set1_epi8(0x3C)),
+                         _mm_cmpeq_epi8(data, _mm_set1_epi8(0x3E))),
+            _mm_or_si128(
+                _mm_cmpeq_epi8(data, _mm_set1_epi8(0x60)),
+                _mm_or_si128(
+                    in_range_sse2(data_shifted, 0x22, 0x23),
+                    _mm_or_si128(in_range_sse2(data_shifted, 0x5B, 0x5E),
+                                 in_range_sse2(data_shifted, 0x7B, 0x7D)))));
+        __m128i is_structural = _mm_or_si128(
+            _mm_or_si128(_mm_cmpeq_epi8(data, _mm_set1_epi8('%')),
+                         _mm_cmpeq_epi8(data, _mm_set1_epi8('&'))),
+            _mm_or_si128(_mm_cmpeq_epi8(data, _mm_set1_epi8('+')),
+                         _mm_cmpeq_epi8(data, _mm_set1_epi8('='))));
+        __m128i is_invalid = _mm_or_si128(_mm_or_si128(is_before, is_after),
+                                          _mm_or_si128(is_excl, is_structural));
+
+        int mask = _mm_movemask_epi8(is_invalid);
+        if (mask) {
+            return pos + (size_t)ctz32((unsigned int)mask);
+        }
+        pos += 16;
+    }
+
+    return pos + strqrychar_cmp(str + pos, len - pos);
+}
+
 # endif /* !defined(__SSE4_2__) */
 
 #endif /* defined(__SSE2__) */
@@ -1014,6 +1137,38 @@ static inline size_t strurichar_sse42(const unsigned char *str, size_t len)
     return pos + strurichar_cmp(str + pos, len - pos);
 }
 
+/**
+ * @brief Count ordinary query-pair bytes using SSE4.2 range comparisons
+ *
+ * Read only complete 16-byte blocks within len, then use strqrychar_cmp for
+ * the remainder. Return the same first-stop offset as the scalar reference.
+ */
+static inline size_t strqrychar_sse42(const unsigned char *str, size_t len)
+{
+    size_t pos                                                   = 0;
+    // RFC 3986 query characters, excluding %, &, +, and = for the caller.
+    static const unsigned char ALIGNED(16) QUERY_PAIR_RANGES[16] = {
+        0x21, 0x21, 0x24, 0x24, 0x27, 0x2A, 0x2C, 0x3B,
+        0x3F, 0x5A, 0x5F, 0x5F, 0x61, 0x7A, 0x7E, 0x7E};
+    const __m128i ranges =
+        _mm_loadu_si128((const __m128i *)(const void *)QUERY_PAIR_RANGES);
+
+    while (pos + 16 <= len) {
+        __m128i data =
+            _mm_loadu_si128((const __m128i *)(const void *)(str + pos));
+        int idx =
+            _mm_cmpestri(ranges, 16, data, 16,
+                         _SIDD_LEAST_SIGNIFICANT | _SIDD_CMP_RANGES |
+                             _SIDD_UBYTE_OPS | _SIDD_MASKED_NEGATIVE_POLARITY);
+        if (idx != 16) {
+            return pos + (size_t)idx;
+        }
+        pos += 16;
+    }
+
+    return pos + strqrychar_cmp(str + pos, len - pos);
+}
+
 #endif
 
 // strvchar: count consecutive field-content characters (VCHAR or obs-text)
@@ -1061,6 +1216,31 @@ static inline size_t strurichar(const unsigned char *str, size_t len)
     }
 #endif
     return strurichar_cmp(str, len);
+}
+
+/**
+ * @brief Count consecutive ordinary query-pair bytes within len
+ *
+ * Select the available SIMD scanner for at least 16 bytes, or use the scalar
+ * reference. Return the offset of the first delimiter, escape, plus sign, or
+ * invalid byte; return len when none occurs.
+ */
+static inline size_t strqrychar(const unsigned char *str, size_t len)
+{
+#if defined(__SSE4_2__)
+    if (likely(len >= 16)) {
+        return strqrychar_sse42(str, len);
+    }
+#elif defined(__SSE2__)
+    if (likely(len >= 16)) {
+        return strqrychar_sse2(str, len);
+    }
+#elif defined(__aarch64__) || (defined(__arm__) && defined(__ARM_NEON))
+    if (likely(len >= 16)) {
+        return strqrychar_neon(str, len);
+    }
+#endif
+    return strqrychar_cmp(str, len);
 }
 
 static inline size_t strfcchar(const unsigned char *str, size_t len,
@@ -2117,16 +2297,35 @@ static inline int uri_incomplete(const unsigned char *head,
     return ((size_t)(tail - head) >= maxlen) ? HWIRE_ELEN : HWIRE_EAGAIN;
 }
 
+// Callers map an incomplete triplet to their own input-completeness error.
+static inline int parse_pct_triplet(const unsigned char *str,
+                                    const unsigned char *tail,
+                                    unsigned char *decoded)
+{
+    if (tail - str < 3) {
+        return HWIRE_EAGAIN;
+    }
+    unsigned char hi = HEXDIGIT[str[1]];
+    unsigned char lo = HEXDIGIT[str[2]];
+    if (hi == 0 || lo == 0) {
+        return HWIRE_EURI;
+    }
+    if (decoded != NULL) {
+        *decoded = (unsigned char)(((hi - 1) << 4) | (lo - 1));
+    }
+    return HWIRE_OK;
+}
+
 static inline int parse_pct_encoded(const unsigned char **ustr,
                                     const unsigned char *head,
                                     const unsigned char *tail, size_t maxlen)
 {
     const unsigned char *str = *ustr;
-
-    if (tail - str < 3) {
+    int rv                   = parse_pct_triplet(str, tail, NULL);
+    if (rv == HWIRE_EAGAIN) {
         return uri_incomplete(head, tail, maxlen);
-    } else if (HEXDIGIT[str[1]] == 0 || HEXDIGIT[str[2]] == 0) {
-        return HWIRE_EURI;
+    } else if (rv != HWIRE_OK) {
+        return rv;
     }
     *ustr = str + 3;
     return HWIRE_OK;
@@ -2175,6 +2374,181 @@ static int parse_path_query(const unsigned char **ustr,
     }
 
     return uri_incomplete(head, tail, maxlen);
+}
+
+// Parse and deliver one nonempty query segment, consuming a trailing '&'.
+static int parse_query_parameter(const unsigned char **ustr,
+                                 const unsigned char *head,
+                                 const unsigned char *tail, size_t maxlen,
+                                 uint16_t nparams, uint16_t maxnparams,
+                                 hwire_ctx_t *ctx)
+{
+    const unsigned char *str  = *ustr;
+    hwire_buf_t *qrybuf       = &ctx->qrybuf;
+    char *key                 = qrybuf->buf + qrybuf->len;
+    char *out                 = key;
+    char *out_tail            = qrybuf->buf + qrybuf->size;
+    hwire_query_param_t param = {0};
+    size_t qrylen;
+    int rv;
+
+PARSE_QRYCHAR:
+    qrylen = strqrychar(str, (size_t)(tail - str));
+    if (qrylen != 0) {
+        if (qrylen > (size_t)(out_tail - out)) {
+            return HWIRE_ENOBUFS;
+        }
+        memcpy(out, str, qrylen);
+        out += qrylen;
+    }
+    str += qrylen;
+
+    // If we have reached the end of the input, finalize the current parameter.
+    if (str >= tail) {
+        goto PARAM_END;
+    }
+
+    if (*str == '&') {
+        // Skip the '&' delimiter to the start of the next parameter.
+        str++;
+    } else {
+        // If the current character is not a query delimiter, decode it.
+        unsigned char c = 0;
+
+        switch (*str) {
+        case '+':
+            c = SP;
+            str++;
+            break;
+
+        case '%':
+            // Percent-encoded triplet, e.g., "%20" for space.
+            rv = parse_pct_triplet(str, tail, &c);
+            if (rv == HWIRE_EAGAIN) {
+                return ((size_t)(tail - head) >= maxlen) ? HWIRE_ELEN :
+                                                           HWIRE_EAGAIN;
+            } else if (rv != HWIRE_OK) {
+                return rv;
+            }
+            str += 3;
+            break;
+
+        case '=':
+            if (!param.key.ptr) {
+                param.key.ptr   = key;
+                param.key.len   = (size_t)(out - key);
+                param.value.ptr = out;
+                // skip the '=' character
+                str++;
+                goto PARSE_QRYCHAR;
+            }
+            // If we encounter an '=' after the key has already been set, treat
+            // it as a literal character.
+            c = '=';
+            str++;
+            break;
+
+        default:
+            return HWIRE_EURI;
+        }
+
+        // Append the decoded character to the output buffer.
+        if (out == out_tail) {
+            return HWIRE_ENOBUFS;
+        }
+        *out++ = (char)c;
+        goto PARSE_QRYCHAR;
+    }
+
+PARAM_END:
+    if (nparams >= maxnparams) {
+        return HWIRE_ENOBUFS;
+    }
+
+    // Finalize the current query parameter before invoking the callback.
+    if (param.value.ptr) {
+        param.value.len = (size_t)(out - param.value.ptr);
+    } else {
+        param.key.ptr = key;
+        param.key.len = (size_t)(out - key);
+    }
+
+    if (ctx->query_cb(ctx, &param) != 0) {
+        return HWIRE_ECALLBACK;
+    }
+
+    qrybuf->len = (size_t)(out - qrybuf->buf);
+    *ustr       = str;
+    return HWIRE_OK;
+}
+
+/**
+ * @brief Parse query input into decoded key/value pairs
+ *
+ * Split each nonempty '&'-separated segment at its first literal '=' and
+ * deliver it through ctx->query_cb. Decode '%HH' and '+' into the caller-owned
+ * ctx->qrybuf; encoded delimiters remain data. Empty keys and values are
+ * allowed, while empty segments are skipped.
+ *
+ * @param ctx Context with query_cb and a non-NULL, non-overlapping qrybuf.buf
+ * @param str Query input without the leading '?' (must not be NULL)
+ * @param len Number of available bytes in str
+ * @param pos Input: start offset; output: parser position. An initial offset
+ * greater than len returns HWIRE_EILSEQ without changing *pos.
+ * @param maxlen Maximum number of bytes examined from the initial *pos
+ * @param maxnparams Maximum number of nonempty pairs delivered
+ * @return HWIRE_OK if all available input was consumed, with *pos == len
+ * @return HWIRE_EAGAIN if a percent escape needs more input before maxlen
+ * @return HWIRE_EURI for an invalid query byte or percent hex digit
+ * @return HWIRE_ELEN if the byte budget ends with more input or during an
+ * incomplete percent escape
+ * @return HWIRE_ENOBUFS if the pair limit or decode buffer is exhausted
+ * @return HWIRE_ECALLBACK if query_cb returns non-zero
+ * @return HWIRE_EILSEQ if the initial *pos exceeds len
+ *
+ * Earlier callbacks are not rolled back on failure. A pair ending at the
+ * byte-budget boundary may be delivered before HWIRE_ELEN is returned.
+ */
+int hwire_parse_query(hwire_ctx_t *ctx, const char *str, size_t len,
+                      size_t *pos, size_t maxlen, uint16_t maxnparams)
+{
+    assert(ctx != NULL);
+    assert(ctx->query_cb != NULL);
+    assert(str != NULL);
+    assert(pos != NULL);
+    assert(ctx->qrybuf.buf != NULL);
+    const unsigned char *ustr = (const unsigned char *)str;
+    const unsigned char *head = ustr;
+    const unsigned char *tail = ustr + len;
+    uint16_t nparams          = 0;
+
+    if (*pos > len) {
+        return HWIRE_EILSEQ;
+    }
+    ustr += *pos;
+    head = ustr;
+
+    if (maxlen < (size_t)(tail - head)) {
+        tail = head + maxlen;
+    }
+    ctx->qrybuf.len = 0;
+
+CHECK_NEXT_PARAM:
+    *pos = (size_t)(ustr - (unsigned char *)str);
+    if (ustr >= tail) {
+        return (*pos >= len) ? HWIRE_OK : HWIRE_ELEN;
+    } else if (*ustr == '&') {
+        ustr++;
+    } else {
+        int rv = parse_query_parameter(&ustr, head, tail, maxlen, nparams,
+                                       maxnparams, ctx);
+        if (rv != HWIRE_OK) {
+            return rv;
+        }
+        // Successfully parsed a query parameter, increment the count.
+        nparams++;
+    }
+    goto CHECK_NEXT_PARAM;
 }
 
 // Parse IPv4address and leave ustr at the byte after its fourth dec-octet.

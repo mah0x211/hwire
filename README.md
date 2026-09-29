@@ -325,7 +325,9 @@ Compare with `HWIRE_HTTP_V11` or `HWIRE_HTTP_V10` directly (e.g., `req->version 
 typedef struct hwire_ctx_st {
     void        *uctx;   /* Opaque user pointer; not used by the library */
     hwire_buf_t  key_lc; /* Lowercase-key buffer; set buf and size before parsing */
+    hwire_buf_t  qrybuf; /* Decoded query buffer; set buf and size before hwire_parse_query */
 
+    int (*query_cb      )(struct hwire_ctx_st *ctx, hwire_query_param_t    *param);
     int (*param_cb      )(struct hwire_ctx_st *ctx, hwire_param_t         *param);
     int (*chunksize_cb  )(struct hwire_ctx_st *ctx, uint32_t               size);
     int (*chunksize_ext_cb)(struct hwire_ctx_st *ctx, hwire_chunksize_ext_t *ext);
@@ -337,15 +339,18 @@ typedef struct hwire_ctx_st {
 
 **Required fields** per function:
 
-| Parse function | Required callbacks | `key_lc` |
-|---|---|:---:|
-| `hwire_parse_parameters` | `param_cb` | optional |
+| Parse function | Required callbacks | Buffer |
+|---|---|---|
+| `hwire_parse_parameters` | `param_cb` | `key_lc` optional |
 | `hwire_parse_chunksize` | `chunksize_cb` | — |
-| `hwire_parse_headers` | `header_cb` | optional |
-| `hwire_parse_request` | `request_cb`, `header_cb` | optional |
-| `hwire_parse_response` | `response_cb`, `header_cb` | optional |
+| `hwire_parse_headers` | `header_cb` | `key_lc` optional |
+| `hwire_parse_request` | `request_cb`, `header_cb` | `key_lc` optional |
+| `hwire_parse_response` | `response_cb`, `header_cb` | `key_lc` optional |
+| `hwire_parse_query` | `query_cb` | `qrybuf` required |
 
 > **`key_lc`**: when `key_lc.size > 0`, `key_lc.buf` must point to a caller-allocated buffer of at least `key_lc.size` bytes; the library writes the lowercase field/parameter name there before each callback. Set `size = 0` (zero-initialized default) to disable lowercase key storage.
+
+> **`qrybuf`**: before calling `hwire_parse_query`, set `qrybuf.buf` to non-NULL caller-owned storage and `qrybuf.size` to its capacity. Decoded callback slices remain valid until that storage is reused or released.
 
 **Callbacks** must return `0` to continue parsing. Any non-zero return causes the parse function to stop immediately and return `HWIRE_ECALLBACK`.
 
@@ -664,6 +669,62 @@ Host: example.com\r\n
 | `HWIRE_EKEYLEN` | Key length exceeds `ctx->key_lc.size` |
 | `HWIRE_ECALLBACK` | Callback returned non-zero |
 | `HWIRE_ENOBUFS` | Header count exceeds `maxnhdrs` |
+
+#### `hwire_parse_query`
+
+```c
+int hwire_parse_query(hwire_ctx_t *ctx, const char *str, size_t len,
+                      size_t *pos, size_t maxlen, uint16_t maxnparams);
+```
+
+This opt-in API splits query input (without `?`) on literal `&` and the
+first literal `=` per nonempty segment, delivering pairs to `ctx->query_cb` in
+order. `;` is ordinary data. Configure `ctx->qrybuf` with a separate,
+non-overlapping caller-owned buffer; `%HH` and `+` are decoded into it (`+`
+becomes a space), while `%26` and `%3D` never act as separators. Keep the
+decode buffer alive while retaining callback slices. `maxlen` is a byte budget
+from the initial `*pos`; success sets `*pos == len`. An incomplete `%HH` at the
+available input end returns `HWIRE_EAGAIN` while budget remains, or
+`HWIRE_ELEN` when it is exhausted. Invalid characters or hex digits return
+`HWIRE_EURI`; count or buffer exhaustion returns `HWIRE_ENOBUFS`, and a
+stopped callback returns `HWIRE_ECALLBACK`. As with parameter parsing, a pair
+ending at the byte budget may be delivered before the outer parser returns
+`HWIRE_ELEN`; in that case `*pos` advances to the budget boundary.
+
+For example, a request callback can parse `req->query` without changing the
+request-target parser. The decoded storage and saved slices must last until
+the application finishes handling the request:
+
+```c
+typedef struct {
+    hwire_buf_t query_storage; /* caller-allocated request-lifetime buffer */
+    hwire_query_param_t params[32];
+    size_t count;
+    int query_error;
+} app_request_t;
+
+static int on_query(hwire_ctx_t *ctx, hwire_query_param_t *param)
+{
+    app_request_t *app = ctx->uctx;
+    app->params[app->count++] = *param;
+    return 0;
+}
+
+static int on_request(hwire_ctx_t *ctx, hwire_request_t *req)
+{
+    app_request_t *app = ctx->uctx;
+    if (req->query.ptr == NULL) return 0;
+    size_t pos = 0;
+    ctx->qrybuf = app->query_storage;
+    app->query_error = hwire_parse_query(ctx, req->query.ptr, req->query.len,
+                                         &pos, req->query.len, 32);
+    return app->query_error == HWIRE_OK ? 0 : -1;
+}
+/* Before hwire_parse_request, set app.query_storage.buf/size to separate
+request-lifetime storage, app.query_error = HWIRE_OK, and set ctx.query_cb
+   = on_query and ctx.request_cb = on_request. If the outer parser returns
+   HWIRE_ECALLBACK, inspect app.query_error. */
+```
 
 #### `hwire_parse_response`
 
