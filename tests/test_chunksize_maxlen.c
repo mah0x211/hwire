@@ -22,7 +22,7 @@ static int parse_chunksize(const char *buf, size_t len, size_t maxlen,
                        .chunksize_ext_cb = mock_chunksize_ext_cb};
 
     *pos = 0;
-    return hwire_parse_chunksize(&ctx, buf, len, pos, maxlen, 10);
+    return hwire_parse_chunksize(&ctx, buf, len, pos, maxlen);
 }
 
 /*

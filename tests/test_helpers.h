@@ -56,6 +56,16 @@ extern int g_tests_failed;
         }                                                                      \
     } while (0)
 
+/* Caller-owned pair storage and application error for callback limits. */
+typedef struct {
+    hwire_kv_pair_t pairs[16];
+    size_t capacity;
+    size_t count;
+    size_t calls;
+    int error;
+} test_capacity_t;
+int capacity_pair_cb(hwire_ctx_t *ctx, hwire_kv_pair_t *pair);
+
 /* Common mock callback functions (success) */
 int mock_header_cb(hwire_ctx_t *ctx, hwire_header_t *header);
 int mock_request_cb(hwire_ctx_t *ctx, hwire_request_t *req);
@@ -75,8 +85,9 @@ int mock_chunksize_ext_cb_fail(hwire_ctx_t *ctx, hwire_chunksize_ext_t *ext);
 /* Verify that a hwire_str_t slice is within [buf, buf+buf_len). */
 static inline int str_in_buf(hwire_str_t s, const char *buf, size_t buf_len)
 {
-    if (s.len == 0)
+    if (s.len == 0) {
         return 1; /* empty slice: ptr irrelevant */
+    }
     return s.ptr >= buf && s.ptr + s.len <= buf + buf_len;
 }
 

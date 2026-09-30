@@ -29,5 +29,5 @@ int hwire_request(const unsigned char *data, size_t len)
     ctx.header_cb  = header_cb;
     ctx.request_cb = request_cb;
     return hwire_parse_request(&ctx, (const char *)data, len, &pos,
-                               UINT16_MAX, UINT8_MAX) != HWIRE_OK;
+                               UINT16_MAX) != HWIRE_OK;
 }

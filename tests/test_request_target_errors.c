@@ -10,7 +10,7 @@ static int parse_request(const char *buf, size_t len, size_t maxlen)
     };
     size_t pos = 0;
 
-    return hwire_parse_request(&ctx, buf, len, &pos, maxlen, 10);
+    return hwire_parse_request(&ctx, buf, len, &pos, maxlen);
 }
 
 static void test_request_target_error_branches(void)

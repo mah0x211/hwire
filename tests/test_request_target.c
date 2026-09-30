@@ -37,7 +37,7 @@ static int parse_request_from(const char *buf, size_t len, size_t *pos,
     };
     captured_request = (hwire_request_t){0};
     request_called   = 0;
-    return hwire_parse_request(&ctx, buf, len, pos, maxlen, 10);
+    return hwire_parse_request(&ctx, buf, len, pos, maxlen);
 }
 
 static int parse_request(const char *buf, size_t len, size_t maxlen)

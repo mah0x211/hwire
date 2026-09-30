@@ -97,3 +97,17 @@ void print_test_summary(void)
     fprintf(stdout, "  Passed: %d\n", g_tests_passed);
     fprintf(stdout, "  Failed: %d\n", g_tests_failed);
 }
+
+/* Store actual pair descriptors; reject before writing beyond capacity. */
+int capacity_pair_cb(hwire_ctx_t *ctx, hwire_kv_pair_t *pair)
+{
+    test_capacity_t *storage = ctx->uctx;
+    storage->calls++;
+    if (storage->count >= storage->capacity ||
+        storage->count >= sizeof(storage->pairs) / sizeof(storage->pairs[0])) {
+        storage->error = HWIRE_ENOBUFS;
+        return -1;
+    }
+    storage->pairs[storage->count++] = *pair;
+    return 0;
+}

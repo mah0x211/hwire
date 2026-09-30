@@ -19,7 +19,7 @@ void test_parse_request_valid(void)
     };
     size_t pos      = 0;
     const char *buf = "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n";
-    int rv = hwire_parse_request(&cb, buf, strlen(buf), &pos, 1024, 10);
+    int rv = hwire_parse_request(&cb, buf, strlen(buf), &pos, 1024);
     ASSERT_OK(rv);
     ASSERT_EQ(pos, strlen(buf));
 
@@ -43,7 +43,7 @@ void test_parse_request_cb_fail(void)
     };
     size_t pos      = 0;
     const char *buf = "GET / HTTP/1.1\r\n\r\n";
-    int rv = hwire_parse_request(&cb, buf, strlen(buf), &pos, 1024, 10);
+    int rv = hwire_parse_request(&cb, buf, strlen(buf), &pos, 1024);
     ASSERT_EQ(rv, HWIRE_ECALLBACK);
 
     TEST_END();
@@ -74,32 +74,32 @@ void test_parse_request_method_errors(void)
     /* First char is not tchar */
     buf = "@GET / HTTP/1.1\r\n\r\n";
     pos = 0;
-    rv  = hwire_parse_request(&cb, buf, strlen(buf), &pos, 1024, 10);
+    rv  = hwire_parse_request(&cb, buf, strlen(buf), &pos, 1024);
     ASSERT_EQ(rv, HWIRE_EMETHOD);
 
     /* Method without space (string ends) */
     buf = "GET";
     pos = 0;
-    rv  = hwire_parse_request(&cb, buf, strlen(buf), &pos, 1024, 10);
+    rv  = hwire_parse_request(&cb, buf, strlen(buf), &pos, 1024);
     ASSERT_EQ(rv, HWIRE_EAGAIN);
 
     /* Method length exceeds maxlen (tchar run fills the budget) */
     buf = "VERYLONGMETHOD / HTTP/1.1\r\n\r\n";
     pos = 0;
-    rv  = hwire_parse_request(&cb, buf, strlen(buf), &pos, 8, 10);
+    rv  = hwire_parse_request(&cb, buf, strlen(buf), &pos, 8);
     ASSERT_EQ(rv, HWIRE_ELEN);
 
     /* Empty URI (GET  HTTP/1.1) */
     buf = "GET  HTTP/1.1\r\n\r\n";
     pos = 0;
-    rv  = hwire_parse_request(&cb, buf, strlen(buf), &pos, 1024, 10);
+    rv  = hwire_parse_request(&cb, buf, strlen(buf), &pos, 1024);
     /* Should fail with HWIRE_EURI (empty request-target is invalid) */
     ASSERT_EQ(rv, HWIRE_EURI);
 
     /* Non-space char after method */
     buf = "GET@/ HTTP/1.1\r\n\r\n";
     pos = 0;
-    rv  = hwire_parse_request(&cb, buf, strlen(buf), &pos, 1024, 10);
+    rv  = hwire_parse_request(&cb, buf, strlen(buf), &pos, 1024);
     ASSERT_EQ(rv, HWIRE_EMETHOD);
 
     TEST_END();
@@ -129,13 +129,13 @@ void test_parse_request_version_errors(void)
     /* Unsupported HTTP version */
     buf = "GET / HTTP/2.0\r\n\r\n";
     pos = 0;
-    rv  = hwire_parse_request(&cb, buf, strlen(buf), &pos, 1024, 10);
+    rv  = hwire_parse_request(&cb, buf, strlen(buf), &pos, 1024);
     ASSERT_EQ(rv, HWIRE_EVERSION);
 
     /* Non-CRLF char after version */
     buf = "GET / HTTP/1.1X";
     pos = 0;
-    rv  = hwire_parse_request(&cb, buf, strlen(buf), &pos, 1024, 10);
+    rv  = hwire_parse_request(&cb, buf, strlen(buf), &pos, 1024);
     ASSERT_EQ(rv, HWIRE_EVERSION);
 
     TEST_END();
@@ -163,19 +163,19 @@ void test_parse_request_uri_errors(void)
     /* URI exceeds maxlen (no SP within maxlen) */
     buf = "GET /verylongpathwithoutspaces HTTP/1.1\r\n\r\n";
     pos = 0;
-    rv  = hwire_parse_request(&cb, buf, strlen(buf), &pos, 10, 10);
+    rv  = hwire_parse_request(&cb, buf, strlen(buf), &pos, 10);
     ASSERT_EQ(rv, HWIRE_ELEN);
 
     /* full request-line fits within maxlen (cumulative total) → OK */
     buf = "GET /sp HTTP/1.1\r\n\r\n";
     pos = 0;
-    rv  = hwire_parse_request(&cb, buf, strlen(buf), &pos, 100, 10);
+    rv  = hwire_parse_request(&cb, buf, strlen(buf), &pos, 100);
     ASSERT_OK(rv);
 
     /* No space after URI */
     buf = "GET /path";
     pos = 0;
-    rv  = hwire_parse_request(&cb, buf, strlen(buf), &pos, 1024, 10);
+    rv  = hwire_parse_request(&cb, buf, strlen(buf), &pos, 1024);
     ASSERT_EQ(rv, HWIRE_EAGAIN);
 
     TEST_END();
@@ -206,31 +206,31 @@ void test_parse_request_eol_errors(void)
     /* Empty request */
     buf = "";
     pos = 0;
-    rv  = hwire_parse_request(&cb, buf, 0, &pos, 1024, 10);
+    rv  = hwire_parse_request(&cb, buf, 0, &pos, 1024);
     ASSERT_EQ(rv, HWIRE_EAGAIN);
 
     /* Leading CRLF skipped */
     buf = "\r\nGET / HTTP/1.1\r\n\r\n";
     pos = 0;
-    rv  = hwire_parse_request(&cb, buf, strlen(buf), &pos, 1024, 10);
+    rv  = hwire_parse_request(&cb, buf, strlen(buf), &pos, 1024);
     ASSERT_OK(rv);
 
     /* Null after version (incomplete) */
     buf = "GET / HTTP/1.1";
     pos = 0;
-    rv  = hwire_parse_request(&cb, buf, strlen(buf), &pos, 1024, 10);
+    rv  = hwire_parse_request(&cb, buf, strlen(buf), &pos, 1024);
     ASSERT_EQ(rv, HWIRE_EAGAIN);
 
     /* CR followed by null */
     buf = "GET / HTTP/1.1\r";
     pos = 0;
-    rv  = hwire_parse_request(&cb, buf, strlen(buf), &pos, 1024, 10);
+    rv  = hwire_parse_request(&cb, buf, strlen(buf), &pos, 1024);
     ASSERT_EQ(rv, HWIRE_EAGAIN);
 
     /* CR followed by non-LF */
     buf = "GET / HTTP/1.1\rX";
     pos = 0;
-    rv  = hwire_parse_request(&cb, buf, strlen(buf), &pos, 1024, 10);
+    rv  = hwire_parse_request(&cb, buf, strlen(buf), &pos, 1024);
     ASSERT_EQ(rv, HWIRE_EEOL);
 
     TEST_END();
@@ -258,7 +258,7 @@ void test_parse_request_header_errors(void)
     /* Header parse error propagation */
     buf = "GET / HTTP/1.1\r\n@Invalid: value\r\n\r\n";
     pos = 0;
-    rv  = hwire_parse_request(&cb, buf, strlen(buf), &pos, 1024, 10);
+    rv  = hwire_parse_request(&cb, buf, strlen(buf), &pos, 1024);
     ASSERT_EQ(rv, HWIRE_EHDRNAME);
 
     TEST_END();
@@ -289,19 +289,19 @@ void test_parse_request_uri_forms(void)
     /* absolute-form */
     buf = "GET http://example.org/pub/WWW/TheProject.html HTTP/1.1\r\n\r\n";
     pos = 0;
-    rv  = hwire_parse_request(&cb, buf, strlen(buf), &pos, 1024, 10);
+    rv  = hwire_parse_request(&cb, buf, strlen(buf), &pos, 1024);
     ASSERT_OK(rv);
 
     /* authority-form */
     buf = "CONNECT www.example.com:80 HTTP/1.1\r\n\r\n";
     pos = 0;
-    rv  = hwire_parse_request(&cb, buf, strlen(buf), &pos, 1024, 10);
+    rv  = hwire_parse_request(&cb, buf, strlen(buf), &pos, 1024);
     ASSERT_OK(rv);
 
     /* asterisk-form */
     buf = "OPTIONS * HTTP/1.1\r\n\r\n";
     pos = 0;
-    rv  = hwire_parse_request(&cb, buf, strlen(buf), &pos, 1024, 10);
+    rv  = hwire_parse_request(&cb, buf, strlen(buf), &pos, 1024);
     ASSERT_OK(rv);
 
     TEST_END();
@@ -334,26 +334,26 @@ void test_parse_request_uri_invalid_chars(void)
      */
     buf = "GET /p\x01 HTTP/1.1\r\n\r\n";
     pos = 0;
-    rv  = hwire_parse_request(&cb, buf, strlen(buf), &pos, 1024, 10);
+    rv  = hwire_parse_request(&cb, buf, strlen(buf), &pos, 1024);
     ASSERT_EQ(rv, HWIRE_EURI);
 
     /* RFC 3986: '{' (0x7B), '}' (0x7D), '|' (0x7C) are not URI characters →
        MUST reject: HWIRE_EURI. */
     buf = "GET /path{json}|pipe HTTP/1.1\r\n\r\n";
     pos = 0;
-    rv  = hwire_parse_request(&cb, buf, strlen(buf), &pos, 1024, 10);
+    rv  = hwire_parse_request(&cb, buf, strlen(buf), &pos, 1024);
     ASSERT_EQ(rv, HWIRE_EURI);
 
     /* RFC 3986: '|' (0x7C) is not a URI character → MUST reject: HWIRE_EURI. */
     buf = "GET /foo|bar HTTP/1.1\r\n\r\n";
     pos = 0;
-    rv  = hwire_parse_request(&cb, buf, strlen(buf), &pos, 1024, 10);
+    rv  = hwire_parse_request(&cb, buf, strlen(buf), &pos, 1024);
     ASSERT_EQ(rv, HWIRE_EURI);
 
     /* A non-origin target must begin with an absolute-URI scheme. */
     buf = "GET 12345";
     pos = 0;
-    rv  = hwire_parse_request(&cb, buf, strlen(buf), &pos, 1024, 10);
+    rv  = hwire_parse_request(&cb, buf, strlen(buf), &pos, 1024);
     ASSERT_EQ(rv, HWIRE_EURI);
 
     /* Long header value (SIMD coverage): 64 VCHAR characters */
@@ -361,7 +361,7 @@ void test_parse_request_uri_invalid_chars(void)
           "1234567890123456789012345678901234567890123456789012345678901234\r\n"
           "\r\n";
     pos = 0;
-    rv  = hwire_parse_headers(&cb, buf, strlen(buf), &pos, 1024, 10);
+    rv  = hwire_parse_headers(&cb, buf, strlen(buf), &pos, 1024);
     ASSERT_OK(rv);
 
     TEST_END();
@@ -384,7 +384,7 @@ void test_parse_request_lf_eol(void)
     };
     size_t pos      = 0;
     const char *buf = "GET / HTTP/1.1\n\r\n";
-    int rv = hwire_parse_request(&cb, buf, strlen(buf), &pos, 1024, 10);
+    int rv = hwire_parse_request(&cb, buf, strlen(buf), &pos, 1024);
     ASSERT_OK(rv);
     ASSERT_EQ(pos, strlen(buf));
 
@@ -417,32 +417,32 @@ void test_parse_request_uri_chars(void)
     /* RFC 3986 §2.3: '~' (0x7E) is an unreserved character — MUST accept */
     buf = "GET /path~file HTTP/1.1\r\n\r\n";
     pos = 0;
-    rv  = hwire_parse_request(&cb, buf, strlen(buf), &pos, 1024, 10);
+    rv  = hwire_parse_request(&cb, buf, strlen(buf), &pos, 1024);
     ASSERT_OK(rv);
 
     /* '~' at the start of the path — MUST accept */
     buf = "GET /~user HTTP/1.1\r\n\r\n";
     pos = 0;
-    rv  = hwire_parse_request(&cb, buf, strlen(buf), &pos, 1024, 10);
+    rv  = hwire_parse_request(&cb, buf, strlen(buf), &pos, 1024);
     ASSERT_OK(rv);
 
     /* RFC 3986: raw byte 0x80 (obs-text) is not a URI character; must be
      * percent-encoded → MUST reject with HWIRE_EURI */
     buf = "GET /\x80 HTTP/1.1\r\n\r\n";
     pos = 0;
-    rv  = hwire_parse_request(&cb, buf, strlen(buf), &pos, 1024, 10);
+    rv  = hwire_parse_request(&cb, buf, strlen(buf), &pos, 1024);
     ASSERT_EQ(rv, HWIRE_EURI);
 
     /* RFC 9110 §9.1: method = token = 1*tchar; '!' is tchar → MUST accept */
     buf = "!GET / HTTP/1.1\r\n\r\n";
     pos = 0;
-    rv  = hwire_parse_request(&cb, buf, strlen(buf), &pos, 1024, 10);
+    rv  = hwire_parse_request(&cb, buf, strlen(buf), &pos, 1024);
     ASSERT_OK(rv);
 
     /* '#' is tchar → MUST accept as part of method */
     buf = "#tag / HTTP/1.1\r\n\r\n";
     pos = 0;
-    rv  = hwire_parse_request(&cb, buf, strlen(buf), &pos, 1024, 10);
+    rv  = hwire_parse_request(&cb, buf, strlen(buf), &pos, 1024);
     ASSERT_OK(rv);
 
     TEST_END();
@@ -570,7 +570,7 @@ void test_parse_request_content_verification(void)
         const char *buf = "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n";
         exp.buf         = buf;
         exp.buf_len     = strlen(buf);
-        int rv = hwire_parse_request(&cb, buf, strlen(buf), &pos, 1024, 10);
+        int rv = hwire_parse_request(&cb, buf, strlen(buf), &pos, 1024);
         ASSERT_OK(rv);
         ASSERT_EQ(exp.called, 1);
         ASSERT_EQ(exp.failed, 0);
@@ -590,7 +590,7 @@ void test_parse_request_content_verification(void)
         const char *buf = "POST /path?q=1 HTTP/1.0\r\n\r\n";
         exp.buf         = buf;
         exp.buf_len     = strlen(buf);
-        int rv = hwire_parse_request(&cb, buf, strlen(buf), &pos, 1024, 10);
+        int rv = hwire_parse_request(&cb, buf, strlen(buf), &pos, 1024);
         ASSERT_OK(rv);
         ASSERT_EQ(exp.called, 1);
         ASSERT_EQ(exp.failed, 0);
@@ -610,7 +610,7 @@ void test_parse_request_content_verification(void)
         const char *buf = "GET / HTTP/1.1\r\nContent-Type: text/html\r\n\r\n";
         exp.buf         = buf;
         exp.buf_len     = strlen(buf);
-        int rv = hwire_parse_request(&cb, buf, strlen(buf), &pos, 1024, 10);
+        int rv = hwire_parse_request(&cb, buf, strlen(buf), &pos, 1024);
         ASSERT_OK(rv);
         ASSERT_EQ(exp.called, 1);
         ASSERT_EQ(exp.failed, 0);
@@ -642,28 +642,28 @@ void test_parse_request_maxlen_cumulative(void)
      * request-line 16 + "Host: x\r\n" 9 + terminating CRLF 2 = 27 bytes */
     buf = "GET / HTTP/1.1\r\nHost: x\r\n\r\n";
     pos = 0;
-    rv  = hwire_parse_request(&cb, buf, strlen(buf), &pos, 27, 16);
+    rv  = hwire_parse_request(&cb, buf, strlen(buf), &pos, 27);
     ASSERT_OK(rv);
     ASSERT_EQ(pos, strlen(buf));
 
     /* one byte short: the header value + CRLF overflows the shared budget */
     pos = 0;
-    rv  = hwire_parse_request(&cb, buf, strlen(buf), &pos, 26, 16);
+    rv  = hwire_parse_request(&cb, buf, strlen(buf), &pos, 26);
     ASSERT_EQ(rv, HWIRE_EHDRLEN);
 
     /* budget too small for the request-line itself → HWIRE_ELEN */
     pos = 0;
-    rv  = hwire_parse_request(&cb, buf, strlen(buf), &pos, 10, 16);
+    rv  = hwire_parse_request(&cb, buf, strlen(buf), &pos, 10);
     ASSERT_EQ(rv, HWIRE_ELEN);
 
     /* cumulative across multiple headers:
      * request-line 16 + "A: 1\r\n" 6 + "B: 22\r\n" 7 + CRLF 2 = 31 */
     buf = "GET / HTTP/1.1\r\nA: 1\r\nB: 22\r\n\r\n";
     pos = 0;
-    rv  = hwire_parse_request(&cb, buf, strlen(buf), &pos, 31, 16);
+    rv  = hwire_parse_request(&cb, buf, strlen(buf), &pos, 31);
     ASSERT_OK(rv);
     pos = 0;
-    rv  = hwire_parse_request(&cb, buf, strlen(buf), &pos, 30, 16);
+    rv  = hwire_parse_request(&cb, buf, strlen(buf), &pos, 30);
     ASSERT_EQ(rv, HWIRE_EHDRLEN);
 
     TEST_END();

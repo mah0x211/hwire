@@ -10,7 +10,7 @@
  * extensions. MUST return HWIRE_EAGAIN for incomplete input (no CRLF yet). MUST
  * reject: non-hex character → HWIRE_EILSEQ MUST reject: empty extension name →
  * HWIRE_EEXTNAME MUST reject: chunk-size exceeding uint32_t range →
- * HWIRE_ERANGE MUST return HWIRE_ENOBUFS if max extension count is exceeded.
+ * HWIRE_ERANGE. Caller-owned extension limits stop parsing with HWIRE_ECALLBACK.
  */
 void test_parse_chunksize_valid(void)
 {
@@ -25,97 +25,97 @@ void test_parse_chunksize_valid(void)
     /* RFC 9112 §7.1: HEXDIG includes A-F (uppercase) */
     buf = "1A\r\n";
     pos = 0;
-    rv  = hwire_parse_chunksize(&cb, buf, strlen(buf), &pos, 100, 10);
+    rv  = hwire_parse_chunksize(&cb, buf, strlen(buf), &pos, 100);
     ASSERT_OK(rv);
     ASSERT_EQ(pos, 4);
 
     /* RFC 9112 §7.1: chunk-size "0" terminates the chunked body (last-chunk) */
     buf = "0\r\n";
     pos = 0;
-    rv  = hwire_parse_chunksize(&cb, buf, strlen(buf), &pos, 100, 10);
+    rv  = hwire_parse_chunksize(&cb, buf, strlen(buf), &pos, 100);
     ASSERT_OK(rv);
     ASSERT_EQ(pos, 3);
 
     /* MUST return HWIRE_EAGAIN: empty input */
     buf = "";
     pos = 0;
-    rv  = hwire_parse_chunksize(&cb, buf, 0, &pos, 100, 10);
+    rv  = hwire_parse_chunksize(&cb, buf, 0, &pos, 100);
     ASSERT_EQ(rv, HWIRE_EAGAIN);
 
     /* MUST reject: 'G' is not a valid HEXDIG → HWIRE_EILSEQ */
     buf = "G\r\n";
     pos = 0;
-    rv  = hwire_parse_chunksize(&cb, buf, strlen(buf), &pos, 100, 10);
+    rv  = hwire_parse_chunksize(&cb, buf, strlen(buf), &pos, 100);
     ASSERT_EQ(rv, HWIRE_EILSEQ);
 
     /* MUST return HWIRE_EAGAIN: chunk-size digits present but no CRLF yet */
     buf = "1A";
     pos = 0;
-    rv  = hwire_parse_chunksize(&cb, buf, strlen(buf), &pos, 100, 10);
+    rv  = hwire_parse_chunksize(&cb, buf, strlen(buf), &pos, 100);
     ASSERT_EQ(rv, HWIRE_EAGAIN);
 
     /* MUST return HWIRE_EAGAIN: chunk-size and CR received but LF not yet
        received */
     buf = "1A\r";
     pos = 0;
-    rv  = hwire_parse_chunksize(&cb, buf, strlen(buf), &pos, 100, 10);
+    rv  = hwire_parse_chunksize(&cb, buf, strlen(buf), &pos, 100);
     ASSERT_EQ(rv, HWIRE_EAGAIN);
 
     /* RFC 9112 §7.1.1: empty extension name (";=val") → HWIRE_EEXTNAME */
     buf = "1A;=val\r\n";
     pos = 0;
-    rv  = hwire_parse_chunksize(&cb, buf, strlen(buf), &pos, 100, 10);
+    rv  = hwire_parse_chunksize(&cb, buf, strlen(buf), &pos, 100);
     ASSERT_EQ(rv, HWIRE_EEXTNAME);
 
     /* RFC 9112 §7.1.1: 0x01 is not tchar → invalid extension name →
        HWIRE_EILSEQ */
     buf = "1A;k\x01\r\n";
     pos = 0;
-    rv  = hwire_parse_chunksize(&cb, buf, strlen(buf), &pos, 100, 10);
+    rv  = hwire_parse_chunksize(&cb, buf, strlen(buf), &pos, 100);
     ASSERT_EQ(rv, HWIRE_EILSEQ);
 
     /* MUST return HWIRE_EAGAIN: extension name started but input ends (no
        CRLF) */
     buf = "1A;key";
     pos = 0;
-    rv  = hwire_parse_chunksize(&cb, buf, strlen(buf), &pos, 100, 10);
+    rv  = hwire_parse_chunksize(&cb, buf, strlen(buf), &pos, 100);
     ASSERT_EQ(rv, HWIRE_EAGAIN);
 
     /* MUST return HWIRE_ERANGE: chunk-size value overflows uint32_t */
     buf = "100000000\r\n";
     pos = 0;
-    rv  = hwire_parse_chunksize(&cb, buf, strlen(buf), &pos, 100, 10);
+    rv  = hwire_parse_chunksize(&cb, buf, strlen(buf), &pos, 100);
     ASSERT_EQ(rv, HWIRE_ERANGE);
 
     /* MUST return HWIRE_ELEN: OWS in extension exceeds maxlen */
     buf = "1A;      \r\n";
     pos = 0;
-    rv  = hwire_parse_chunksize(&cb, buf, strlen(buf), &pos, 5, 10);
+    rv  = hwire_parse_chunksize(&cb, buf, strlen(buf), &pos, 5);
     ASSERT_EQ(rv, HWIRE_ELEN);
 
     /* RFC 9112 §7.1.1: extension with no value (name-only) MUST be accepted */
     buf = "1A; ext\r\n";
     pos = 0;
-    rv  = hwire_parse_chunksize(&cb, buf, strlen(buf), &pos, 100, 10);
+    rv  = hwire_parse_chunksize(&cb, buf, strlen(buf), &pos, 100);
     ASSERT_OK(rv);
 
     /* RFC 9112 §7.1.1: extension with token value MUST be accepted */
     buf = "1A; ext=val\r\n";
     pos = 0;
-    rv  = hwire_parse_chunksize(&cb, buf, strlen(buf), &pos, 100, 10);
+    rv  = hwire_parse_chunksize(&cb, buf, strlen(buf), &pos, 100);
     ASSERT_OK(rv);
 
     /* RFC 9112 §7.1.1: '@' is not tchar → invalid extension name →
        HWIRE_EEXTNAME */
     buf = "1A; @=val\r\n";
     pos = 0;
-    rv  = hwire_parse_chunksize(&cb, buf, strlen(buf), &pos, 100, 10);
+    rv  = hwire_parse_chunksize(&cb, buf, strlen(buf), &pos, 100);
     ASSERT_EQ(rv, HWIRE_EEXTNAME);
 
     /* RFC 9112 §7.1.1: extension with quoted-string value MUST be accepted */
     buf = "1A; ext=\"quoted\"\r\n";
     pos = 0;
-    rv  = hwire_parse_chunksize(&cb, buf, strlen(buf), &pos, 100, 10);
+    rv  = hwire_parse_chunksize(&cb, buf, strlen(buf), &pos, 100);
     ASSERT_OK(rv);
 
     /* MUST return HWIRE_ELEN: quoted-string ext-val exceeds the line budget.
@@ -124,14 +124,23 @@ void test_parse_chunksize_valid(void)
      * completed in-budget. */
     buf = "1A;e=\"12345678\"\r\n";
     pos = 0;
-    rv  = hwire_parse_chunksize(&cb, buf, strlen(buf), &pos, 12, 10);
+    rv  = hwire_parse_chunksize(&cb, buf, strlen(buf), &pos, 12);
     ASSERT_EQ(rv, HWIRE_ELEN);
 
-    /* MUST return HWIRE_ENOBUFS if max extension count is exceeded */
-    buf = "1A; e1; e2; x";
-    pos = 0;
-    rv  = hwire_parse_chunksize(&cb, buf, strlen(buf), &pos, 100, 1);
-    ASSERT_EQ(rv, HWIRE_ENOBUFS);
+    /* Reject through the callback before parsing another extension. */
+    {
+        test_capacity_t storage = {.capacity = 1};
+        hwire_ctx_t limited = cb;
+        limited.uctx = &storage;
+        limited.chunksize_ext_cb = capacity_pair_cb;
+        buf = "1A; e1; e2; x";
+        pos = 0;
+        rv = hwire_parse_chunksize(&limited, buf, strlen(buf), &pos, 100);
+        ASSERT_EQ(rv, HWIRE_ECALLBACK);
+        ASSERT_EQ(storage.error, HWIRE_ENOBUFS);
+        ASSERT_EQ(storage.count, 1);
+        ASSERT_EQ(storage.calls, 2);
+    }
 
     TEST_END();
 }
@@ -154,7 +163,7 @@ void test_parse_chunksize_callback_errors(void)
     /* chunksize callback failure */
     buf = "1A\r\n";
     pos = 0;
-    rv  = hwire_parse_chunksize(&cb, buf, strlen(buf), &pos, 100, 10);
+    rv  = hwire_parse_chunksize(&cb, buf, strlen(buf), &pos, 100);
     ASSERT_EQ(rv, HWIRE_ECALLBACK);
 
     TEST_END();
@@ -178,7 +187,7 @@ void test_parse_chunksize_crlf_errors(void)
        HWIRE_EEOL */
     buf = "1A\rX";
     pos = 0;
-    rv  = hwire_parse_chunksize(&cb, buf, strlen(buf), &pos, 100, 10);
+    rv  = hwire_parse_chunksize(&cb, buf, strlen(buf), &pos, 100);
     ASSERT_EQ(rv, HWIRE_EEOL);
 
     TEST_END();
@@ -203,13 +212,13 @@ void test_parse_chunksize_ext_callback_errors(void)
        value) */
     buf = "1A;ext\r\n";
     pos = 0;
-    rv  = hwire_parse_chunksize(&cb, buf, strlen(buf), &pos, 100, 10);
+    rv  = hwire_parse_chunksize(&cb, buf, strlen(buf), &pos, 100);
     ASSERT_EQ(rv, HWIRE_ECALLBACK);
 
     /* ext callback fails before parsing the next extension */
     buf = "1A;ext1;ext2\r\n";
     pos = 0;
-    rv  = hwire_parse_chunksize(&cb, buf, strlen(buf), &pos, 100, 10);
+    rv  = hwire_parse_chunksize(&cb, buf, strlen(buf), &pos, 100);
     ASSERT_EQ(rv, HWIRE_ECALLBACK);
 
     TEST_END();
@@ -236,7 +245,7 @@ void test_parse_chunksize_ext_value_errors(void)
        HWIRE_EEXTVAL */
     buf = "1A;e=\"\x01\"\r\n";
     pos = 0;
-    rv  = hwire_parse_chunksize(&cb, buf, strlen(buf), &pos, 100, 10);
+    rv  = hwire_parse_chunksize(&cb, buf, strlen(buf), &pos, 100);
     ASSERT_EQ(rv, HWIRE_EEXTVAL);
 
     TEST_END();
@@ -337,7 +346,7 @@ void test_parse_chunksize_content_verification(void)
                                    .chunksize_ext_cb = mock_chunksize_ext_cb};
         size_t pos              = 0;
         const char *buf         = "1a\r\n";
-        int rv = hwire_parse_chunksize(&cb, buf, strlen(buf), &pos, 100, 10);
+        int rv = hwire_parse_chunksize(&cb, buf, strlen(buf), &pos, 100);
         ASSERT_OK(rv);
         ASSERT_EQ(exp.called, 1);
         ASSERT_EQ(exp.failed, 0);
@@ -351,7 +360,7 @@ void test_parse_chunksize_content_verification(void)
                                    .chunksize_ext_cb = mock_chunksize_ext_cb};
         size_t pos              = 0;
         const char *buf         = "FF\r\n";
-        int rv = hwire_parse_chunksize(&cb, buf, strlen(buf), &pos, 100, 10);
+        int rv = hwire_parse_chunksize(&cb, buf, strlen(buf), &pos, 100);
         ASSERT_OK(rv);
         ASSERT_EQ(exp.called, 1);
         ASSERT_EQ(exp.failed, 0);
@@ -365,7 +374,7 @@ void test_parse_chunksize_content_verification(void)
                                    .chunksize_ext_cb = mock_chunksize_ext_cb};
         size_t pos              = 0;
         const char *buf         = "0\r\n";
-        int rv = hwire_parse_chunksize(&cb, buf, strlen(buf), &pos, 100, 10);
+        int rv = hwire_parse_chunksize(&cb, buf, strlen(buf), &pos, 100);
         ASSERT_OK(rv);
         ASSERT_EQ(exp.called, 1);
         ASSERT_EQ(exp.failed, 0);
@@ -381,7 +390,7 @@ void test_parse_chunksize_content_verification(void)
         const char *buf = "1a;ext=val\r\n";
         exp.buf         = buf;
         exp.buf_len     = strlen(buf);
-        int rv = hwire_parse_chunksize(&cb, buf, strlen(buf), &pos, 100, 10);
+        int rv = hwire_parse_chunksize(&cb, buf, strlen(buf), &pos, 100);
         ASSERT_OK(rv);
         ASSERT_EQ(exp.size_called, 1);
         ASSERT_EQ(exp.ext_called, 1);
@@ -398,7 +407,7 @@ void test_parse_chunksize_content_verification(void)
         const char *buf = "1a;flag\r\n";
         exp.buf         = buf;
         exp.buf_len     = strlen(buf);
-        int rv = hwire_parse_chunksize(&cb, buf, strlen(buf), &pos, 100, 10);
+        int rv = hwire_parse_chunksize(&cb, buf, strlen(buf), &pos, 100);
         ASSERT_OK(rv);
         ASSERT_EQ(exp.size_called, 1);
         ASSERT_EQ(exp.ext_called, 1);
@@ -408,54 +417,38 @@ void test_parse_chunksize_content_verification(void)
     TEST_END();
 }
 
-/* Counts chunk-extension callback invocations via ctx->uctx (int *). */
-static int count_ext_cb(hwire_ctx_t *ctx, hwire_chunksize_ext_t *ext)
+/* Both intermediate and final extension callbacks enforce storage capacity. */
+void test_parse_chunksize_capacity_limit(void)
 {
-    (void)ext;
-    (*(int *)ctx->uctx)++;
-    return 0;
-}
-
-/*
- * Covers: RFC 9112 §7.1.1 chunk-extension count limit (maxexts).
- * MUST: chunksize_ext_cb fires at most `maxexts` times. A chunk-size line
- * carrying more than `maxexts` extensions MUST return HWIRE_ENOBUFS without
- * delivering the over-limit extension — parity with maxnhdrs / maxnparams.
- * Regression: previously the final extension (and an off-by-one in the loop
- * check) allowed maxexts+1 extensions to be delivered.
- */
-void test_parse_chunksize_maxexts_limit(void)
-{
-    TEST_START("test_parse_chunksize_maxexts_limit");
-
+    TEST_START("test_parse_chunksize_capacity_limit");
     static const struct {
         const char *buf;
-        uint8_t maxexts;
-        int expect_rv;
-        int expect_calls;
+        size_t capacity;
+        int expected;
+        size_t count;
     } cases[] = {
-        {"0;a\r\n",       1, HWIRE_OK,      1}, /* exactly maxexts */
-        {"0;a;b\r\n",     1, HWIRE_ENOBUFS, 1}, /* maxexts+1 → ENOBUFS */
-        {"0;a;b\r\n",     2, HWIRE_OK,      2},
-        {"0;a;b;c\r\n",   2, HWIRE_ENOBUFS, 2},
-        {"0;a=1;b=2\r\n", 1, HWIRE_ENOBUFS, 1},
-        {"0;a=1;b=2\r\n", 2, HWIRE_OK,      2},
-        {"0;a\r\n",       0, HWIRE_ENOBUFS, 0}, /* no extensions allowed */
-        {"0\r\n",         0, HWIRE_OK,      0}, /* no extensions present */
+        {"0;a\r\n", 1, HWIRE_OK, 1},
+        {"0;a;b\r\n", 1, HWIRE_ECALLBACK, 1},
+        {"0;a;b\r\n", 2, HWIRE_OK, 2},
+        {"0;a;b;c\r\n", 2, HWIRE_ECALLBACK, 2},
+        {"0;a=1;b=2\r\n", 1, HWIRE_ECALLBACK, 1},
+        {"0;a=1;b=2\r\n", 2, HWIRE_OK, 2},
+        {"0;a\r\n", 0, HWIRE_ECALLBACK, 0},
+        {"0\r\n", 0, HWIRE_OK, 0},
     };
-
     for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
-        int calls      = 0;
-        hwire_ctx_t cb = {.uctx             = &calls,
-                          .chunksize_cb     = mock_chunksize_cb,
-                          .chunksize_ext_cb = count_ext_cb};
-        size_t pos     = 0;
-        int rv = hwire_parse_chunksize(&cb, cases[i].buf, strlen(cases[i].buf),
-                                       &pos, 100, cases[i].maxexts);
-        ASSERT_EQ(rv, cases[i].expect_rv);
-        ASSERT_EQ(calls, cases[i].expect_calls);
+        test_capacity_t storage = {.capacity = cases[i].capacity};
+        hwire_ctx_t ctx = {.uctx = &storage,
+                           .chunksize_cb = mock_chunksize_cb,
+                           .chunksize_ext_cb = capacity_pair_cb};
+        size_t pos = 0;
+        int rv = hwire_parse_chunksize(&ctx, cases[i].buf, strlen(cases[i].buf),
+                                       &pos, 100);
+        ASSERT_EQ(rv, cases[i].expected);
+        ASSERT_EQ(storage.count, cases[i].count);
+        ASSERT_EQ(storage.calls, cases[i].count + (rv == HWIRE_ECALLBACK));
+        ASSERT_EQ(storage.error, rv == HWIRE_ECALLBACK ? HWIRE_ENOBUFS : 0);
     }
-
     TEST_END();
 }
 
@@ -467,7 +460,7 @@ int main(void)
     test_parse_chunksize_ext_callback_errors();
     test_parse_chunksize_ext_value_errors();
     test_parse_chunksize_content_verification();
-    test_parse_chunksize_maxexts_limit();
+    test_parse_chunksize_capacity_limit();
     print_test_summary();
     return g_tests_failed;
 }

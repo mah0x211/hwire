@@ -25,7 +25,7 @@ static int parse_request(const char *buf, size_t len, size_t maxlen)
     };
     size_t pos = 0;
 
-    return hwire_parse_request(&ctx, buf, len, &pos, maxlen, 10);
+    return hwire_parse_request(&ctx, buf, len, &pos, maxlen);
 }
 
 static int parse_response(const char *buf, size_t len, size_t maxlen)
@@ -38,7 +38,7 @@ static int parse_response(const char *buf, size_t len, size_t maxlen)
     };
     size_t pos = 0;
 
-    return hwire_parse_response(&ctx, buf, len, &pos, maxlen, 10);
+    return hwire_parse_response(&ctx, buf, len, &pos, maxlen);
 }
 
 static int parse_headers(const char *buf, size_t len, size_t maxlen)
@@ -50,7 +50,7 @@ static int parse_headers(const char *buf, size_t len, size_t maxlen)
     };
     size_t pos = 0;
 
-    return hwire_parse_headers(&ctx, buf, len, &pos, maxlen, 10);
+    return hwire_parse_headers(&ctx, buf, len, &pos, maxlen);
 }
 
 static int parse_parameters(const char *buf, size_t len, size_t maxlen)
@@ -58,7 +58,7 @@ static int parse_parameters(const char *buf, size_t len, size_t maxlen)
     hwire_ctx_t ctx = {.key_lc = {0}, .param_cb = mock_param_cb};
     size_t pos      = 0;
 
-    return hwire_parse_parameters(&ctx, buf, len, &pos, maxlen, 10, 0);
+    return hwire_parse_parameters(&ctx, buf, len, &pos, maxlen, 0);
 }
 
 void test_request_start_line_hard_budget(void)
