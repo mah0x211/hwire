@@ -108,6 +108,38 @@ cc -std=c99 -Isrc -o myapp myapp.c src/hwire.c  # C11 or later also works
 
 Define `HWIRE_NO_SIMD` (e.g. `-DHWIRE_NO_SIMD`) to force the portable scalar implementation on any target, regardless of the detected architecture. `make test-nosimd` builds and runs the test suite in this configuration.
 
+### Building with hwire_table
+
+To retain parsed key/value pairs, also compile `src/hwire_table.c` and copy
+`src/hwire_table.h` and `src/hwire_table_aes.h` into your project:
+
+```sh
+cc -std=c99 -Isrc -o myapp myapp.c src/hwire.c src/hwire_table.c
+```
+
+The table hash is selected at compile time from compiler target features.
+For GCC/Clang builds targeting a CPU with AES instructions, apply these flags
+to the application build, including `hwire_table.c`:
+
+| Target | Native build | Explicit features |
+|---|---|---|
+| ARM64 | `-mcpu=native` | `-march=armv8-a+crypto` |
+| x86-64 | `-march=native` | `-maes -mssse3` |
+
+`native` selects the build machine's CPU. ARM requires NEON and AES/crypto
+features; x86 requires AES, SSE2, and SSSE3. For example, on Apple Silicon:
+
+```sh
+cc -std=c99 -O2 -mcpu=native -Isrc -o myapp myapp.c src/hwire.c src/hwire_table.c
+```
+
+On x86-64, use `-march=native` or `-maes -mssse3` instead. If the required
+features are not enabled, the table uses SipHash-1-3. Define `HWIRE_NO_AES`
+(e.g. `-DHWIRE_NO_AES`) to force SipHash-1-3, or `HWIRE_NO_SIMD` to disable
+both parser SIMD and table AES. No runtime CPU detection is performed.
+
+### Tests
+
 To run the test suite:
 
 ```sh
@@ -820,3 +852,295 @@ for (;;) {
 > **Note:** `hwire_parse_parameters` does not consume the byte following the
 > parameter list. It can return `HWIRE_EAGAIN` after a prefix such as `;` or
 > `name=` when more input can still fit within `maxlen`.
+
+---
+
+# hwire_table
+
+`hwire_table` is hwire's built-in data structure library for retaining
+key/value pairs produced by header, query, and parameter parsing callbacks.
+Build the table alongside the parser as described in
+[Building](#building-with-hwire_table).
+
+## Features
+
+- **Zero allocation** — no internal heap allocation; the caller supplies the
+  entries array and key/value storage.
+- **Fixed capacity, fully usable** — every entry up to the configured capacity
+  can store a pair, including distinct keys. No space needs to be reserved for
+  a load-factor threshold, and no rehashing or resizing occurs. Key and value
+  lengths may vary.
+- **Stable entries** — inserting pairs never moves existing entries or
+  invalidates their addresses.
+- **Borrowed key/value storage** — copies pair descriptors and references the
+  supplied bytes without copying or modifying them.
+- **Exact and ASCII case-insensitive lookup** — supports both comparisons
+  without changing stored keys.
+- **Insertion order** — duplicate traversal and full-table iteration preserve
+  the order in which pairs were pushed.
+- **Accelerated hashing** — selects AES instructions on supported ARM and x86
+  build targets, with SipHash-1-3 as the fallback.
+
+## Storage and keys
+
+- `hwire_table_t` is the table descriptor.
+- `hwire_table_entry_t` is a stored pair and its internal index space. Supply a
+  mutable array on the stack, in static storage, or in caller-allocated memory.
+- `hwire_table_key_t` holds two 64-bit hash-key words, copied by initialization.
+- `hwire_table_iter_t` is an iteration position; start it at zero.
+
+`hwire_table_push` copies an `hwire_kv_pair_t`, whose `key` and `value` are
+`hwire_str_t` slices (`len`, `ptr`). It borrows the referenced bytes. Keep the
+array and referenced storage alive while using the table. Stored keys must
+remain unchanged. Entries remain at stable addresses after subsequent pushes;
+reinitialization invalidates all returned entries and iterator positions.
+Do not modify internal entry or descriptor fields directly.
+
+Keys are length-delimited byte sequences: empty keys, embedded NUL, and UTF-8
+bytes are supported. Exact lookup compares every byte. Case-insensitive lookup
+folds only ASCII `A`–`Z` to `a`–`z`; it does not perform Unicode case folding
+or normalization. Values are stored as supplied.
+
+Capacity counts all pairs, including duplicates. Pass a power of two from
+1 through 32768 to `hwire_table_init`. `HWIRE_TABLE_CAPACITY(n)` rounds a
+requested count up to a supported capacity, so
+`hwire_table_entry_t entries[HWIRE_TABLE_CAPACITY(100)]` provides 128 entries.
+Zero or out-of-range requests produce zero; do not give the macro an
+expression with side effects.
+
+All `capacity` entries can be filled, including with distinct keys: the example
+array can store 128 pairs. No entries need to be reserved to keep the hash index
+below a load-factor threshold. The table never rehashes, resizes, or allocates
+additional storage. After `capacity` pairs have been stored, another push returns
+`HWIRE_TABLE_EFULL`. Deletion is not supported.
+
+## API
+
+```c
+void hwire_table_key_init(hwire_table_key_t *key, uint64_t seed);
+```
+
+Expand a caller-selected 64-bit seed into a deterministic 128-bit key.
+`key` must be non-NULL. This helper adds no entropy. Applications requiring
+secret key material can populate the two `key.words` elements from their
+random source.
+
+```c
+hwire_table_code_t hwire_table_init(hwire_table_t *table,
+                                  hwire_table_entry_t *entries,
+                                  size_t capacity,
+                                  const hwire_table_key_t *key);
+```
+
+Initialize or reset a table, copy the key, and zero the entire entries array.
+All pointers must be non-NULL; the mutable array must hold at least `capacity`
+entries. Return `HWIRE_TABLE_OK`, `HWIRE_TABLE_EINVAL`, or
+`HWIRE_TABLE_ECAPACITY`. Invalid arguments leave the table and array unchanged.
+
+```c
+hwire_table_code_t hwire_table_push(hwire_table_t *table,
+                                  const hwire_kv_pair_t *kv,
+                                  const hwire_table_entry_t **out_entry);
+```
+
+Append one pair to an initialized table. Nonempty slices require non-NULL
+pointers. `out_entry` may be NULL; otherwise it receives the stored entry on
+success and NULL on failure. Return `HWIRE_TABLE_OK`, `HWIRE_TABLE_EINVAL`,
+or `HWIRE_TABLE_EFULL`. A failed push leaves the table unchanged.
+
+```c
+const hwire_table_entry_t *hwire_table_get(const hwire_table_t *table,
+                                         const char *key, size_t keylen);
+const hwire_table_entry_t *hwire_table_get_ci(const hwire_table_t *table,
+                                            const char *key, size_t keylen);
+```
+
+Find the first matching entry in insertion order using exact or ASCII
+case-insensitive comparison. Return NULL when no key matches. `table` must be
+initialized; `key` may be NULL only when `keylen` is zero. A missing key is
+an ordinary lookup result.
+
+```c
+const hwire_table_entry_t *hwire_table_next(const hwire_table_t *table,
+                                          const hwire_table_entry_t *entry);
+const hwire_table_entry_t *hwire_table_next_ci(const hwire_table_t *table,
+                                             const hwire_table_entry_t *entry);
+```
+
+Follow exact or ASCII case-insensitive duplicates in insertion order. Pass a
+live entry from the same table. Return NULL at the end or when `entry` is NULL.
+Use `get` with `next`, or `get_ci` with `next_ci`, to traverse a key group.
+
+```c
+const hwire_table_entry_t *hwire_table_iterate(const hwire_table_t *table,
+                                             hwire_table_iter_t *iter);
+```
+
+Visit every pair in an initialized table in insertion order. Set `*iter` to
+zero before the first call; `iter` must be non-NULL. Each result advances it. At the end, return NULL
+without advancing. Pairs appended during iteration become visible on later
+calls; reset invalidates the iterator position.
+
+| Result | Meaning |
+|---|---|
+| `HWIRE_TABLE_OK` (0) | Operation succeeded |
+| `HWIRE_TABLE_EINVAL` (-1) | Required pointer is NULL or a pair slice is malformed |
+| `HWIRE_TABLE_ECAPACITY` (-2) | Initialization capacity is unsupported |
+| `HWIRE_TABLE_EFULL` (-3) | Pair capacity is exhausted |
+
+## Example
+
+Parse a complete request and retain headers and decoded query parameters in
+separate tables. `request_cb` calls `hwire_parse_query`; `query_cb` and
+`header_cb` append the pairs through the application state in `ctx.uctx`.
+Header names use ASCII case-insensitive lookup, while query keys use exact
+lookup. Both duplicate chains retain insertion order.
+
+`app_request_t` contains the parser context, both tables, their entry arrays,
+and the query decode buffer. Set `app.ctx.uctx` to `&app` so callbacks can use
+this request state. Header slices reference `input`; decoded query slices
+reference `app.query_storage`. Keep the request state and input alive while
+using the tables. The parser's optional `key_lc`
+buffer is left disabled because the table supplies case-insensitive lookup.
+For a header block, use the same header callback with `hwire_parse_headers`.
+
+An insertion failure stops the callback with `HWIRE_ECALLBACK`. The example
+keeps query and table results separately to identify the underlying failure.
+When retrying after `HWIRE_EAGAIN`, reinitialize both tables before parsing
+again, since the parser replays callbacks from the message start.
+
+```c
+#include "hwire_table.h"
+#include <stdio.h>
+
+enum { MAX_HEADERS = 100, MAX_PARAMS = 16 };
+
+typedef struct {
+    hwire_ctx_t ctx;
+    hwire_request_t request;
+    hwire_table_t headers;
+    hwire_table_t query_params;
+    hwire_table_entry_t header_entries[HWIRE_TABLE_CAPACITY(MAX_HEADERS)];
+    hwire_table_entry_t query_entries[HWIRE_TABLE_CAPACITY(MAX_PARAMS)];
+    char query_storage[256];
+    hwire_table_code_t table_result;
+    int query_result;
+} app_request_t;
+
+static int on_query(hwire_ctx_t *ctx, hwire_query_param_t *param)
+{
+    app_request_t *app = ctx->uctx;
+    app->table_result = hwire_table_push(&app->query_params, param, NULL);
+    return app->table_result == HWIRE_TABLE_OK ? 0 : -1;
+}
+
+static int on_request(hwire_ctx_t *ctx, hwire_request_t *request)
+{
+    app_request_t *app = ctx->uctx;
+    app->request = *request;
+    if (request->query.ptr == NULL) {
+        return 0;
+    }
+    size_t pos = 0;
+    app->query_result = hwire_parse_query(ctx, request->query.ptr,
+                                         request->query.len, &pos,
+                                         request->query.len, MAX_PARAMS);
+    return app->query_result == HWIRE_OK ? 0 : -1;
+}
+
+static int on_header(hwire_ctx_t *ctx, hwire_header_t *header)
+{
+    app_request_t *app = ctx->uctx;
+    app->table_result = hwire_table_push(&app->headers, header, NULL);
+    return app->table_result == HWIRE_TABLE_OK ? 0 : -1;
+}
+
+int main(void)
+{
+    const char input[] =
+        "GET /index.html?name=Alice+Smith&tag=A&tag=B HTTP/1.1\r\n"
+        "Host: example.com\r\n"
+        "X-Tag: A\r\n"
+        "x-tag: B\r\n"
+        "X-Tag: C\r\n"
+        "\r\n";
+    app_request_t app;
+    app.ctx = (hwire_ctx_t){0};
+    app.table_result = HWIRE_TABLE_OK;
+    app.query_result = HWIRE_OK;
+    hwire_table_key_t key;
+    hwire_table_key_init(&key, 42); /* deterministic example seed */
+    if (hwire_table_init(&app.headers, app.header_entries,
+                         HWIRE_TABLE_CAPACITY(MAX_HEADERS), &key) != HWIRE_TABLE_OK ||
+        hwire_table_init(&app.query_params, app.query_entries,
+                         HWIRE_TABLE_CAPACITY(MAX_PARAMS), &key) != HWIRE_TABLE_OK) {
+        return 1;
+    }
+
+    app.ctx.uctx = &app;
+    app.ctx.request_cb = on_request;
+    app.ctx.header_cb = on_header;
+    app.ctx.query_cb = on_query;
+    app.ctx.qrybuf.buf = app.query_storage;
+    app.ctx.qrybuf.size = sizeof(app.query_storage);
+    size_t pos = 0;
+    int result = hwire_parse_request(&app.ctx, input, sizeof input - 1, &pos,
+                                     sizeof input - 1, MAX_HEADERS);
+    if (result != HWIRE_OK) {
+        fprintf(stderr, "parse error: %d, query result: %d, table result: %d\n",
+                result, app.query_result, app.table_result);
+        return 1;
+    }
+
+    printf("%.*s %.*s\n", (int)app.request.method.len, app.request.method.ptr,
+           (int)app.request.uri.len, app.request.uri.ptr);
+
+    printf("header x-tag: ");
+    for (const hwire_table_entry_t *e = hwire_table_get_ci(&app.headers, "X-TAG", 5);
+         e != NULL; e = hwire_table_next_ci(&app.headers, e)) {
+        fwrite(e->kv.value.ptr, 1, e->kv.value.len, stdout);
+    }
+    putchar('\n');
+
+    const hwire_table_entry_t *name = hwire_table_get(&app.query_params, "name", 4);
+    if (name != NULL) {
+        printf("query name: %.*s\n", (int)name->kv.value.len, name->kv.value.ptr);
+    }
+    printf("query tag: ");
+    for (const hwire_table_entry_t *e = hwire_table_get(&app.query_params, "tag", 3);
+         e != NULL; e = hwire_table_next(&app.query_params, e)) {
+        fwrite(e->kv.value.ptr, 1, e->kv.value.len, stdout);
+    }
+    putchar('\n');
+
+    puts("headers:");
+    hwire_table_iter_t iter = 0;
+    const hwire_table_entry_t *e;
+    while ((e = hwire_table_iterate(&app.headers, &iter)) != NULL) {
+        printf("%.*s: %.*s\n", (int)e->kv.key.len, e->kv.key.ptr,
+               (int)e->kv.value.len, e->kv.value.ptr);
+    }
+    return 0;
+}
+```
+
+Save the example as `table_example.c` and compile both sources. The AES flags
+in [Building](#building-with-hwire_table) can be added for the target CPU:
+
+```sh
+cc -std=c99 -Isrc table_example.c src/hwire.c src/hwire_table.c -o table_example
+```
+
+Expected output:
+
+```text
+GET /index.html?name=Alice+Smith&tag=A&tag=B
+header x-tag: ABC
+query name: Alice Smith
+query tag: AB
+headers:
+Host: example.com
+X-Tag: A
+x-tag: B
+X-Tag: C
+```

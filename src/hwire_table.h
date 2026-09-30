@@ -36,7 +36,8 @@ extern "C" {
                                32768)
 
 /**
- * SipHash-2-4 key. Supply 128 secret bits when hash-flood resistance matters.
+ * Key for AES byte hashing or SipHash-1-3. Supply 128 secret bits when
+ * hash-flood resistance matters. Hash values are internal and not persistent.
  */
 typedef struct {
     uint64_t words[2];
@@ -81,7 +82,7 @@ typedef enum {
 } hwire_table_code_t;
 
 /**
- * @brief Expand a 64-bit seed into a deterministic 128-bit SipHash key.
+ * @brief Expand a 64-bit seed into a deterministic 128-bit hash key.
  * @param key Non-NULL destination.
  * @param seed Caller-selected seed, possibly derived from a pointer or counter.
  *
@@ -96,11 +97,15 @@ void hwire_table_key_init(hwire_table_key_t *key, uint64_t seed);
  * @param entries Non-NULL mutable array of at least capacity entries.
  * @param capacity Maximum number of pairs, including duplicates; a power of
  *                 two in [1, 32768]. All capacity entries provide index space.
- * @param key Non-NULL SipHash key, copied into the table.
+ * @param key Non-NULL hash key, copied into the table.
  * @return HWIRE_TABLE_OK, HWIRE_TABLE_EINVAL for NULL arguments, or
  *         HWIRE_TABLE_ECAPACITY for an unsupported capacity.
  *
- * No allocation occurs. Initialization zeroes the entire entries array. On
+ * No allocation occurs. Initialization zeroes the entire entries array. The
+ * build uses AES hashing when the compiler target enables ARM NEON/AES or x86
+ * AES/SSE2/SSSE3, otherwise SipHash-1-3. Use target flags such as -mcpu=native
+ * on ARM or -march=native (or -maes -mssse3) on x86. Define HWIRE_NO_AES or
+ * HWIRE_NO_SIMD to select SipHash-1-3. There is no runtime CPU check. On
  * invalid arguments the table and entries are unchanged. A successful reset
  * invalidates prior entry and iterator results.
  */
