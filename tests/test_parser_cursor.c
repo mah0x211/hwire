@@ -148,7 +148,7 @@ void test_parameter_cursor(void)
     };
     size_t pos = start;
     int rv     = hwire_parse_parameters(&ctx, buf, strlen(buf), &pos,
-                                        strlen(buf) - start, 1, 0);
+                                        strlen(buf) - start, 0);
 
     ASSERT_OK(rv);
     ASSERT_EQ(pos, end);
@@ -157,7 +157,7 @@ void test_parameter_cursor(void)
 
     ctx.param_cb = mock_param_cb;
     pos          = start;
-    rv = hwire_parse_parameters(&ctx, buf, strlen(buf), &pos, 0, 1, 0);
+    rv = hwire_parse_parameters(&ctx, buf, strlen(buf), &pos, 0, 0);
     ASSERT_EQ(rv, HWIRE_ELEN);
     ASSERT_EQ(pos, start);
 
@@ -184,12 +184,12 @@ void test_chunksize_cursor(void)
                        .chunksize_cb     = capture_chunksize_cb,
                        .chunksize_ext_cb = mock_chunksize_ext_cb};
     size_t pos      = 0;
-    int rv = hwire_parse_chunksize(&ctx, buf, total_len, &pos, SIZE_MAX, 1);
+    int rv = hwire_parse_chunksize(&ctx, buf, total_len, &pos, SIZE_MAX);
 
     ASSERT_OK(rv);
     ASSERT_EQ(pos, first_len);
 
-    rv = hwire_parse_chunksize(&ctx, buf, total_len, &pos, SIZE_MAX, 1);
+    rv = hwire_parse_chunksize(&ctx, buf, total_len, &pos, SIZE_MAX);
     ASSERT_OK(rv);
     ASSERT_EQ(pos, total_len);
     ASSERT_EQ(expect.calls, 2);
@@ -197,32 +197,32 @@ void test_chunksize_cursor(void)
 
     ctx.chunksize_cb = mock_chunksize_cb;
     pos              = first_len;
-    rv               = hwire_parse_chunksize(&ctx, buf, total_len, &pos, 0, 1);
+    rv               = hwire_parse_chunksize(&ctx, buf, total_len, &pos, 0);
     ASSERT_EQ(rv, HWIRE_ELEN);
     ASSERT_EQ(pos, first_len);
 
     pos = first_len;
-    rv  = hwire_parse_chunksize(&ctx, buf, total_len, &pos, second_len - 1, 1);
+    rv  = hwire_parse_chunksize(&ctx, buf, total_len, &pos, second_len - 1);
     ASSERT_EQ(rv, HWIRE_ELEN);
     ASSERT_EQ(pos, first_len);
 
     pos = first_len;
-    rv  = hwire_parse_chunksize(&ctx, buf, total_len - 1, &pos, second_len, 1);
+    rv  = hwire_parse_chunksize(&ctx, buf, total_len - 1, &pos, second_len);
     ASSERT_EQ(rv, HWIRE_EAGAIN);
     ASSERT_EQ(pos, first_len);
 
     pos = total_len;
-    rv  = hwire_parse_chunksize(&ctx, buf, total_len, &pos, 0, 1);
+    rv  = hwire_parse_chunksize(&ctx, buf, total_len, &pos, 0);
     ASSERT_EQ(rv, HWIRE_ELEN);
     ASSERT_EQ(pos, total_len);
 
     pos = total_len;
-    rv  = hwire_parse_chunksize(&ctx, buf, total_len, &pos, 1, 1);
+    rv  = hwire_parse_chunksize(&ctx, buf, total_len, &pos, 1);
     ASSERT_EQ(rv, HWIRE_EAGAIN);
     ASSERT_EQ(pos, total_len);
 
     pos = total_len + 1;
-    rv  = hwire_parse_chunksize(&ctx, buf, total_len, &pos, SIZE_MAX, 1);
+    rv  = hwire_parse_chunksize(&ctx, buf, total_len, &pos, SIZE_MAX);
     ASSERT_EQ(rv, HWIRE_EAGAIN);
     ASSERT_EQ(pos, total_len + 1);
 
@@ -253,12 +253,12 @@ void test_header_cursor(void)
         .header_cb = capture_header_cb
     };
     size_t pos = 0;
-    int rv     = hwire_parse_headers(&ctx, buf, total_len, &pos, SIZE_MAX, 1);
+    int rv     = hwire_parse_headers(&ctx, buf, total_len, &pos, SIZE_MAX);
 
     ASSERT_OK(rv);
     ASSERT_EQ(pos, first_len);
 
-    rv = hwire_parse_headers(&ctx, buf, total_len, &pos, SIZE_MAX, 1);
+    rv = hwire_parse_headers(&ctx, buf, total_len, &pos, SIZE_MAX);
     ASSERT_OK(rv);
     ASSERT_EQ(pos, total_len);
     ASSERT_EQ(expect.calls, 2);
@@ -266,27 +266,27 @@ void test_header_cursor(void)
 
     ctx.header_cb = mock_header_cb;
     pos           = first_len;
-    rv            = hwire_parse_headers(&ctx, buf, total_len, &pos, 0, 1);
+    rv            = hwire_parse_headers(&ctx, buf, total_len, &pos, 0);
     ASSERT(rv != HWIRE_OK);
     ASSERT_EQ(pos, first_len);
 
     pos = first_len;
-    rv  = hwire_parse_headers(&ctx, buf, total_len, &pos, second_len, 1);
+    rv  = hwire_parse_headers(&ctx, buf, total_len, &pos, second_len);
     ASSERT_OK(rv);
     ASSERT_EQ(pos, total_len);
 
     pos = first_len;
-    rv  = hwire_parse_headers(&ctx, buf, total_len, &pos, second_len - 1, 1);
+    rv  = hwire_parse_headers(&ctx, buf, total_len, &pos, second_len - 1);
     ASSERT_EQ(rv, HWIRE_EHDRLEN);
     ASSERT_EQ(pos, first_len);
 
     pos = first_len;
-    rv = hwire_parse_headers(&ctx, buf, total_len - 1, &pos, second_len, 1);
+    rv = hwire_parse_headers(&ctx, buf, total_len - 1, &pos, second_len);
     ASSERT_EQ(rv, HWIRE_EAGAIN);
     ASSERT_EQ(pos, first_len);
 
     pos = total_len + 1;
-    rv  = hwire_parse_headers(&ctx, buf, total_len, &pos, SIZE_MAX, 1);
+    rv  = hwire_parse_headers(&ctx, buf, total_len, &pos, SIZE_MAX);
     ASSERT_EQ(rv, HWIRE_EAGAIN);
     ASSERT_EQ(pos, total_len + 1);
 
@@ -295,19 +295,18 @@ void test_header_cursor(void)
         size_t multi_len  = strlen(multi);
 
         pos = 0;
-        rv = hwire_parse_headers(&ctx, multi, multi_len, &pos, multi_len, 2);
+        rv = hwire_parse_headers(&ctx, multi, multi_len, &pos, multi_len);
         ASSERT_OK(rv);
         ASSERT_EQ(pos, multi_len);
 
         pos = 0;
-        rv  = hwire_parse_headers(&ctx, multi, multi_len, &pos, multi_len - 1,
-                                  2);
+        rv  = hwire_parse_headers(&ctx, multi, multi_len, &pos, multi_len - 1);
         ASSERT_EQ(rv, HWIRE_EHDRLEN);
         ASSERT_EQ(pos, 0);
 
         pos = 0;
         rv  = hwire_parse_headers(&ctx, multi, multi_len, &pos,
-                                  strlen("A: 1\r\n"), 2);
+                                  strlen("A: 1\r\n"));
         ASSERT_EQ(rv, HWIRE_EHDRLEN);
         ASSERT_EQ(pos, 0);
     }
@@ -340,12 +339,12 @@ void test_request_cursor(void)
         .header_cb  = mock_header_cb
     };
     size_t pos = 0;
-    int rv     = hwire_parse_request(&ctx, buf, total_len, &pos, SIZE_MAX, 1);
+    int rv     = hwire_parse_request(&ctx, buf, total_len, &pos, SIZE_MAX);
 
     ASSERT_OK(rv);
     ASSERT_EQ(pos, first_len);
 
-    rv = hwire_parse_request(&ctx, buf, total_len, &pos, SIZE_MAX, 1);
+    rv = hwire_parse_request(&ctx, buf, total_len, &pos, SIZE_MAX);
     ASSERT_OK(rv);
     ASSERT_EQ(pos, total_len);
     ASSERT_EQ(expect.calls, 2);
@@ -353,37 +352,37 @@ void test_request_cursor(void)
 
     ctx.request_cb = mock_request_cb;
     pos            = first_len;
-    rv             = hwire_parse_request(&ctx, buf, total_len, &pos, 0, 1);
+    rv             = hwire_parse_request(&ctx, buf, total_len, &pos, 0);
     ASSERT_EQ(rv, HWIRE_ELEN);
     ASSERT_EQ(pos, first_len);
 
     pos = first_len;
-    rv  = hwire_parse_request(&ctx, buf, total_len, &pos, second_len, 1);
+    rv  = hwire_parse_request(&ctx, buf, total_len, &pos, second_len);
     ASSERT_OK(rv);
     ASSERT_EQ(pos, total_len);
 
     pos = first_len;
-    rv  = hwire_parse_request(&ctx, buf, total_len, &pos, second_len - 1, 1);
+    rv  = hwire_parse_request(&ctx, buf, total_len, &pos, second_len - 1);
     ASSERT_EQ(rv, HWIRE_EHDRLEN);
     ASSERT_EQ(pos, first_len);
 
     pos = first_len;
-    rv  = hwire_parse_request(&ctx, buf, total_len - 1, &pos, second_len, 1);
+    rv  = hwire_parse_request(&ctx, buf, total_len - 1, &pos, second_len);
     ASSERT_EQ(rv, HWIRE_EAGAIN);
     ASSERT_EQ(pos, first_len);
 
     pos = total_len;
-    rv  = hwire_parse_request(&ctx, buf, total_len, &pos, 0, 1);
+    rv  = hwire_parse_request(&ctx, buf, total_len, &pos, 0);
     ASSERT_EQ(rv, HWIRE_ELEN);
     ASSERT_EQ(pos, total_len);
 
     pos = total_len;
-    rv  = hwire_parse_request(&ctx, buf, total_len, &pos, 1, 1);
+    rv  = hwire_parse_request(&ctx, buf, total_len, &pos, 1);
     ASSERT_EQ(rv, HWIRE_EAGAIN);
     ASSERT_EQ(pos, total_len);
 
     pos = total_len + 1;
-    rv  = hwire_parse_request(&ctx, buf, total_len, &pos, SIZE_MAX, 1);
+    rv  = hwire_parse_request(&ctx, buf, total_len, &pos, SIZE_MAX);
     ASSERT_EQ(rv, HWIRE_EAGAIN);
     ASSERT_EQ(pos, total_len + 1);
 
@@ -415,12 +414,12 @@ void test_response_cursor(void)
         .header_cb   = mock_header_cb
     };
     size_t pos = 0;
-    int rv     = hwire_parse_response(&ctx, buf, total_len, &pos, SIZE_MAX, 1);
+    int rv     = hwire_parse_response(&ctx, buf, total_len, &pos, SIZE_MAX);
 
     ASSERT_OK(rv);
     ASSERT_EQ(pos, first_len);
 
-    rv = hwire_parse_response(&ctx, buf, total_len, &pos, SIZE_MAX, 1);
+    rv = hwire_parse_response(&ctx, buf, total_len, &pos, SIZE_MAX);
     ASSERT_OK(rv);
     ASSERT_EQ(pos, total_len);
     ASSERT_EQ(expect.calls, 2);
@@ -428,37 +427,37 @@ void test_response_cursor(void)
 
     ctx.response_cb = mock_response_cb;
     pos             = first_len;
-    rv              = hwire_parse_response(&ctx, buf, total_len, &pos, 0, 1);
+    rv              = hwire_parse_response(&ctx, buf, total_len, &pos, 0);
     ASSERT_EQ(rv, HWIRE_ELEN);
     ASSERT_EQ(pos, first_len);
 
     pos = first_len;
-    rv  = hwire_parse_response(&ctx, buf, total_len, &pos, second_len, 1);
+    rv  = hwire_parse_response(&ctx, buf, total_len, &pos, second_len);
     ASSERT_OK(rv);
     ASSERT_EQ(pos, total_len);
 
     pos = first_len;
-    rv  = hwire_parse_response(&ctx, buf, total_len, &pos, second_len - 1, 1);
+    rv  = hwire_parse_response(&ctx, buf, total_len, &pos, second_len - 1);
     ASSERT_EQ(rv, HWIRE_EHDRLEN);
     ASSERT_EQ(pos, first_len);
 
     pos = first_len;
-    rv  = hwire_parse_response(&ctx, buf, total_len - 1, &pos, second_len, 1);
+    rv  = hwire_parse_response(&ctx, buf, total_len - 1, &pos, second_len);
     ASSERT_EQ(rv, HWIRE_EAGAIN);
     ASSERT_EQ(pos, first_len);
 
     pos = total_len;
-    rv  = hwire_parse_response(&ctx, buf, total_len, &pos, 0, 1);
+    rv  = hwire_parse_response(&ctx, buf, total_len, &pos, 0);
     ASSERT_EQ(rv, HWIRE_ELEN);
     ASSERT_EQ(pos, total_len);
 
     pos = total_len;
-    rv  = hwire_parse_response(&ctx, buf, total_len, &pos, 1, 1);
+    rv  = hwire_parse_response(&ctx, buf, total_len, &pos, 1);
     ASSERT_EQ(rv, HWIRE_EAGAIN);
     ASSERT_EQ(pos, total_len);
 
     pos = total_len + 1;
-    rv  = hwire_parse_response(&ctx, buf, total_len, &pos, SIZE_MAX, 1);
+    rv  = hwire_parse_response(&ctx, buf, total_len, &pos, SIZE_MAX);
     ASSERT_EQ(rv, HWIRE_EAGAIN);
     ASSERT_EQ(pos, total_len + 1);
 

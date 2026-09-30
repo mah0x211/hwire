@@ -1629,7 +1629,6 @@ static inline void skip_ws(const unsigned char **ustr,
  * @param len Number of available input bytes from str[0]
  * @param pos Input: start offset, Output: end offset (must not be NULL)
  * @param maxlen Maximum number of bytes examined from the initial *pos
- * @param maxnparams Maximum number of parameters
  * @param skip_leading_semicolon Non-zero to skip semicolon check for first
  * @param cb Callback context (must not be NULL)
  * @return HWIRE_OK on success
@@ -1640,10 +1639,11 @@ static inline void skip_ws(const unsigned char **ustr,
  * exhausted
  * @return HWIRE_EKEYLEN if key length exceeds ctx->key_lc.size
  * @return HWIRE_ECALLBACK if callback returned non-zero
- * @return HWIRE_ENOBUFS if number of parameters exceeds maxnparams
+ * @note Item limits are enforced by callbacks using caller-owned state.
+ * Nonzero callback returns stop parsing with HWIRE_ECALLBACK.
  */
 int hwire_parse_parameters(hwire_ctx_t *ctx, const char *str, size_t len,
-                           size_t *pos, size_t maxlen, uint8_t maxnparams,
+                           size_t *pos, size_t maxlen,
                            int skip_leading_semicolon)
 {
     assert(str != NULL);
@@ -1653,7 +1653,6 @@ int hwire_parse_parameters(hwire_ctx_t *ctx, const char *str, size_t len,
     const unsigned char *ustr = (const unsigned char *)str;
     const unsigned char *head = ustr;
     const unsigned char *tail = ustr + len;
-    uint8_t nparams           = 0;
     int rv                    = HWIRE_OK;
 
     if (*pos > len) {
@@ -1698,11 +1697,6 @@ SKIP_SEMICOLON:
     }
 
 CHECK_PARAM:
-    if (nparams >= maxnparams) {
-        // exceeded maximum number of parameters
-        return HWIRE_ENOBUFS;
-    }
-
     // skip trailing OWS
     skip_ws(&ustr, tail);
 
@@ -1727,7 +1721,6 @@ CHECK_PARAM:
     rv = parse_parameter(&ustr, head, tail, maxlen, ctx);
     if (rv == HWIRE_OK) {
         // parsed one parameter, continue to next
-        nparams++;
         goto CHECK_NEXT_PARAM;
     }
 
@@ -1805,7 +1798,6 @@ static int64_t hex2size(const unsigned char **ustr, const unsigned char *tail,
  * be NULL)
  * @param maxlen Maximum line length and number of input bytes examined from
  * the initial *pos
- * @param maxexts Maximum number of chunk-extensions to parse
  * @param cb Callback context (must not be NULL)
  * @return HWIRE_OK on success
  * @return HWIRE_EAGAIN if more data is needed before maxlen is reached
@@ -1814,15 +1806,16 @@ static int64_t hex2size(const unsigned char **ustr, const unsigned char *tail,
  * @return HWIRE_EEXTNAME if extension name is empty
  * @return HWIRE_EEXTVAL if extension value is invalid
  * @return HWIRE_ECALLBACK if callback returned non-zero
- * @return HWIRE_ENOBUFS if number of extensions exceeds maxexts
  * @return HWIRE_EILSEQ if byte sequence is illegal
  * @return HWIRE_EEOL if end-of-line terminator is invalid
  *
  * @note This function accepts CRLF or bare LF as the line terminator.
  * @note Extensions with no value have empty string as value (ptr="" len=0).
+ * @note Item limits are enforced by callbacks using caller-owned state.
+ * Nonzero callback returns stop parsing with HWIRE_ECALLBACK.
  */
 int hwire_parse_chunksize(hwire_ctx_t *ctx, const char *str, size_t len,
-                          size_t *pos, size_t maxlen, uint8_t maxexts)
+                          size_t *pos, size_t maxlen)
 {
     assert(str != NULL);
     assert(pos != NULL);
@@ -1837,7 +1830,6 @@ int hwire_parse_chunksize(hwire_ctx_t *ctx, const char *str, size_t len,
     const unsigned char *val  = NULL;
     size_t vlen               = 0;
     int64_t size              = 0;
-    uint8_t nexts             = 0;
 
     if (*pos >= len) {
         return (*pos == len && maxlen == 0) ? HWIRE_ELEN : HWIRE_EAGAIN;
@@ -1920,10 +1912,6 @@ CHECK_EOL:
     case LF:
         // call extension callback for last extension
         if (klen) {
-            // enforce maxexts before delivering the final extension
-            if (nexts >= maxexts) {
-                return HWIRE_ENOBUFS;
-            }
             hwire_chunksize_ext_t ext = {
                 .key   = {.len = klen, .ptr = (const char *)key              },
                 .value = {.len = vlen, .ptr = (vlen) ? (const char *)val : ""}
@@ -1945,11 +1933,6 @@ CHECK_EOL:
     // parse chunk-extensions
     // call extension callback for previous extension
     if (klen) {
-        // enforce maxexts before delivering the previous extension
-        if (nexts >= maxexts) {
-            // exceeded maximum number of extensions
-            return HWIRE_ENOBUFS;
-        }
         hwire_chunksize_ext_t ext = {
             .key   = {.len = klen, .ptr = (const char *)key              },
             .value = {.len = vlen, .ptr = (vlen) ? (const char *)val : ""}
@@ -1957,7 +1940,6 @@ CHECK_EOL:
         if (ctx->chunksize_ext_cb != NULL && ctx->chunksize_ext_cb(ctx, &ext)) {
             return HWIRE_ECALLBACK;
         }
-        nexts++;
         klen = 0;
         vlen = 0;
     }
@@ -2134,7 +2116,7 @@ static int parse_hkey(const unsigned char **ustr, const unsigned char *tail,
  */
 static int parse_headers(hwire_ctx_t *ctx, const unsigned char **ustr,
                          const unsigned char *head, const unsigned char *tail,
-                         size_t maxlen, uint8_t maxnhdrs)
+                         size_t maxlen)
 {
     assert(ustr != NULL && *ustr != NULL);
     assert(ctx != NULL);
@@ -2143,7 +2125,6 @@ static int parse_headers(hwire_ctx_t *ctx, const unsigned char **ustr,
     const unsigned char *field_head = str;
     size_t klen                     = 0;
     size_t vlen                     = 0;
-    uint8_t nhdr                    = 0;
     int rv                          = 0;
     hwire_header_t header           = {0};
 
@@ -2171,12 +2152,6 @@ RETRY:
         str--;
         // Any other control char <= CR falls through to parse_hkey().
     }
-
-    // check maximum header number constraint
-    if (unlikely(nhdr >= maxnhdrs)) {
-        return HWIRE_ENOBUFS;
-    }
-    nhdr++;
 
     field_head      = str;
     klen            = 0;
@@ -2232,9 +2207,11 @@ RETRY:
  * @brief Parse HTTP headers
  *
  * Ported from parse.c:parse_header
+ * @note Item limits are enforced by callbacks using caller-owned state.
+ * Nonzero callback returns stop parsing with HWIRE_ECALLBACK.
  */
 int hwire_parse_headers(hwire_ctx_t *ctx, const char *str, size_t len,
-                        size_t *pos, size_t maxlen, uint8_t maxnhdrs)
+                        size_t *pos, size_t maxlen)
 {
     assert(str != NULL);
     assert(pos != NULL);
@@ -2255,7 +2232,7 @@ int hwire_parse_headers(hwire_ctx_t *ctx, const char *str, size_t len,
         tail = head + maxlen;
     }
 
-    rv = parse_headers(ctx, &ustr, head, tail, maxlen, maxnhdrs);
+    rv = parse_headers(ctx, &ustr, head, tail, maxlen);
     if (rv == HWIRE_OK) {
         *pos += (size_t)(ustr - head);
     }
@@ -2380,7 +2357,6 @@ static int parse_path_query(const unsigned char **ustr,
 static int parse_query_parameter(const unsigned char **ustr,
                                  const unsigned char *head,
                                  const unsigned char *tail, size_t maxlen,
-                                 uint16_t nparams, uint16_t maxnparams,
                                  hwire_ctx_t *ctx)
 {
     const unsigned char *str  = *ustr;
@@ -2461,10 +2437,6 @@ PARSE_QRYCHAR:
     }
 
 PARAM_END:
-    if (nparams >= maxnparams) {
-        return HWIRE_ENOBUFS;
-    }
-
     // Finalize the current query parameter before invoking the callback.
     if (param.value.ptr) {
         param.value.len = (size_t)(out - param.value.ptr);
@@ -2496,21 +2468,22 @@ PARAM_END:
  * @param pos Input: start offset; output: parser position. An initial offset
  * greater than len returns HWIRE_EILSEQ without changing *pos.
  * @param maxlen Maximum number of bytes examined from the initial *pos
- * @param maxnparams Maximum number of nonempty pairs delivered
  * @return HWIRE_OK if all available input was consumed, with *pos == len
  * @return HWIRE_EAGAIN if a percent escape needs more input before maxlen
  * @return HWIRE_EURI for an invalid query byte or percent hex digit
  * @return HWIRE_ELEN if the byte budget ends with more input or during an
  * incomplete percent escape
- * @return HWIRE_ENOBUFS if the pair limit or decode buffer is exhausted
+ * @return HWIRE_ENOBUFS if the decode buffer is exhausted
  * @return HWIRE_ECALLBACK if query_cb returns non-zero
  * @return HWIRE_EILSEQ if the initial *pos exceeds len
  *
  * Earlier callbacks are not rolled back on failure. A pair ending at the
  * byte-budget boundary may be delivered before HWIRE_ELEN is returned.
+ * @note Item limits are enforced by callbacks using caller-owned state.
+ * Nonzero callback returns stop parsing with HWIRE_ECALLBACK.
  */
 int hwire_parse_query(hwire_ctx_t *ctx, const char *str, size_t len,
-                      size_t *pos, size_t maxlen, uint16_t maxnparams)
+                      size_t *pos, size_t maxlen)
 {
     assert(ctx != NULL);
     assert(ctx->query_cb != NULL);
@@ -2520,7 +2493,6 @@ int hwire_parse_query(hwire_ctx_t *ctx, const char *str, size_t len,
     const unsigned char *ustr = (const unsigned char *)str;
     const unsigned char *head = ustr;
     const unsigned char *tail = ustr + len;
-    uint16_t nparams          = 0;
 
     if (*pos > len) {
         return HWIRE_EILSEQ;
@@ -2540,13 +2512,10 @@ CHECK_NEXT_PARAM:
     } else if (*ustr == '&') {
         ustr++;
     } else {
-        int rv = parse_query_parameter(&ustr, head, tail, maxlen, nparams,
-                                       maxnparams, ctx);
+        int rv = parse_query_parameter(&ustr, head, tail, maxlen, ctx);
         if (rv != HWIRE_OK) {
             return rv;
         }
-        // Successfully parsed a query parameter, increment the count.
-        nparams++;
     }
     goto CHECK_NEXT_PARAM;
 }
@@ -3186,9 +3155,11 @@ static int parse_method(const unsigned char **ustr, const unsigned char *head,
 
 /**
  * @brief Parse request line
+ * @note Item limits are enforced by callbacks using caller-owned state.
+ * Nonzero callback returns stop parsing with HWIRE_ECALLBACK.
  */
 int hwire_parse_request(hwire_ctx_t *ctx, const char *str, size_t len,
-                        size_t *pos, size_t maxlen, uint8_t maxnhdrs)
+                        size_t *pos, size_t maxlen)
 {
     assert(str != NULL);
     assert(pos != NULL);
@@ -3283,7 +3254,7 @@ SKIP_NEXT_CRLF:
     }
 
     // parse headers within the remaining message budget (cumulative total)
-    rv = parse_headers(ctx, &ustr, head, tail, maxlen, maxnhdrs);
+    rv = parse_headers(ctx, &ustr, head, tail, maxlen);
     if (rv != HWIRE_OK) {
         return rv;
     }
@@ -3388,9 +3359,11 @@ static int parse_status(const unsigned char **ustr, const unsigned char *head,
  *
  * Parses status line and headers, calling response_cb after status line
  * and header_cb for each header.
+ * @note Item limits are enforced by callbacks using caller-owned state.
+ * Nonzero callback returns stop parsing with HWIRE_ECALLBACK.
  */
 int hwire_parse_response(hwire_ctx_t *ctx, const char *str, size_t len,
-                         size_t *pos, size_t maxlen, uint8_t maxnhdrs)
+                         size_t *pos, size_t maxlen)
 {
     assert(str != NULL);
     assert(pos != NULL);
@@ -3471,7 +3444,7 @@ SKIP_NEXT_CRLF:
     }
 
     // parse headers within the remaining message budget (cumulative total)
-    rv = parse_headers(ctx, &ustr, head, tail, maxlen, maxnhdrs);
+    rv = parse_headers(ctx, &ustr, head, tail, maxlen);
     if (rv != HWIRE_OK) {
         return rv;
     }

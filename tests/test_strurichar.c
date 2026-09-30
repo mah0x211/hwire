@@ -78,7 +78,7 @@ void test_strurichar_charset_exhaustive(void)
 
             size_t pos = 0;
             int rv = hwire_parse_request(&cb, (const char *)buf, len, &pos,
-                                         1024, 10);
+                                         1024);
             int exp;
             if (uri_allowed((unsigned char)b)) {
                 exp = HWIRE_OK;
@@ -138,8 +138,7 @@ void test_strurichar_length_sweep(void)
         len += 13;
 
         size_t pos = 0;
-        int rv = hwire_parse_request(&cb, (const char *)buf, len, &pos, 1024,
-                                     10);
+        int rv = hwire_parse_request(&cb, (const char *)buf, len, &pos, 1024);
         ASSERT_OK(rv);
         ASSERT_EQ(captured_uri.len, 1 + k);
     }
@@ -148,7 +147,7 @@ void test_strurichar_length_sweep(void)
     {
         size_t pos = 0;
         int rv     = hwire_parse_request(&cb, "GET  HTTP/1.1\r\n\r\n", 18, &pos,
-                                         1024, 10);
+                                         1024);
         ASSERT_EQ(rv, HWIRE_EURI);
     }
 
@@ -201,7 +200,7 @@ void test_strurichar_fuzz(void)
         }
         size_t pos = 0;
         int rv =
-            hwire_parse_request(&cb, (const char *)buf, len, &pos, 1024, 10);
+            hwire_parse_request(&cb, (const char *)buf, len, &pos, 1024);
         if (first_bad == tlen) {
             /* all bytes allowed: the trailing SP ends the target "/" + tlen */
             ASSERT_OK(rv);

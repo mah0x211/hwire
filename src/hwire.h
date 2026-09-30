@@ -64,7 +64,7 @@ typedef enum {
     HWIRE_ERANGE    = -11, /**< Value out of range */
     HWIRE_EEXTNAME  = -12, /**< Invalid extension name */
     HWIRE_EEXTVAL   = -13, /**< Invalid extension value or missing EOL */
-    HWIRE_ENOBUFS   = -14, /**< Buffer overflow (e.g., max_exts exceeded) */
+    HWIRE_ENOBUFS   = -14, /**< Insufficient output buffer space */
     HWIRE_EKEYLEN   = -15, /**< Key length exceeds buffer size */
     HWIRE_ECALLBACK = -16, /**< Callback returned non-zero */
     HWIRE_EURI      = -17  /**< Invalid request-target */
@@ -232,7 +232,7 @@ typedef struct hwire_ctx_st {
     /**
      * Optional callback called for each chunk extension parsed by
      * hwire_parse_chunksize. When NULL, extensions are still syntax-checked
-     * and counted against maxexts, but are not delivered.
+     * but are not delivered. Set this callback to enforce an extension limit.
      * @param ctx Parser context
      * @param ext Parsed extension (key and value reference input buffer)
      * @return 0 to continue, non-zero to stop (HWIRE_ECALLBACK)
@@ -397,7 +397,6 @@ int hwire_parse_quoted_string(const char *str, size_t len, size_t *pos,
  * @param pos Input: start offset, Output: end offset (must not be NULL). An
  * initial offset greater than len returns HWIRE_EILSEQ unchanged.
  * @param maxlen Maximum number of bytes examined from the initial *pos
- * @param maxnparams Maximum number of parameters
  * @param skip_leading_semicolon Non-zero to skip semicolon check for first
  * parameter (0: require leading semicolon, 1: allow first param without
  * semicolon)
@@ -409,10 +408,11 @@ int hwire_parse_quoted_string(const char *str, size_t len, size_t *pos,
  * exhausted
  * @return HWIRE_EKEYLEN if key length exceeds ctx->key_lc.size
  * @return HWIRE_ECALLBACK if callback returned non-zero
- * @return HWIRE_ENOBUFS if number of parameters exceeds maxnparams
+ * @note Item limits are enforced by callbacks using caller-owned state.
+ * Nonzero callback returns stop parsing with HWIRE_ECALLBACK.
  */
 int hwire_parse_parameters(hwire_ctx_t *ctx, const char *str, size_t len,
-                           size_t *pos, size_t maxlen, uint8_t maxnparams,
+                           size_t *pos, size_t maxlen,
                            int skip_leading_semicolon);
 
 /**
@@ -436,7 +436,6 @@ int hwire_parse_parameters(hwire_ctx_t *ctx, const char *str, size_t len,
  * @param pos Input: query start offset; output: parser position. An initial
  * offset greater than len returns HWIRE_EILSEQ unchanged.
  * @param maxlen Maximum number of query bytes examined from the initial *pos
- * @param maxnparams Maximum number of nonempty segments delivered
  *
  * ctx->qrybuf.buf must be non-NULL even for an empty query. Its size may be
  * zero if no decoded bytes are needed.
@@ -446,7 +445,7 @@ int hwire_parse_parameters(hwire_ctx_t *ctx, const char *str, size_t len,
  * @return HWIRE_EURI for invalid query characters or percent hex digits
  * @return HWIRE_ELEN if the byte budget ends with more input or during a
  * percent escape
- * @return HWIRE_ENOBUFS if the parameter limit or decode buffer is exhausted
+ * @return HWIRE_ENOBUFS if the decode buffer is exhausted
  * @return HWIRE_ECALLBACK if query_cb returns non-zero
  * @return HWIRE_EILSEQ if the initial *pos is greater than len
  *
@@ -454,9 +453,11 @@ int hwire_parse_parameters(hwire_ctx_t *ctx, const char *str, size_t len,
  * ending at the maxlen boundary may be delivered before the outer parser
  * returns HWIRE_ELEN; then *pos points at that boundary. Earlier callback
  * deliveries are not rolled back.
+ * @note Item limits are enforced by callbacks using caller-owned state.
+ * Nonzero callback returns stop parsing with HWIRE_ECALLBACK.
  */
 int hwire_parse_query(hwire_ctx_t *ctx, const char *str, size_t len,
-                      size_t *pos, size_t maxlen, uint16_t maxnparams);
+                      size_t *pos, size_t maxlen);
 
 /** @} */ /* end of String Parsing Functions */
 
@@ -474,7 +475,6 @@ int hwire_parse_query(hwire_ctx_t *ctx, const char *str, size_t len,
  * be NULL); unchanged on failure
  * @param maxlen Maximum line length and number of input bytes examined from
  * the initial *pos; the complete line terminator must fit within this budget
- * @param maxexts Maximum number of extensions
  * @param ctx Parser context (must not be NULL)
  * @return HWIRE_OK on success, CRLF or LF consumed
  * @return HWIRE_EAGAIN if more data is needed before maxlen is reached
@@ -486,12 +486,13 @@ int hwire_parse_query(hwire_ctx_t *ctx, const char *str, size_t len,
  * @return HWIRE_EEXTNAME for invalid extension key
  * @return HWIRE_EEXTVAL for invalid extension value or missing EOL
  * @return HWIRE_ECALLBACK if callback returned non-zero
- * @return HWIRE_ENOBUFS if extension count exceeds maxexts
  * @note Line terminators match CR?LF: both CRLF and bare LF are accepted;
  * bare CR is invalid.
+ * @note Item limits are enforced by callbacks using caller-owned state.
+ * Nonzero callback returns stop parsing with HWIRE_ECALLBACK.
  */
 int hwire_parse_chunksize(hwire_ctx_t *ctx, const char *str, size_t len,
-                          size_t *pos, size_t maxlen, uint8_t maxexts);
+                          size_t *pos, size_t maxlen);
 
 /**
  * @brief Parse HTTP headers
@@ -505,7 +506,6 @@ int hwire_parse_chunksize(hwire_ctx_t *ctx, const char *str, size_t len,
  * line (must not be NULL); unchanged on failure
  * @param maxlen Maximum total length of the header block from the initial
  * *pos, including the terminating empty line
- * @param maxnhdrs Maximum number of headers
  * @param ctx Parser context (key_lc must be allocated, header_cb must not be
  * NULL)
  * @return HWIRE_OK on success, empty line consumed
@@ -516,14 +516,15 @@ int hwire_parse_chunksize(hwire_ctx_t *ctx, const char *str, size_t len,
  * @return HWIRE_EHDRLEN if the header block is incomplete when maxlen is
  * exhausted
  * @return HWIRE_EEOL if a line terminator is invalid (CR without LF)
- * @return HWIRE_ENOBUFS if header count exceeds maxnhdrs
  * @return HWIRE_EKEYLEN if key length exceeds ctx->key_lc.size
  * @return HWIRE_ECALLBACK if callback returned non-zero
  * @note Line terminators match CR?LF: both CRLF and bare LF are accepted;
  * bare CR is invalid.
+ * @note Item limits are enforced by callbacks using caller-owned state.
+ * Nonzero callback returns stop parsing with HWIRE_ECALLBACK.
  */
 int hwire_parse_headers(hwire_ctx_t *ctx, const char *str, size_t len,
-                        size_t *pos, size_t maxlen, uint8_t maxnhdrs);
+                        size_t *pos, size_t maxlen);
 
 /**
  * @brief Parse HTTP request
@@ -540,7 +541,6 @@ int hwire_parse_headers(hwire_ctx_t *ctx, const char *str, size_t len,
  * @param maxlen Maximum total byte length from the initial *pos (leading empty
  * lines + request-line + header fields and the terminating empty line, all
  * delimiters included)
- * @param maxnhdrs Maximum number of headers
  * @param ctx Parser context (request_cb and header_cb must not be NULL)
  * @return HWIRE_OK on success
  * @return HWIRE_EAGAIN if input ends before the applicable budget
@@ -556,12 +556,13 @@ int hwire_parse_headers(hwire_ctx_t *ctx, const char *str, size_t len,
  * maxlen budget is exhausted
  * @return HWIRE_EKEYLEN if key length exceeds ctx->key_lc.size
  * @return HWIRE_ECALLBACK if callback returned non-zero
- * @return HWIRE_ENOBUFS if header count exceeds maxnhdrs
  * @note Line terminators and leading empty lines match CR?LF: both CRLF and
  * bare LF are accepted; bare CR is invalid.
+ * @note Item limits are enforced by callbacks using caller-owned state.
+ * Nonzero callback returns stop parsing with HWIRE_ECALLBACK.
  */
 int hwire_parse_request(hwire_ctx_t *ctx, const char *str, size_t len,
-                        size_t *pos, size_t maxlen, uint8_t maxnhdrs);
+                        size_t *pos, size_t maxlen);
 
 /**
  * @brief Parse HTTP response
@@ -576,7 +577,6 @@ int hwire_parse_request(hwire_ctx_t *ctx, const char *str, size_t len,
  * @param maxlen Maximum total byte length from the initial *pos (leading empty
  * lines + status-line + header fields and the terminating empty line, all
  * delimiters included)
- * @param maxnhdrs Maximum number of headers
  * @param ctx Parser context (response_cb and header_cb must not be NULL)
  * @return HWIRE_OK on success
  * @return HWIRE_EAGAIN if input ends before the applicable budget
@@ -592,12 +592,13 @@ int hwire_parse_request(hwire_ctx_t *ctx, const char *str, size_t len,
  * maxlen budget is exhausted
  * @return HWIRE_EKEYLEN if key length exceeds ctx->key_lc.size
  * @return HWIRE_ECALLBACK if callback returned non-zero
- * @return HWIRE_ENOBUFS if header count exceeds maxnhdrs
  * @note Line terminators and leading empty lines match CR?LF: both CRLF and
  * bare LF are accepted; bare CR is invalid.
+ * @note Item limits are enforced by callbacks using caller-owned state.
+ * Nonzero callback returns stop parsing with HWIRE_ECALLBACK.
  */
 int hwire_parse_response(hwire_ctx_t *ctx, const char *str, size_t len,
-                         size_t *pos, size_t maxlen, uint8_t maxnhdrs);
+                         size_t *pos, size_t maxlen);
 
 /** @} */ /* end of HTTP Parsing Functions */
 

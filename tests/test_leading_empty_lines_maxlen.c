@@ -29,7 +29,7 @@ static int parse_request_message(const char *buf, size_t len, size_t maxlen,
     };
 
     *pos = 0;
-    return hwire_parse_request(&ctx, buf, len, pos, maxlen, 10);
+    return hwire_parse_request(&ctx, buf, len, pos, maxlen);
 }
 
 static int parse_response_message(const char *buf, size_t len, size_t maxlen,
@@ -43,7 +43,7 @@ static int parse_response_message(const char *buf, size_t len, size_t maxlen,
     };
 
     *pos = 0;
-    return hwire_parse_response(&ctx, buf, len, pos, maxlen, 10);
+    return hwire_parse_response(&ctx, buf, len, pos, maxlen);
 }
 
 /*

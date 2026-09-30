@@ -28,7 +28,7 @@ void test_request_line_endings(void)
     for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
         size_t pos = 0;
         int rv = hwire_parse_request(&ctx, cases[i].input,
-                                     strlen(cases[i].input), &pos, 1024, 10);
+                                     strlen(cases[i].input), &pos, 1024);
         ASSERT_EQ(rv, cases[i].expected);
         if (rv == HWIRE_OK) {
             ASSERT_EQ(pos, strlen(cases[i].input));
@@ -59,7 +59,7 @@ void test_response_line_endings(void)
     for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
         size_t pos = 0;
         int rv = hwire_parse_response(&ctx, cases[i].input,
-                                      strlen(cases[i].input), &pos, 1024, 10);
+                                      strlen(cases[i].input), &pos, 1024);
         ASSERT_EQ(rv, cases[i].expected);
         if (rv == HWIRE_OK) {
             ASSERT_EQ(pos, strlen(cases[i].input));
@@ -90,7 +90,7 @@ void test_header_line_endings(void)
     for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
         size_t pos = 0;
         int rv = hwire_parse_headers(&ctx, cases[i].input,
-                                     strlen(cases[i].input), &pos, 1024, 10);
+                                     strlen(cases[i].input), &pos, 1024);
         ASSERT_EQ(rv, cases[i].expected);
         if (rv == HWIRE_OK) {
             ASSERT_EQ(pos, strlen(cases[i].input));
@@ -119,7 +119,7 @@ void test_chunksize_line_endings(void)
     for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
         size_t pos = 0;
         int rv = hwire_parse_chunksize(&ctx, cases[i].input,
-                                       strlen(cases[i].input), &pos, 1024, 10);
+                                       strlen(cases[i].input), &pos, 1024);
         ASSERT_EQ(rv, cases[i].expected);
         if (rv == HWIRE_OK) {
             ASSERT_EQ(pos, strlen(cases[i].input));

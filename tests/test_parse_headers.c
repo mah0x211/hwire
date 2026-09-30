@@ -24,42 +24,51 @@ void test_parse_headers_valid(void)
     /* Basic valid headers */
     buf = "Host: example.com\r\nConnection: close\r\n\r\n";
     pos = 0;
-    rv  = hwire_parse_headers(&cb, buf, strlen(buf), &pos, 1024, 10);
+    rv  = hwire_parse_headers(&cb, buf, strlen(buf), &pos, 1024);
     ASSERT_OK(rv);
     ASSERT_EQ(pos, strlen(buf));
 
-    /* hwire: MUST return HWIRE_ENOBUFS if the max header count is exceeded. */
-    buf = "H1: v1\r\nH2: v2\r\n\r\n";
-    pos = 0;
-    rv  = hwire_parse_headers(&cb, buf, strlen(buf), &pos, 1024, 1);
-    ASSERT_EQ(rv, HWIRE_ENOBUFS);
+    /* Capacity failure is reported through the application callback. */
+    {
+        test_capacity_t storage = {.capacity = 1};
+        hwire_ctx_t limited = cb;
+        limited.uctx = &storage;
+        limited.header_cb = capacity_pair_cb;
+        buf = "H1: v1\r\nH2: v2\r\n\r\n";
+        pos = 0;
+        rv = hwire_parse_headers(&limited, buf, strlen(buf), &pos, 1024);
+        ASSERT_EQ(rv, HWIRE_ECALLBACK);
+        ASSERT_EQ(storage.error, HWIRE_ENOBUFS);
+        ASSERT_EQ(storage.count, 1);
+        ASSERT_EQ(storage.calls, 2);
+    }
 
     /* hwire: maxlen limits total (key + value) length; MUST return
        HWIRE_EHDRLEN if exceeded. */
     buf = "VeryLongKey: value\r\n\r\n";
     pos = 0;
-    rv  = hwire_parse_headers(&cb, buf, strlen(buf), &pos, 5, 10);
+    rv  = hwire_parse_headers(&cb, buf, strlen(buf), &pos, 5);
     ASSERT_EQ(rv, HWIRE_EHDRLEN);
 
     /* RFC 9110 §5.1: field-name = token = 1*tchar; '@' (0x40) is not tchar
        (MUST reject) */
     buf = "@Invalid: value\r\n\r\n";
     pos = 0;
-    rv  = hwire_parse_headers(&cb, buf, strlen(buf), &pos, 1024, 10);
+    rv  = hwire_parse_headers(&cb, buf, strlen(buf), &pos, 1024);
     ASSERT_EQ(rv, HWIRE_EHDRNAME);
 
     /* RFC 9112 §2.2: CRLF = CR LF; bare CR not followed by LF MUST be
        rejected → HWIRE_EEOL */
     buf = "Key: value\r\t\n\r\n";
     pos = 0;
-    rv  = hwire_parse_headers(&cb, buf, strlen(buf), &pos, 1024, 10);
+    rv  = hwire_parse_headers(&cb, buf, strlen(buf), &pos, 1024);
     ASSERT_EQ(rv, HWIRE_EEOL);
 
     /* RFC 9110 §5.5: field-vchar starts at 0x21; CTL 0x01 is not field-vchar
        (MUST reject) */
     buf = "K: \x01\r\n";
     pos = 0;
-    rv  = hwire_parse_headers(&cb, buf, strlen(buf), &pos, 1024, 10);
+    rv  = hwire_parse_headers(&cb, buf, strlen(buf), &pos, 1024);
     ASSERT_EQ(rv, HWIRE_EHDRVALUE);
 
     { /* hwire: MUST return HWIRE_EKEYLEN if the key_lc buffer is too small. */
@@ -67,7 +76,7 @@ void test_parse_headers_valid(void)
         cb_small.key_lc.size = 2;
         buf                  = "Key: val\r\n\r\n";
         pos                  = 0;
-        rv = hwire_parse_headers(&cb_small, buf, strlen(buf), &pos, 1024, 10);
+        rv = hwire_parse_headers(&cb_small, buf, strlen(buf), &pos, 1024);
         ASSERT_EQ(rv, HWIRE_EKEYLEN);
     }
 
@@ -75,14 +84,14 @@ void test_parse_headers_valid(void)
        (MUST accept) */
     buf = "Key: val\tue\r\n\r\n";
     pos = 0;
-    rv  = hwire_parse_headers(&cb, buf, strlen(buf), &pos, 1024, 10);
+    rv  = hwire_parse_headers(&cb, buf, strlen(buf), &pos, 1024);
     ASSERT_OK(rv);
 
     /* RFC 9110 §5.5: field-value = *( field-content / obs-fold ); zero
        characters is valid (MUST accept) */
     buf = "H1:\r\n\r\n";
     pos = 0;
-    rv  = hwire_parse_headers(&cb, buf, strlen(buf), &pos, 1024, 10);
+    rv  = hwire_parse_headers(&cb, buf, strlen(buf), &pos, 1024);
     ASSERT_OK(rv);
 
     TEST_END();
@@ -99,7 +108,7 @@ void test_parse_headers_fail(void)
     };
     size_t pos      = 0;
     const char *buf = "Key: Value\r\n\r\n";
-    int rv = hwire_parse_headers(&cb, buf, strlen(buf), &pos, 1024, 10);
+    int rv = hwire_parse_headers(&cb, buf, strlen(buf), &pos, 1024);
     ASSERT_EQ(rv, HWIRE_ECALLBACK);
 
     TEST_END();
@@ -128,14 +137,14 @@ void test_parse_headers_ows_handling(void)
     /* OWS followed by VCHAR */
     buf = "Key: val  ue\r\n\r\n";
     pos = 0;
-    rv  = hwire_parse_headers(&cb, buf, strlen(buf), &pos, 1024, 10);
+    rv  = hwire_parse_headers(&cb, buf, strlen(buf), &pos, 1024);
     ASSERT_OK(rv);
 
     /* RFC 9110 §5.5: trailing OWS (SP before CRLF) MUST be stripped from
        field-value */
     buf = "Key: value  \r\n\r\n";
     pos = 0;
-    rv  = hwire_parse_headers(&cb, buf, strlen(buf), &pos, 1024, 10);
+    rv  = hwire_parse_headers(&cb, buf, strlen(buf), &pos, 1024);
     ASSERT_OK(rv);
 
     TEST_END();
@@ -157,14 +166,14 @@ void test_parse_headers_cr_handling(void)
     /* CR followed by null terminator in value */
     buf = "Key: val\r";
     pos = 0;
-    rv  = hwire_parse_headers(&cb, buf, strlen(buf), &pos, 1024, 10);
+    rv  = hwire_parse_headers(&cb, buf, strlen(buf), &pos, 1024);
     ASSERT_EQ(rv, HWIRE_EAGAIN);
 
     /* bare LF as field-value terminator: pos MUST consume the entire input
      * including the LF and the following CRLF end-of-headers marker */
     buf = "Key: value\n\r\n";
     pos = 0;
-    rv  = hwire_parse_headers(&cb, buf, strlen(buf), &pos, 1024, 10);
+    rv  = hwire_parse_headers(&cb, buf, strlen(buf), &pos, 1024);
     ASSERT_OK(rv);
     ASSERT_EQ(pos, strlen(buf)); /* all 13 bytes consumed */
 
@@ -172,7 +181,7 @@ void test_parse_headers_cr_handling(void)
      * when end-of-headers is also a bare LF */
     buf = "Key: value\n\n";
     pos = 0;
-    rv  = hwire_parse_headers(&cb, buf, strlen(buf), &pos, 1024, 10);
+    rv  = hwire_parse_headers(&cb, buf, strlen(buf), &pos, 1024);
     ASSERT_OK(rv);
     ASSERT_EQ(pos, strlen(buf)); /* all 12 bytes consumed */
 
@@ -180,7 +189,7 @@ void test_parse_headers_cr_handling(void)
      * correctly and pos MUST equal the full input length */
     buf = "Key1: v1\nKey2: v2\n\r\n";
     pos = 0;
-    rv  = hwire_parse_headers(&cb, buf, strlen(buf), &pos, 1024, 10);
+    rv  = hwire_parse_headers(&cb, buf, strlen(buf), &pos, 1024);
     ASSERT_OK(rv);
     ASSERT_EQ(pos, strlen(buf)); /* all 20 bytes consumed */
 
@@ -203,7 +212,7 @@ void test_parse_headers_invalid_values(void)
     /* Value exceeds maxlen */
     buf = "Key: verylongvalue\r\n\r\n";
     pos = 0;
-    rv  = hwire_parse_headers(&cb, buf, strlen(buf), &pos, 8, 10);
+    rv  = hwire_parse_headers(&cb, buf, strlen(buf), &pos, 8);
     ASSERT_EQ(rv, HWIRE_EHDRLEN);
 
     TEST_END();
@@ -224,13 +233,13 @@ void test_parse_headers_key_parsing(void)
     /* No key_lc buffer */
     buf = "Key: value\r\n\r\n";
     pos = 0;
-    rv  = hwire_parse_headers(&cb_no_lc, buf, strlen(buf), &pos, 1024, 10);
+    rv  = hwire_parse_headers(&cb_no_lc, buf, strlen(buf), &pos, 1024);
     ASSERT_OK(rv);
 
     /* Non-tchar char in key with no key_lc buffer */
     buf = "Ke@y: value\r\n\r\n";
     pos = 0;
-    rv  = hwire_parse_headers(&cb_no_lc, buf, strlen(buf), &pos, 1024, 10);
+    rv  = hwire_parse_headers(&cb_no_lc, buf, strlen(buf), &pos, 1024);
     ASSERT_EQ(rv, HWIRE_EHDRNAME);
 
     char key_storage[TEST_KEY_SIZE];
@@ -242,7 +251,7 @@ void test_parse_headers_key_parsing(void)
     /* Key without colon exhausts the available header budget. */
     buf = "KeyWithoutColon";
     pos = 0;
-    rv  = hwire_parse_headers(&cb, buf, strlen(buf), &pos, strlen(buf), 10);
+    rv  = hwire_parse_headers(&cb, buf, strlen(buf), &pos, strlen(buf));
     ASSERT_EQ(rv, HWIRE_EHDRLEN);
 
     TEST_END();
@@ -264,19 +273,19 @@ void test_parse_headers_empty_and_eol(void)
     /* Empty string */
     buf = "";
     pos = 0;
-    rv  = hwire_parse_headers(&cb, buf, 0, &pos, 1024, 10);
+    rv  = hwire_parse_headers(&cb, buf, 0, &pos, 1024);
     ASSERT_EQ(rv, HWIRE_EAGAIN);
 
     /* CR at end of input (incomplete) */
     buf = "\r";
     pos = 0;
-    rv  = hwire_parse_headers(&cb, buf, strlen(buf), &pos, 1024, 10);
+    rv  = hwire_parse_headers(&cb, buf, strlen(buf), &pos, 1024);
     ASSERT_EQ(rv, HWIRE_EAGAIN);
 
     /* CR followed by non-LF is an invalid empty-line terminator */
     buf = "\rX";
     pos = 0;
-    rv  = hwire_parse_headers(&cb, buf, strlen(buf), &pos, 1024, 10);
+    rv  = hwire_parse_headers(&cb, buf, strlen(buf), &pos, 1024);
     ASSERT_EQ(rv, HWIRE_EEOL);
 
     TEST_END();
@@ -298,7 +307,7 @@ void test_parse_headers_ows_maxlen(void)
     /* OWS skip exceeds maxlen */
     buf = "K:     value\r\n\r\n";
     pos = 0;
-    rv  = hwire_parse_headers(&cb, buf, strlen(buf), &pos, 4, 10);
+    rv  = hwire_parse_headers(&cb, buf, strlen(buf), &pos, 4);
     ASSERT_EQ(rv, HWIRE_EHDRLEN);
 
     TEST_END();
@@ -324,24 +333,24 @@ void test_parse_headers_hval_maxlen_boundary(void)
     /* "K: 123456\r\n\r\n" is exactly 13 bytes. */
     const char *buf = "K: 123456\r\n\r\n";
     pos             = 0;
-    rv              = hwire_parse_headers(&cb, buf, strlen(buf), &pos, 13, 10);
+    rv              = hwire_parse_headers(&cb, buf, strlen(buf), &pos, 13);
     ASSERT_OK(rv);
     ASSERT_EQ(pos, strlen(buf));
 
     pos = 0;
-    rv  = hwire_parse_headers(&cb, buf, strlen(buf), &pos, 12, 10);
+    rv  = hwire_parse_headers(&cb, buf, strlen(buf), &pos, 12);
     ASSERT_EQ(rv, HWIRE_EHDRLEN);
 
     /* "K: 12345\r\n\r\n" is exactly 12 bytes. */
     buf = "K: 12345\r\n\r\n";
     pos = 0;
-    rv  = hwire_parse_headers(&cb, buf, strlen(buf), &pos, 12, 10);
+    rv  = hwire_parse_headers(&cb, buf, strlen(buf), &pos, 12);
     ASSERT_OK(rv);
 
     /* "K: 1234567\r\n\r\n" exceeds maxlen=13. */
     buf = "K: 1234567\r\n\r\n";
     pos = 0;
-    rv  = hwire_parse_headers(&cb, buf, strlen(buf), &pos, 13, 10);
+    rv  = hwire_parse_headers(&cb, buf, strlen(buf), &pos, 13);
     ASSERT_EQ(rv, HWIRE_EHDRLEN);
 
     TEST_END();
@@ -379,13 +388,13 @@ void test_parse_headers_allows_empty_value(void)
     /* Empty header value */
     buf = "Empty-Val:\r\n\r\n";
     pos = 0;
-    rv  = hwire_parse_headers(&cb, buf, strlen(buf), &pos, 1024, 10);
+    rv  = hwire_parse_headers(&cb, buf, strlen(buf), &pos, 1024);
     ASSERT_OK(rv);
 
     /* OWS then empty */
     buf = "Empty-Val:   \r\n\r\n";
     pos = 0;
-    rv  = hwire_parse_headers(&cb, buf, strlen(buf), &pos, 1024, 10);
+    rv  = hwire_parse_headers(&cb, buf, strlen(buf), &pos, 1024);
     ASSERT_OK(rv);
 
     TEST_END();
@@ -409,7 +418,7 @@ void test_parse_headers_rfc_compliance(void)
      * seen → HWIRE_EHDRNAME. */
     buf = "Key : Value\r\n\r\n";
     pos = 0;
-    rv  = hwire_parse_headers(&cb, buf, strlen(buf), &pos, 1024, 10);
+    rv  = hwire_parse_headers(&cb, buf, strlen(buf), &pos, 1024);
     ASSERT_EQ(rv, HWIRE_EHDRNAME);
 
     /* RFC 9112 §5.2: obs-fold is deprecated and MUST be rejected.
@@ -418,7 +427,7 @@ void test_parse_headers_rfc_compliance(void)
      * name begins with SP → not a valid tchar → HWIRE_EHDRNAME. */
     buf = "Key: Value\r\n Folded\r\n\r\n";
     pos = 0;
-    rv  = hwire_parse_headers(&cb, buf, strlen(buf), &pos, 1024, 10);
+    rv  = hwire_parse_headers(&cb, buf, strlen(buf), &pos, 1024);
     ASSERT_EQ(rv, HWIRE_EHDRNAME);
 
     /* hwire: bare LF as field-value line terminator (lenient; RFC 9112 §2.2
@@ -426,14 +435,14 @@ void test_parse_headers_rfc_compliance(void)
        iteration */
     buf = "Key: value\n\r\n";
     pos = 0;
-    rv  = hwire_parse_headers(&cb, buf, strlen(buf), &pos, 1024, 10);
+    rv  = hwire_parse_headers(&cb, buf, strlen(buf), &pos, 1024);
     ASSERT_OK(rv);
 
     /* hwire: bare LF as end-of-headers marker (lenient; RFC 9112 §2.2 SHOULD
        accept bare LF in place of CRLF) */
     buf = "Key: value\r\n\n";
     pos = 0;
-    rv  = hwire_parse_headers(&cb, buf, strlen(buf), &pos, 1024, 10);
+    rv  = hwire_parse_headers(&cb, buf, strlen(buf), &pos, 1024);
     ASSERT_OK(rv);
 
     TEST_END();
@@ -462,19 +471,19 @@ void test_parse_headers_obstext(void)
     /* obs-text bytes as the entire field-value */
     buf = "X-Obs: \x80\xff\xa5\r\n\r\n";
     pos = 0;
-    rv  = hwire_parse_headers(&cb, buf, strlen(buf), &pos, 1024, 10);
+    rv  = hwire_parse_headers(&cb, buf, strlen(buf), &pos, 1024);
     ASSERT_OK(rv);
 
     /* obs-text mixed with VCHAR */
     buf = "X-Mix: abc\x80xyz\xff\r\n\r\n";
     pos = 0;
-    rv  = hwire_parse_headers(&cb, buf, strlen(buf), &pos, 1024, 10);
+    rv  = hwire_parse_headers(&cb, buf, strlen(buf), &pos, 1024);
     ASSERT_OK(rv);
 
     /* HTAB embedded between obs-text and VCHAR (field-content) */
     buf = "X-Tab: \x80\tvalue\r\n\r\n";
     pos = 0;
-    rv  = hwire_parse_headers(&cb, buf, strlen(buf), &pos, 1024, 10);
+    rv  = hwire_parse_headers(&cb, buf, strlen(buf), &pos, 1024);
     ASSERT_OK(rv);
 
     TEST_END();
@@ -511,7 +520,7 @@ void test_parse_headers_ows_exact(void)
     buf                  = "K: value   \r\n\r\n";
     pos                  = 0;
     g_captured_value_len = 0;
-    rv = hwire_parse_headers(&cb, buf, strlen(buf), &pos, 1024, 10);
+    rv = hwire_parse_headers(&cb, buf, strlen(buf), &pos, 1024);
     ASSERT_OK(rv);
     ASSERT_EQ(g_captured_value_len, 5);
 
@@ -519,7 +528,7 @@ void test_parse_headers_ows_exact(void)
     buf                  = "K: value\t\r\n\r\n";
     pos                  = 0;
     g_captured_value_len = 0;
-    rv = hwire_parse_headers(&cb, buf, strlen(buf), &pos, 1024, 10);
+    rv = hwire_parse_headers(&cb, buf, strlen(buf), &pos, 1024);
     ASSERT_OK(rv);
     ASSERT_EQ(g_captured_value_len, 5);
 
@@ -528,7 +537,7 @@ void test_parse_headers_ows_exact(void)
     buf                  = "K: value \t \r\n\r\n";
     pos                  = 0;
     g_captured_value_len = 0;
-    rv = hwire_parse_headers(&cb, buf, strlen(buf), &pos, 1024, 10);
+    rv = hwire_parse_headers(&cb, buf, strlen(buf), &pos, 1024);
     ASSERT_OK(rv);
     ASSERT_EQ(g_captured_value_len, 5);
 
@@ -562,7 +571,7 @@ void test_parse_headers_simd_boundary(void)
         memset(buf, 'a', nlen);
         memcpy(buf + nlen, ": v\r\n\r\n", 7);
         pos = 0;
-        rv  = hwire_parse_headers(&cb, buf, nlen + 7, &pos, 1024, 10);
+        rv  = hwire_parse_headers(&cb, buf, nlen + 7, &pos, 1024);
         if (rv != HWIRE_OK) {
             fprintf(stderr, "FAILED: %s:%d: name_len=%zu gave rv=%d\n",
                     __FILE__, __LINE__, nlen, rv);
@@ -577,7 +586,7 @@ void test_parse_headers_simd_boundary(void)
     buf[14] = '~'; /* last byte of 15-char chunk */
     memcpy(buf + 17, ": v\r\n\r\n", 7);
     pos = 0;
-    rv  = hwire_parse_headers(&cb, buf, 24, &pos, 1024, 10);
+    rv  = hwire_parse_headers(&cb, buf, 24, &pos, 1024);
     ASSERT_OK(rv);
 
     /* Field-values at SIMD boundary lengths: 16, 32 bytes */
@@ -588,7 +597,7 @@ void test_parse_headers_simd_boundary(void)
         memset(buf + 3, 'a', vlen);
         memcpy(buf + 3 + vlen, "\r\n\r\n", 4);
         pos = 0;
-        rv  = hwire_parse_headers(&cb, buf, 3 + vlen + 4, &pos, 1024, 10);
+        rv  = hwire_parse_headers(&cb, buf, 3 + vlen + 4, &pos, 1024);
         if (rv != HWIRE_OK) {
             fprintf(stderr, "FAILED: %s:%d: val_len=%zu gave rv=%d\n", __FILE__,
                     __LINE__, vlen, rv);
@@ -629,7 +638,7 @@ void test_parse_headers_streaming(void)
     for (size_t i = 1; i < full_len; i++) {
         cb.key_lc.len = 0;
         pos           = 0;
-        rv            = hwire_parse_headers(&cb, full, i, &pos, 1024, 10);
+        rv            = hwire_parse_headers(&cb, full, i, &pos, 1024);
         if (rv != HWIRE_EAGAIN) {
             fprintf(stderr,
                     "FAILED: %s:%d: expected HWIRE_EAGAIN at len=%zu, got "
@@ -643,7 +652,7 @@ void test_parse_headers_streaming(void)
     /* Full block MUST succeed with pos == full_len */
     cb.key_lc.len = 0;
     pos           = 0;
-    rv            = hwire_parse_headers(&cb, full, full_len, &pos, 1024, 10);
+    rv            = hwire_parse_headers(&cb, full, full_len, &pos, 1024);
     ASSERT_OK(rv);
     ASSERT_EQ(pos, full_len);
 
@@ -725,7 +734,7 @@ void test_parse_headers_content_verification(void)
         const char *buf = "Content-Type: text/html\r\n\r\n";
         exp.buf         = buf;
         exp.buf_len     = strlen(buf);
-        int rv = hwire_parse_headers(&cb, buf, strlen(buf), &pos, 1024, 10);
+        int rv = hwire_parse_headers(&cb, buf, strlen(buf), &pos, 1024);
         ASSERT_OK(rv);
         ASSERT_EQ(exp.called, 1);
         ASSERT_EQ(exp.failed, 0);
@@ -744,7 +753,7 @@ void test_parse_headers_content_verification(void)
         const char *buf = "X-Custom: hello world\r\n\r\n";
         exp.buf         = buf;
         exp.buf_len     = strlen(buf);
-        int rv = hwire_parse_headers(&cb, buf, strlen(buf), &pos, 1024, 10);
+        int rv = hwire_parse_headers(&cb, buf, strlen(buf), &pos, 1024);
         ASSERT_OK(rv);
         ASSERT_EQ(exp.called, 1);
         ASSERT_EQ(exp.failed, 0);
@@ -764,7 +773,7 @@ void test_parse_headers_content_verification(void)
         const char *buf = "OWS-Key:   trimmed   \r\n\r\n";
         exp.buf         = buf;
         exp.buf_len     = strlen(buf);
-        int rv = hwire_parse_headers(&cb, buf, strlen(buf), &pos, 1024, 10);
+        int rv = hwire_parse_headers(&cb, buf, strlen(buf), &pos, 1024);
         ASSERT_OK(rv);
         ASSERT_EQ(exp.called, 1);
         ASSERT_EQ(exp.failed, 0);

@@ -28,7 +28,7 @@ void test_chunksize_empty_quoted_extension_value(void)
     const char *buf           = "1;foo=\"\"\r\n";
     size_t pos                = 0;
 
-    ASSERT_OK(hwire_parse_chunksize(&ctx, buf, strlen(buf), &pos, 100, 1));
+    ASSERT_OK(hwire_parse_chunksize(&ctx, buf, strlen(buf), &pos, 100));
     ASSERT_EQ(pos, strlen(buf));
     ASSERT_EQ(result.calls, 1);
     ASSERT_EQ(result.key_len, 3);
@@ -62,7 +62,7 @@ void test_chunksize_rejects_empty_token_extension_values(void)
             size_t pos      = 0;
 
             ASSERT_EQ(hwire_parse_chunksize(&ctx, cases[i], strlen(cases[i]),
-                                            &pos, 100, 10),
+                                            &pos, 100),
                       HWIRE_EEXTVAL);
             ASSERT_EQ(pos, 0);
             ASSERT_EQ(result.calls, 0);
@@ -94,10 +94,10 @@ void test_chunksize_empty_token_extension_value_fragments(void)
             size_t pos      = 0;
 
             ASSERT_EQ(
-                hwire_parse_chunksize(&ctx, cases[i], len, &pos, len + 1, 10),
+                hwire_parse_chunksize(&ctx, cases[i], len, &pos, len + 1),
                 HWIRE_EAGAIN);
             ASSERT_EQ(pos, 0);
-            ASSERT_EQ(hwire_parse_chunksize(&ctx, cases[i], len, &pos, len, 10),
+            ASSERT_EQ(hwire_parse_chunksize(&ctx, cases[i], len, &pos, len),
                       HWIRE_ELEN);
             ASSERT_EQ(pos, 0);
             ASSERT_EQ(result.calls, 0);

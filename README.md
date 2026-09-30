@@ -193,7 +193,7 @@ int main(void)
 
     size_t pos = 0;
     int rc = hwire_parse_request(&ctx, data, strlen(data), &pos,
-                                 UINT16_MAX, UINT8_MAX);
+                                 UINT16_MAX);
     if (rc == HWIRE_OK)
         printf("consumed %zu bytes\n", pos);
     else
@@ -236,7 +236,7 @@ All parse functions return `hwire_code_t`. Negative values are errors.
 | `HWIRE_ERANGE` | −11 | Value out of range (e.g., chunk size) |
 | `HWIRE_EEXTNAME` | −12 | Invalid chunk extension name |
 | `HWIRE_EEXTVAL` | −13 | Invalid chunk extension value or missing EOL |
-| `HWIRE_ENOBUFS` | −14 | Too many headers / parameters / extensions |
+| `HWIRE_ENOBUFS` | −14 | Insufficient output buffer space |
 | `HWIRE_EKEYLEN` | −15 | Key length exceeds `ctx->key_lc.size` |
 | `HWIRE_ECALLBACK` | −16 | A callback returned non-zero |
 | `HWIRE_EURI` | −17 | Invalid request-target form, component, or character |
@@ -529,7 +529,7 @@ Parses a quoted-string per [RFC 9110 §5.6.4](https://www.rfc-editor.org/rfc/rfc
 
 ```c
 int hwire_parse_parameters(hwire_ctx_t *ctx, const char *str, size_t len,
-                           size_t *pos, size_t maxlen, uint8_t maxnparams,
+                           size_t *pos, size_t maxlen,
                            int skip_leading_semicolon);
 ```
 
@@ -551,7 +551,6 @@ parameter  = parameter-name "=" parameter-value
 - `maxlen` — maximum number of bytes examined from the initial `*pos`. If a
   required parameter component is incomplete when this budget is exhausted,
   the function returns `HWIRE_ELEN` without examining later bytes.
-- `maxnparams` — maximum number of parameters.
 - `skip_leading_semicolon` — non-zero to accept the first parameter without a leading `;`.
 
 **Returns**
@@ -564,7 +563,6 @@ parameter  = parameter-name "=" parameter-value
 | `HWIRE_ELEN` | A required parameter component is incomplete upon exhausting `maxlen` |
 | `HWIRE_EKEYLEN` | Key length exceeds `ctx->key_lc.size` |
 | `HWIRE_ECALLBACK` | Callback returned non-zero |
-| `HWIRE_ENOBUFS` | Parameter count exceeds `maxnparams` |
 
 ---
 
@@ -574,7 +572,7 @@ parameter  = parameter-name "=" parameter-value
 
 ```c
 int hwire_parse_chunksize(hwire_ctx_t *ctx, const char *str, size_t len,
-                          size_t *pos, size_t maxlen, uint8_t maxexts);
+                          size_t *pos, size_t maxlen);
 ```
 
 Parses a chunked-encoding size line per [RFC 9112 §7.1](https://www.rfc-editor.org/rfc/rfc9112#section-7.1):
@@ -584,7 +582,7 @@ chunk-size = 1*HEXDIG
 chunk-ext  = *( BWS ";" BWS chunk-ext-name [ BWS "=" BWS chunk-ext-val ] )
 ```
 
-`ctx->chunksize_cb` is called once with the parsed size; `ctx->chunksize_ext_cb` is called for each extension when set (optional). When it is `NULL`, extensions are still syntax-checked and counted against `maxexts`, but are not delivered. On success, `*pos` is advanced past the trailing `CRLF` or `LF`.
+`ctx->chunksize_cb` is called once with the parsed size; `ctx->chunksize_ext_cb` is called for each extension when set (optional). When it is `NULL`, extensions are still syntax-checked but are not delivered. Set a callback when an application extension limit is needed. On success, `*pos` is advanced past the trailing `CRLF` or `LF`.
 
 When `=` is present, it must be followed by a non-empty token or a
 quoted-string. An empty quoted-string (`foo=""`) is valid, while an empty token
@@ -603,7 +601,6 @@ value (`foo=`) is rejected with `HWIRE_EEXTVAL`.
   exhausted, the parser returns `HWIRE_EAGAIN`. If the line is incomplete
   upon exhausting `maxlen`, it returns `HWIRE_ELEN` without examining later
   bytes.
-- `maxexts` — maximum number of chunk extensions.
 
 **Returns**
 
@@ -618,13 +615,12 @@ value (`foo=`) is rejected with `HWIRE_EEXTVAL`.
 | `HWIRE_EEXTNAME` | Invalid extension name |
 | `HWIRE_EEXTVAL` | Invalid extension value or missing line terminator |
 | `HWIRE_ECALLBACK` | Callback returned non-zero |
-| `HWIRE_ENOBUFS` | Extension count exceeds `maxexts` |
 
 #### `hwire_parse_headers`
 
 ```c
 int hwire_parse_headers(hwire_ctx_t *ctx, const char *str, size_t len,
-                        size_t *pos, size_t maxlen, uint8_t maxnhdrs);
+                        size_t *pos, size_t maxlen);
 ```
 
 Parses HTTP header fields until an empty `CRLF` or `LF` line. `ctx->header_cb` is called for each field; `ctx->key_lc.buf` is populated with the lowercase field name before each callback.
@@ -640,7 +636,6 @@ Parses HTTP header fields until an empty `CRLF` or `LF` line. `ctx->header_cb` i
   `*pos`, including field delimiters, line endings, and the terminating empty
   line. An incomplete block at the budget boundary returns `HWIRE_EHDRLEN`
   without examining later bytes.
-- `maxnhdrs` — maximum number of header fields.
 
 **Returns**
 
@@ -652,7 +647,6 @@ Parses HTTP header fields until an empty `CRLF` or `LF` line. `ctx->header_cb` i
 | `HWIRE_EHDRVALUE` | Invalid header field value |
 | `HWIRE_EHDRLEN` | Header block is incomplete upon exhausting `maxlen` |
 | `HWIRE_EEOL` | Invalid end-of-line in header value (CR without LF) |
-| `HWIRE_ENOBUFS` | Header count exceeds `maxnhdrs` |
 | `HWIRE_EKEYLEN` | Key length exceeds `ctx->key_lc.size` |
 | `HWIRE_ECALLBACK` | Callback returned non-zero |
 
@@ -660,7 +654,7 @@ Parses HTTP header fields until an empty `CRLF` or `LF` line. `ctx->header_cb` i
 
 ```c
 int hwire_parse_request(hwire_ctx_t *ctx, const char *str, size_t len,
-                        size_t *pos, size_t maxlen, uint8_t maxnhdrs);
+                        size_t *pos, size_t maxlen);
 ```
 
 Parses a full `HTTP/1.x` request (request-line + headers). `ctx->request_cb` is called once for the request line, then `ctx->header_cb` for each header field. The request-target is structurally parsed into its RFC 9112 form and RFC 3986 components while `req->uri` retains the complete wire value. Returns `HWIRE_OK` when the empty line terminating the headers has been consumed.
@@ -682,7 +676,6 @@ Host: example.com\r\n
   empty lines + request-line + header fields and the terminating empty line,
   all delimiters included). An incomplete component at
   the budget boundary returns its length error without examining later bytes.
-- `maxnhdrs` — maximum number of header fields.
 
 **Returns**
 
@@ -700,13 +693,12 @@ Host: example.com\r\n
 | `HWIRE_EHDRLEN` | The header section is incomplete upon exhausting the remaining `maxlen` budget |
 | `HWIRE_EKEYLEN` | Key length exceeds `ctx->key_lc.size` |
 | `HWIRE_ECALLBACK` | Callback returned non-zero |
-| `HWIRE_ENOBUFS` | Header count exceeds `maxnhdrs` |
 
 #### `hwire_parse_query`
 
 ```c
 int hwire_parse_query(hwire_ctx_t *ctx, const char *str, size_t len,
-                      size_t *pos, size_t maxlen, uint16_t maxnparams);
+                      size_t *pos, size_t maxlen);
 ```
 
 This opt-in API splits query input (without `?`) on literal `&` and the
@@ -718,7 +710,7 @@ decode buffer alive while retaining callback slices. `maxlen` is a byte budget
 from the initial `*pos`; success sets `*pos == len`. An incomplete `%HH` at the
 available input end returns `HWIRE_EAGAIN` while budget remains, or
 `HWIRE_ELEN` when it is exhausted. Invalid characters or hex digits return
-`HWIRE_EURI`; count or buffer exhaustion returns `HWIRE_ENOBUFS`, and a
+`HWIRE_EURI`; decode-buffer exhaustion returns `HWIRE_ENOBUFS`, and a
 stopped callback returns `HWIRE_ECALLBACK`. As with parameter parsing, a pair
 ending at the byte budget may be delivered before the outer parser returns
 `HWIRE_ELEN`; in that case `*pos` advances to the budget boundary.
@@ -733,11 +725,16 @@ typedef struct {
     hwire_query_param_t params[32];
     size_t count;
     int query_error;
+    int storage_error;
 } app_request_t;
 
 static int on_query(hwire_ctx_t *ctx, hwire_query_param_t *param)
 {
     app_request_t *app = ctx->uctx;
+    if (app->count >= sizeof(app->params) / sizeof(app->params[0])) {
+        app->storage_error = HWIRE_ENOBUFS;
+        return -1;
+    }
     app->params[app->count++] = *param;
     return 0;
 }
@@ -745,24 +742,27 @@ static int on_query(hwire_ctx_t *ctx, hwire_query_param_t *param)
 static int on_request(hwire_ctx_t *ctx, hwire_request_t *req)
 {
     app_request_t *app = ctx->uctx;
-    if (req->query.ptr == NULL) return 0;
+    if (req->query.ptr == NULL) {
+        return 0;
+    }
     size_t pos = 0;
     ctx->qrybuf = app->query_storage;
     app->query_error = hwire_parse_query(ctx, req->query.ptr, req->query.len,
-                                         &pos, req->query.len, 32);
+                                         &pos, req->query.len);
     return app->query_error == HWIRE_OK ? 0 : -1;
 }
 /* Before hwire_parse_request, set app.query_storage.buf/size to separate
-request-lifetime storage, app.query_error = HWIRE_OK, and set ctx.query_cb
+request-lifetime storage, reset app.count to zero and both errors to
+   HWIRE_OK, and set ctx.query_cb
    = on_query and ctx.request_cb = on_request. If the outer parser returns
-   HWIRE_ECALLBACK, inspect app.query_error. */
+   HWIRE_ECALLBACK, inspect app.query_error and app.storage_error. */
 ```
 
 #### `hwire_parse_response`
 
 ```c
 int hwire_parse_response(hwire_ctx_t *ctx, const char *str, size_t len,
-                         size_t *pos, size_t maxlen, uint8_t maxnhdrs);
+                         size_t *pos, size_t maxlen);
 ```
 
 Parses a full `HTTP/1.x` response (status-line + headers). `ctx->response_cb` is called once for the status line, then `ctx->header_cb` for each header field. Returns `HWIRE_OK` when the empty line has been consumed.
@@ -784,7 +784,6 @@ Content-Length: 0\r\n
   empty lines + status-line + header fields and the terminating empty line,
   all delimiters included). An incomplete component at
   the budget boundary returns its length error without examining later bytes.
-- `maxnhdrs` — maximum number of header fields.
 
 **Returns**
 
@@ -802,9 +801,24 @@ Content-Length: 0\r\n
 | `HWIRE_EHDRLEN` | The header section is incomplete upon exhausting the remaining `maxlen` budget |
 | `HWIRE_EKEYLEN` | Key length exceeds `ctx->key_lc.size` |
 | `HWIRE_ECALLBACK` | Callback returned non-zero |
-| `HWIRE_ENOBUFS` | Header count exceeds `maxnhdrs` |
 
 ---
+
+## Application limits
+
+Callbacks enforce header, query-parameter, parameter and chunk-extension limits
+using caller-owned state reached through `ctx->uctx`. Reject an item before
+writing beyond the destination capacity, save the application error, and return
+nonzero. The parser stops immediately with `HWIRE_ECALLBACK`; inspect the saved
+error to distinguish full storage from another callback failure. No item-count
+limit is imposed by the parser. `maxlen` still bounds examined input bytes, and
+parser output-buffer bounds remain enforced.
+
+If storage overwrites duplicate keys or discards items, its size may differ from
+the received item count. Keep a separate callback counter when the application
+needs to limit received items. Earlier callback effects are not rolled back on
+failure. Reset per-attempt storage, counters and application errors before
+retrying a message from its start after `HWIRE_EAGAIN`.
 
 ## Streaming and EAGAIN
 
@@ -831,7 +845,7 @@ for (;;) {
     filled += (size_t)n;
 
     int rc = hwire_parse_response(&ctx, buf, filled, &pos,
-                                  UINT16_MAX, UINT8_MAX);
+                                  UINT16_MAX);
     if (rc == HWIRE_OK) {
         /* buf[0..pos-1] is the header section; body starts at buf[pos] */
         break;
@@ -1013,15 +1027,15 @@ again, since the parser replays callbacks from the message start.
 #include "hwire_table.h"
 #include <stdio.h>
 
-enum { MAX_HEADERS = 100, MAX_PARAMS = 16 };
+enum { HEADER_CAPACITY = HWIRE_TABLE_CAPACITY(100), QUERY_CAPACITY = 16 };
 
 typedef struct {
     hwire_ctx_t ctx;
     hwire_request_t request;
     hwire_table_t headers;
     hwire_table_t query_params;
-    hwire_table_entry_t header_entries[HWIRE_TABLE_CAPACITY(MAX_HEADERS)];
-    hwire_table_entry_t query_entries[HWIRE_TABLE_CAPACITY(MAX_PARAMS)];
+    hwire_table_entry_t header_entries[HEADER_CAPACITY];
+    hwire_table_entry_t query_entries[QUERY_CAPACITY];
     char query_storage[256];
     hwire_table_code_t table_result;
     int query_result;
@@ -1044,7 +1058,7 @@ static int on_request(hwire_ctx_t *ctx, hwire_request_t *request)
     size_t pos = 0;
     app->query_result = hwire_parse_query(ctx, request->query.ptr,
                                          request->query.len, &pos,
-                                         request->query.len, MAX_PARAMS);
+                                         request->query.len);
     return app->query_result == HWIRE_OK ? 0 : -1;
 }
 
@@ -1071,9 +1085,9 @@ int main(void)
     hwire_table_key_t key;
     hwire_table_key_init(&key, 42); /* deterministic example seed */
     if (hwire_table_init(&app.headers, app.header_entries,
-                         HWIRE_TABLE_CAPACITY(MAX_HEADERS), &key) != HWIRE_TABLE_OK ||
+                         HEADER_CAPACITY, &key) != HWIRE_TABLE_OK ||
         hwire_table_init(&app.query_params, app.query_entries,
-                         HWIRE_TABLE_CAPACITY(MAX_PARAMS), &key) != HWIRE_TABLE_OK) {
+                         QUERY_CAPACITY, &key) != HWIRE_TABLE_OK) {
         return 1;
     }
 
@@ -1085,7 +1099,7 @@ int main(void)
     app.ctx.qrybuf.size = sizeof(app.query_storage);
     size_t pos = 0;
     int result = hwire_parse_request(&app.ctx, input, sizeof input - 1, &pos,
-                                     sizeof input - 1, MAX_HEADERS);
+                                     sizeof input - 1);
     if (result != HWIRE_OK) {
         fprintf(stderr, "parse error: %d, query result: %d, table result: %d\n",
                 result, app.query_result, app.table_result);
