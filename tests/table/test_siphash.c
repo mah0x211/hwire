@@ -1,3 +1,6 @@
+#ifndef HWIRE_NO_AES
+#define HWIRE_NO_AES
+#endif
 /* Exercise SipHash-1-3 with outputs from the author's reference implementation:
  * https://github.com/veorq/SipHash (cROUNDS=1, dROUNDS=3, 8-byte output).
  * Key bytes are 00..0f; input bytes are 00..3f. */
@@ -80,12 +83,12 @@ int main(void)
         UINT64_C(0xc3b2f6154b6694e0),
         UINT64_C(0x9d199062b7bbb3a8)};
     for (size_t i = 0; i < sizeof expected / sizeof expected[0]; ++i) {
-        assert(hash_key(&key, input, i, 0) == expected[i]);
+        assert(hash_siphash(&key, input, i, 0) == expected[i]);
     }
-    assert(hash_key(&key, "AbCdEfGhI", 9, 1) ==
-           hash_key(&key, "abcdefghi", 9, 0));
-    assert(hash_key(&key, "AbCdEfGhI", 9, 0) !=
-           hash_key(&key, "abcdefghi", 9, 0));
+    assert(hash_siphash(&key, "AbCdEfGhI", 9, 1) ==
+           hash_siphash(&key, "abcdefghi", 9, 0));
+    assert(hash_siphash(&key, "AbCdEfGhI", 9, 0) !=
+           hash_siphash(&key, "abcdefghi", 9, 0));
 
     for (unsigned seed = 0; seed < 256u; ++seed) {
         char raw[32];
@@ -107,8 +110,8 @@ int main(void)
         assert(fold_word(word) == expected_word);
         memcpy(unaligned + 1, normalized, sizeof normalized);
         for (size_t len = 0; len <= sizeof raw; ++len) {
-            assert(hash_key(&key, raw, len, 1) ==
-                   hash_key(&key, normalized, len, 0));
+            assert(hash_siphash(&key, raw, len, 1) ==
+                   hash_siphash(&key, normalized, len, 0));
             hwire_str_t slice = {len, raw};
             assert(equal_key(slice, normalized, len, 1));
             assert(equal_key(slice, unaligned + 1, len, 1));

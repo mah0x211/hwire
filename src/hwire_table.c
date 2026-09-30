@@ -3,12 +3,6 @@
 
 #define EMPTY UINT16_C(0)
 
-/** Rotate a 64-bit SipHash state word by a nonzero, sub-64 bit count. */
-static inline uint64_t rotate_left(uint64_t x, unsigned n)
-{
-    return (x << n) | (x >> (64u - n));
-}
-
 /** Fold ASCII uppercase only; preserve NUL and all non-ASCII bytes. */
 static inline unsigned char fold(unsigned char c)
 {
@@ -27,13 +21,22 @@ static inline uint64_t fold_word(uint64_t word)
     return word | (upper >> 2u);
 }
 
+#include "hwire_table_aes.h"
+
+#if !defined(HWIRE_TABLE_HAVE_AES)
+/** Rotate a 64-bit SipHash state word by a nonzero, sub-64 bit count. */
+static inline uint64_t rotate_left(uint64_t x, unsigned n)
+{
+    return (x << n) | (x >> (64u - n));
+}
+
 /**
  * Compute SipHash-1-3 over a borrowed slice. In CI mode, fold each byte while
  * loading it, without allocating a normalized copy. An empty slice may have
  * a NULL data pointer. The byte loads avoid alignment and aliasing assumptions.
  */
-static uint64_t hash_key(const hwire_table_key_t *key, const char *data,
-                         size_t len, int ci)
+static uint64_t hash_siphash(const hwire_table_key_t *key, const char *data,
+                             size_t len, int ci)
 {
     uint64_t v0 = UINT64_C(0x736f6d6570736575) ^ key->words[0];
     uint64_t v1 = UINT64_C(0x646f72616e646f6d) ^ key->words[1];
@@ -41,37 +44,37 @@ static uint64_t hash_key(const hwire_table_key_t *key, const char *data,
     uint64_t v3 = UINT64_C(0x7465646279746573) ^ key->words[1];
     size_t i    = 0;
 
-#define SIPROUND                                                               \
-    do {                                                                       \
-        v0 += v1;                                                              \
-        v1 = rotate_left(v1, 13);                                              \
-        v1 ^= v0;                                                              \
-        v0 = rotate_left(v0, 32);                                              \
-        v2 += v3;                                                              \
-        v3 = rotate_left(v3, 16);                                              \
-        v3 ^= v2;                                                              \
-        v0 += v3;                                                              \
-        v3 = rotate_left(v3, 21);                                              \
-        v3 ^= v0;                                                              \
-        v2 += v1;                                                              \
-        v1 = rotate_left(v1, 17);                                              \
-        v1 ^= v2;                                                              \
-        v2 = rotate_left(v2, 32);                                              \
-    } while (0)
+# define SIPROUND                                                              \
+     do {                                                                      \
+         v0 += v1;                                                             \
+         v1 = rotate_left(v1, 13);                                             \
+         v1 ^= v0;                                                             \
+         v0 = rotate_left(v0, 32);                                             \
+         v2 += v3;                                                             \
+         v3 = rotate_left(v3, 16);                                             \
+         v3 ^= v2;                                                             \
+         v0 += v3;                                                             \
+         v3 = rotate_left(v3, 21);                                             \
+         v3 ^= v0;                                                             \
+         v2 += v1;                                                             \
+         v1 = rotate_left(v1, 17);                                             \
+         v1 ^= v2;                                                             \
+         v2 = rotate_left(v2, 32);                                             \
+     } while (0)
 
     while (len - i >= 8u) {
         uint64_t m = 0;
         if (ci) {
-#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+# if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
             memcpy(&m, data + i, sizeof(m));
             m = fold_word(m);
-#else
+# else
             for (unsigned j = 0; j < 8u; ++j) {
                 unsigned char c = (unsigned char)data[i + j];
                 c               = fold(c);
                 m |= (uint64_t)c << (8u * j);
             }
-#endif
+# endif
         } else {
             for (unsigned j = 0; j < 8u; ++j) {
                 m |= (uint64_t)(unsigned char)data[i + j] << (8u * j);
@@ -101,7 +104,19 @@ static uint64_t hash_key(const hwire_table_key_t *key, const char *data,
     SIPROUND;
     return v0 ^ v1 ^ v2 ^ v3;
 
-#undef SIPROUND
+# undef SIPROUND
+}
+#endif
+
+/** Hash with the backend selected by the compiler target feature macros. */
+static uint64_t hash_key(const hwire_table_t *table, const char *data,
+                         size_t len, int ci)
+{
+#if defined(HWIRE_TABLE_HAVE_AES)
+    return hash_aes(&table->key, data, len, ci);
+#else
+    return hash_siphash(&table->key, data, len, ci);
+#endif
 }
 
 /** Advance and mix a deterministic seed into one 64-bit key word. */
@@ -190,15 +205,14 @@ static inline uint16_t slot_read(const hwire_table_t *table, uint32_t pos,
 }
 
 /**
- * Probe one index from its SipHash bucket, wrapping at mask. Return the first
+ * Probe one index from its hash bucket, wrapping at mask. Return the first
  * empty or equal slot and write its representative to *head. An empty slot
  * always exists because each index has twice as many slots as pair capacity.
  */
 static uint32_t find_slot(const hwire_table_t *table, const char *key,
                           size_t keylen, int ci, uint16_t *head_out)
 {
-    uint32_t pos =
-        (uint32_t)hash_key(&table->key, key, keylen, ci) & table->mask;
+    uint32_t pos = (uint32_t)hash_key(table, key, keylen, ci) & table->mask;
 
     for (;;) {
         uint16_t head = slot_read(table, pos, ci);
