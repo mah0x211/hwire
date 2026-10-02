@@ -118,18 +118,14 @@ hwire_table_code_t hwire_table_init(hwire_table_t *table,
  * @brief Append a borrowed key/value pair to both exact and ASCII-CI indexes.
  * @param table Initialized table.
  * @param kv Non-NULL pair to copy by value. A nonempty slice needs a pointer.
- * @param out_entry Optional destination for the new entry address. If provided,
- *                  it is set to NULL on failure.
  * @return HWIRE_TABLE_OK, HWIRE_TABLE_EINVAL for invalid arguments, or
  *         HWIRE_TABLE_EFULL when capacity has been exhausted.
  *
- * The returned entry address is stable until reset. A failed push leaves the
- * table unchanged. The caller retains ownership of key and value bytes.
- * Values are not normalized or combined.
+ * A failed push leaves the table unchanged. The caller retains ownership of
+ * key and value bytes. Values are not normalized or combined.
  */
 hwire_table_code_t hwire_table_push(hwire_table_t *table,
-                                    const hwire_kv_pair_t *kv,
-                                    const hwire_table_entry_t **out_entry);
+                                    const hwire_kv_pair_t *kv);
 
 /**
  * @brief Find the first pair whose key matches exactly, byte for byte.

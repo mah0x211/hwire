@@ -953,14 +953,12 @@ entries. Return `HWIRE_TABLE_OK`, `HWIRE_TABLE_EINVAL`, or
 
 ```c
 hwire_table_code_t hwire_table_push(hwire_table_t *table,
-                                  const hwire_kv_pair_t *kv,
-                                  const hwire_table_entry_t **out_entry);
+                                  const hwire_kv_pair_t *kv);
 ```
 
 Append one pair to an initialized table. Nonempty slices require non-NULL
-pointers. `out_entry` may be NULL; otherwise it receives the stored entry on
-success and NULL on failure. Return `HWIRE_TABLE_OK`, `HWIRE_TABLE_EINVAL`,
-or `HWIRE_TABLE_EFULL`. A failed push leaves the table unchanged.
+pointers. Return `HWIRE_TABLE_OK`, `HWIRE_TABLE_EINVAL`, or
+`HWIRE_TABLE_EFULL`. A failed push leaves the table unchanged.
 
 ```c
 const hwire_table_entry_t *hwire_table_get(const hwire_table_t *table,
@@ -1044,7 +1042,7 @@ typedef struct {
 static int on_query(hwire_ctx_t *ctx, hwire_query_param_t *param)
 {
     app_request_t *app = ctx->uctx;
-    app->table_result = hwire_table_push(&app->query_params, param, NULL);
+    app->table_result = hwire_table_push(&app->query_params, param);
     return app->table_result == HWIRE_TABLE_OK ? 0 : -1;
 }
 
@@ -1065,7 +1063,7 @@ static int on_request(hwire_ctx_t *ctx, hwire_request_t *request)
 static int on_header(hwire_ctx_t *ctx, hwire_header_t *header)
 {
     app_request_t *app = ctx->uctx;
-    app->table_result = hwire_table_push(&app->headers, header, NULL);
+    app->table_result = hwire_table_push(&app->headers, header);
     return app->table_result == HWIRE_TABLE_OK ? 0 : -1;
 }
 

@@ -47,8 +47,8 @@ static void check_key(const char *raw, const char *normalized, size_t len)
         {len, raw },
         {0,   NULL}
     };
-    const hwire_table_entry_t *entry = NULL;
-    assert(hwire_table_push(&table, &pair, &entry) == HWIRE_TABLE_OK);
+    assert(hwire_table_push(&table, &pair) == HWIRE_TABLE_OK);
+    const hwire_table_entry_t *entry = &storage[0];
     assert(entry == &storage[0]);
     assert(hwire_table_get(&table, raw, len) == entry);
     assert(hwire_table_get_ci(&table, raw, len) == entry);
