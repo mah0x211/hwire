@@ -879,7 +879,7 @@ Build the table alongside the parser as described in
 ## Features
 
 - **Zero allocation** — no internal heap allocation; the caller supplies the
-  entries array and key/value storage.
+  pair and index arrays and key/value storage.
 - **Fixed capacity, fully usable** — every entry up to the configured capacity
   can store a pair, including distinct keys. No space needs to be reserved for
   a load-factor threshold, and no rehashing or resizing occurs. Key and value
@@ -888,8 +888,8 @@ Build the table alongside the parser as described in
   invalidates their addresses.
 - **Borrowed key/value storage** — copies pair descriptors and references the
   supplied bytes without copying or modifying them.
-- **Exact and ASCII case-insensitive lookup** — supports both comparisons
-  without changing stored keys.
+- **Optional ASCII case-insensitive index** — exact lookup is always available;
+  enable the additional ASCII case-insensitive index only where it is needed.
 - **Insertion order** — duplicate traversal and full-table iteration preserve
   the order in which pairs were pushed.
 - **Accelerated hashing** — selects AES instructions on supported ARM and x86
@@ -898,17 +898,19 @@ Build the table alongside the parser as described in
 ## Storage and keys
 
 - `hwire_table_t` is the table descriptor.
-- `hwire_table_entry_t` is a stored pair and its internal index space. Supply a
-  mutable array on the stack, in static storage, or in caller-allocated memory.
+- `hwire_kv_pair_t` is the stored pair descriptor. Supply a mutable pair array
+  on the stack, in static storage, or in caller-allocated memory.
+- `hwire_table_index_t` is the element type for the separate mutable index
+  array. Exact-only and CI-enabled tables require different array lengths.
 - `hwire_table_key_t` holds two 64-bit hash-key words, copied by initialization.
 - `hwire_table_iter_t` is an iteration position; start it at zero.
 
 `hwire_table_push` copies an `hwire_kv_pair_t`, whose `key` and `value` are
 `hwire_str_t` slices (`len`, `ptr`). It borrows the referenced bytes. Keep the
-array and referenced storage alive while using the table. Stored keys must
-remain unchanged. Entries remain at stable addresses after subsequent pushes;
-reinitialization invalidates all returned entries and iterator positions.
-Do not modify internal entry or descriptor fields directly.
+pair and index arrays and referenced storage alive while using the table.
+Stored keys must remain unchanged. Pairs remain at stable addresses after
+subsequent pushes; reinitialization invalidates all returned pairs and iterator
+positions. Do not modify the index or descriptor fields directly.
 
 Keys are length-delimited byte sequences: empty keys, embedded NUL, and UTF-8
 bytes are supported. Exact lookup compares every byte. Case-insensitive lookup
@@ -918,9 +920,16 @@ or normalization. Values are stored as supplied.
 Capacity counts all pairs, including duplicates. Pass a power of two from
 1 through 32768 to `hwire_table_init`. `HWIRE_TABLE_CAPACITY(n)` rounds a
 requested count up to a supported capacity, so
-`hwire_table_entry_t entries[HWIRE_TABLE_CAPACITY(100)]` provides 128 entries.
+`hwire_kv_pair_t entries[HWIRE_TABLE_CAPACITY(100)]` provides 128 pair slots.
 Zero or out-of-range requests produce zero; do not give the macro an
 expression with side effects.
+
+Use `HWIRE_TABLE_INDEX_CAPACITY(capacity)` index elements for exact lookup.
+Use `HWIRE_TABLE_INDEX_CI_CAPACITY(capacity)` when ASCII case-insensitive
+lookup is enabled. These macros return element counts, not byte counts. The
+exact index uses `4 * capacity` elements: `2N` hash slots, `N` duplicate-next
+references, and `N` duplicate-tail references. CI mode adds the same layout
+for the folded-key index, for `8 * capacity` elements in total.
 
 All `capacity` entries can be filled, including with distinct keys: the example
 array can store 128 pairs. No entries need to be reserved to keep the hash index
@@ -941,15 +950,20 @@ random source.
 
 ```c
 hwire_table_code_t hwire_table_init(hwire_table_t *table,
-                                  hwire_table_entry_t *entries,
-                                  size_t capacity,
-                                  const hwire_table_key_t *key);
+                                    hwire_kv_pair_t *entries,
+                                    hwire_table_index_t *index,
+                                    size_t capacity,
+                                    const hwire_table_key_t *key,
+                                    int enabled_ci);
 ```
 
-Initialize or reset a table, copy the key, and zero the entire entries array.
-All pointers must be non-NULL; the mutable array must hold at least `capacity`
-entries. Return `HWIRE_TABLE_OK`, `HWIRE_TABLE_EINVAL`, or
-`HWIRE_TABLE_ECAPACITY`. Invalid arguments leave the table and array unchanged.
+Initialize or reset a table and copy the key. All pointers must be non-NULL.
+The pair array must hold at least `capacity` elements. The index array must use
+the exact capacity macro when `enabled_ci` is zero and the CI capacity macro
+when it is nonzero. Initialization clears the complete index array for the
+selected mode and leaves the pair array unchanged. Return
+`HWIRE_TABLE_OK`, `HWIRE_TABLE_EINVAL`, or `HWIRE_TABLE_ECAPACITY`. Invalid
+arguments leave the table and both arrays unchanged.
 
 ```c
 hwire_table_code_t hwire_table_push(hwire_table_t *table,
@@ -961,31 +975,33 @@ pointers. Return `HWIRE_TABLE_OK`, `HWIRE_TABLE_EINVAL`, or
 `HWIRE_TABLE_EFULL`. A failed push leaves the table unchanged.
 
 ```c
-const hwire_table_entry_t *hwire_table_get(const hwire_table_t *table,
-                                         const char *key, size_t keylen);
-const hwire_table_entry_t *hwire_table_get_ci(const hwire_table_t *table,
-                                            const char *key, size_t keylen);
+const hwire_kv_pair_t *hwire_table_get(const hwire_table_t *table,
+                                       const char *key, size_t keylen);
+const hwire_kv_pair_t *hwire_table_get_ci(const hwire_table_t *table,
+                                          const char *key, size_t keylen);
 ```
 
-Find the first matching entry in insertion order using exact or ASCII
-case-insensitive comparison. Return NULL when no key matches. `table` must be
-initialized; `key` may be NULL only when `keylen` is zero. A missing key is
-an ordinary lookup result.
+Find the first matching pair in insertion order using exact or ASCII
+case-insensitive comparison. Return NULL when no key matches. `get_ci` also
+returns NULL when CI indexing was disabled. `table` must be initialized; `key`
+may be NULL only when `keylen` is zero. A missing key is an ordinary lookup
+result.
 
 ```c
-const hwire_table_entry_t *hwire_table_next(const hwire_table_t *table,
-                                          const hwire_table_entry_t *entry);
-const hwire_table_entry_t *hwire_table_next_ci(const hwire_table_t *table,
-                                             const hwire_table_entry_t *entry);
+const hwire_kv_pair_t *hwire_table_next(const hwire_table_t *table,
+                                        const hwire_kv_pair_t *pair);
+const hwire_kv_pair_t *hwire_table_next_ci(const hwire_table_t *table,
+                                           const hwire_kv_pair_t *pair);
 ```
 
 Follow exact or ASCII case-insensitive duplicates in insertion order. Pass a
-live entry from the same table. Return NULL at the end or when `entry` is NULL.
+live pair from the same table. Return NULL at the end or when `pair` is NULL.
+`next_ci` also returns NULL when CI indexing was disabled.
 Use `get` with `next`, or `get_ci` with `next_ci`, to traverse a key group.
 
 ```c
-const hwire_table_entry_t *hwire_table_iterate(const hwire_table_t *table,
-                                             hwire_table_iter_t *iter);
+const hwire_kv_pair_t *hwire_table_iterate(const hwire_table_t *table,
+                                           hwire_table_iter_t *iter);
 ```
 
 Visit every pair in an initialized table in insertion order. Set `*iter` to
@@ -1008,11 +1024,12 @@ separate tables. `request_cb` calls `hwire_parse_query`; `query_cb` and
 Header names use ASCII case-insensitive lookup, while query keys use exact
 lookup. Both duplicate chains retain insertion order.
 
-`app_request_t` contains the parser context, both tables, their entry arrays,
-and the query decode buffer. Set `app.ctx.uctx` to `&app` so callbacks can use
-this request state. Header slices reference `input`; decoded query slices
-reference `app.query_storage`. Keep the request state and input alive while
-using the tables. The parser's optional `key_lc`
+`app_request_t` contains the parser context, both tables, their pair and index
+arrays, and the query decode buffer. The header table enables CI indexing; the
+query table uses the smaller exact-only index. Set `app.ctx.uctx` to `&app` so
+callbacks can use this request state. Header slices reference `input`; decoded
+query slices reference `app.query_storage`. Keep the request state and input
+alive while using the tables. The parser's optional `key_lc`
 buffer is left disabled because the table supplies case-insensitive lookup.
 For a header block, use the same header callback with `hwire_parse_headers`.
 
@@ -1032,8 +1049,12 @@ typedef struct {
     hwire_request_t request;
     hwire_table_t headers;
     hwire_table_t query_params;
-    hwire_table_entry_t header_entries[HEADER_CAPACITY];
-    hwire_table_entry_t query_entries[QUERY_CAPACITY];
+    hwire_kv_pair_t header_entries[HEADER_CAPACITY];
+    hwire_kv_pair_t query_entries[QUERY_CAPACITY];
+    hwire_table_index_t
+        header_index[HWIRE_TABLE_INDEX_CI_CAPACITY(HEADER_CAPACITY)];
+    hwire_table_index_t
+        query_index[HWIRE_TABLE_INDEX_CAPACITY(QUERY_CAPACITY)];
     char query_storage[256];
     hwire_table_code_t table_result;
     int query_result;
@@ -1082,10 +1103,10 @@ int main(void)
     app.query_result = HWIRE_OK;
     hwire_table_key_t key;
     hwire_table_key_init(&key, 42); /* deterministic example seed */
-    if (hwire_table_init(&app.headers, app.header_entries,
-                         HEADER_CAPACITY, &key) != HWIRE_TABLE_OK ||
-        hwire_table_init(&app.query_params, app.query_entries,
-                         QUERY_CAPACITY, &key) != HWIRE_TABLE_OK) {
+    if (hwire_table_init(&app.headers, app.header_entries, app.header_index,
+                         HEADER_CAPACITY, &key, 1) != HWIRE_TABLE_OK ||
+        hwire_table_init(&app.query_params, app.query_entries, app.query_index,
+                         QUERY_CAPACITY, &key, 0) != HWIRE_TABLE_OK) {
         return 1;
     }
 
@@ -1108,29 +1129,29 @@ int main(void)
            (int)app.request.uri.len, app.request.uri.ptr);
 
     printf("header x-tag: ");
-    for (const hwire_table_entry_t *e = hwire_table_get_ci(&app.headers, "X-TAG", 5);
+    for (const hwire_kv_pair_t *e = hwire_table_get_ci(&app.headers, "X-TAG", 5);
          e != NULL; e = hwire_table_next_ci(&app.headers, e)) {
-        fwrite(e->kv.value.ptr, 1, e->kv.value.len, stdout);
+        fwrite(e->value.ptr, 1, e->value.len, stdout);
     }
     putchar('\n');
 
-    const hwire_table_entry_t *name = hwire_table_get(&app.query_params, "name", 4);
+    const hwire_kv_pair_t *name = hwire_table_get(&app.query_params, "name", 4);
     if (name != NULL) {
-        printf("query name: %.*s\n", (int)name->kv.value.len, name->kv.value.ptr);
+        printf("query name: %.*s\n", (int)name->value.len, name->value.ptr);
     }
     printf("query tag: ");
-    for (const hwire_table_entry_t *e = hwire_table_get(&app.query_params, "tag", 3);
+    for (const hwire_kv_pair_t *e = hwire_table_get(&app.query_params, "tag", 3);
          e != NULL; e = hwire_table_next(&app.query_params, e)) {
-        fwrite(e->kv.value.ptr, 1, e->kv.value.len, stdout);
+        fwrite(e->value.ptr, 1, e->value.len, stdout);
     }
     putchar('\n');
 
     puts("headers:");
     hwire_table_iter_t iter = 0;
-    const hwire_table_entry_t *e;
+    const hwire_kv_pair_t *e;
     while ((e = hwire_table_iterate(&app.headers, &iter)) != NULL) {
-        printf("%.*s: %.*s\n", (int)e->kv.key.len, e->kv.key.ptr,
-               (int)e->kv.value.len, e->kv.value.ptr);
+        printf("%.*s: %.*s\n", (int)e->key.len, e->key.ptr,
+               (int)e->value.len, e->value.ptr);
     }
     return 0;
 }

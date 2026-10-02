@@ -3,6 +3,95 @@
 
 #define EMPTY UINT16_C(0)
 
+enum {
+    /* The default slot region starts at the beginning of the index array. */
+    INDEX_SLOT_BASE_FACTOR = 0u,
+
+    /* Open addressing uses two slots per pair so a full pair array still has
+     * an empty slot that terminates every unsuccessful probe. */
+    INDEX_SLOT_COUNT_FACTOR = 2u,
+
+    /* The default next region follows its 2N-slot region. */
+    INDEX_NEXT_BASE_FACTOR = INDEX_SLOT_COUNT_FACTOR,
+
+    /* The default tail region follows the N-element next region. */
+    INDEX_TAIL_BASE_FACTOR = INDEX_NEXT_BASE_FACTOR + 1u,
+
+    /* One default index occupies 4N elements: 2N slots, N next, and N tail. */
+    INDEX_CI_SLOT_BASE_FACTOR = HWIRE_TABLE_INDEX_FACTOR,
+
+    /* The CI next region follows its 2N-slot region at offset 4N. */
+    INDEX_CI_NEXT_BASE_FACTOR =
+        INDEX_CI_SLOT_BASE_FACTOR + INDEX_SLOT_COUNT_FACTOR,
+
+    /* The CI tail region follows the N-element CI next region. */
+    INDEX_CI_TAIL_BASE_FACTOR = INDEX_CI_NEXT_BASE_FACTOR + 1u
+};
+
+/** Return the mutable default hash-slot region at offset 0N. */
+static inline hwire_table_index_t *index_slot_region(hwire_table_t *table)
+{
+    return table->index + (size_t)table->capacity * INDEX_SLOT_BASE_FACTOR;
+}
+
+/** Return the read-only default hash-slot region at offset 0N. */
+static inline const hwire_table_index_t *
+index_slot_region_const(const hwire_table_t *table)
+{
+    return table->index + (size_t)table->capacity * INDEX_SLOT_BASE_FACTOR;
+}
+
+/** Return the mutable default duplicate-next region at offset 2N. */
+static inline hwire_table_index_t *index_next_region(hwire_table_t *table)
+{
+    return table->index + (size_t)table->capacity * INDEX_NEXT_BASE_FACTOR;
+}
+
+/** Return the read-only default duplicate-next region at offset 2N. */
+static inline const hwire_table_index_t *
+index_next_region_const(const hwire_table_t *table)
+{
+    return table->index + (size_t)table->capacity * INDEX_NEXT_BASE_FACTOR;
+}
+
+/** Return the mutable default duplicate-tail region at offset 3N. */
+static inline hwire_table_index_t *index_tail_region(hwire_table_t *table)
+{
+    return table->index + (size_t)table->capacity * INDEX_TAIL_BASE_FACTOR;
+}
+
+/** Return the mutable CI hash-slot region at offset 4N. */
+static inline hwire_table_index_t *index_ci_slot_region(hwire_table_t *table)
+{
+    return table->index + (size_t)table->capacity * INDEX_CI_SLOT_BASE_FACTOR;
+}
+
+/** Return the read-only CI hash-slot region at offset 4N. */
+static inline const hwire_table_index_t *
+index_ci_slot_region_const(const hwire_table_t *table)
+{
+    return table->index + (size_t)table->capacity * INDEX_CI_SLOT_BASE_FACTOR;
+}
+
+/** Return the mutable CI duplicate-next region at offset 6N. */
+static inline hwire_table_index_t *index_ci_next_region(hwire_table_t *table)
+{
+    return table->index + (size_t)table->capacity * INDEX_CI_NEXT_BASE_FACTOR;
+}
+
+/** Return the read-only CI duplicate-next region at offset 6N. */
+static inline const hwire_table_index_t *
+index_ci_next_region_const(const hwire_table_t *table)
+{
+    return table->index + (size_t)table->capacity * INDEX_CI_NEXT_BASE_FACTOR;
+}
+
+/** Return the mutable CI duplicate-tail region at offset 7N. */
+static inline hwire_table_index_t *index_ci_tail_region(hwire_table_t *table)
+{
+    return table->index + (size_t)table->capacity * INDEX_CI_TAIL_BASE_FACTOR;
+}
+
 /** Fold ASCII uppercase only; preserve NUL and all non-ASCII bytes. */
 static inline unsigned char fold(unsigned char c)
 {
@@ -137,32 +226,39 @@ void hwire_table_key_init(hwire_table_key_t *key, uint64_t seed)
 }
 
 /**
- * Validate the array size before any write and zero the caller's entry array.
- * All index references use index + 1, so zero is the empty sentinel. Copy the
- * key first because it may refer to the prior descriptor.
+ * Validate both caller-owned arrays before any write. Zero the complete index
+ * storage selected by the CI mode in one call. All references use index + 1,
+ * so zero is both the empty-slot and chain-end sentinel. Copy the key first
+ * because it may refer to the prior descriptor.
  */
 hwire_table_code_t hwire_table_init(hwire_table_t *table,
-                                    hwire_table_entry_t *entries,
-                                    size_t capacity,
-                                    const hwire_table_key_t *key)
+                                    hwire_kv_pair_t *entries,
+                                    hwire_table_index_t *index, size_t capacity,
+                                    const hwire_table_key_t *key,
+                                    int enabled_ci)
 {
-    if (!table || !entries || !key) {
+    if (!table || !entries || !index || !key) {
         return HWIRE_TABLE_EINVAL;
     }
     if (capacity == 0 || capacity > 32768u ||
-        (capacity & (capacity - 1u)) != 0 ||
-        capacity > SIZE_MAX / sizeof(*entries)) {
+        (capacity & (capacity - 1u)) != 0) {
         return HWIRE_TABLE_ECAPACITY;
     }
 
     /* Copy before modifying the table: key may point into the old table. */
     hwire_table_key_t key_copy = *key;
-    table->entries             = entries;
-    table->key                 = key_copy;
-    table->capacity            = (uint16_t)capacity;
-    table->len                 = 0;
-    table->mask                = (uint32_t)(2u * capacity - 1u);
-    memset(entries, 0, capacity * sizeof(*entries));
+    uint16_t ci                = enabled_ci != 0 ? UINT16_C(1) : UINT16_C(0);
+    size_t index_count = ci != 0 ? HWIRE_TABLE_INDEX_CI_CAPACITY(capacity) :
+                                   HWIRE_TABLE_INDEX_CAPACITY(capacity);
+    memset(index, 0, index_count * sizeof(*index));
+
+    table->entries    = entries;
+    table->index      = index;
+    table->key        = key_copy;
+    table->capacity   = (uint16_t)capacity;
+    table->len        = 0;
+    table->mask       = (uint16_t)(capacity * INDEX_SLOT_COUNT_FACTOR - 1u);
+    table->enabled_ci = ci;
     return HWIRE_TABLE_OK;
 }
 
@@ -196,14 +292,6 @@ static int equal_key(hwire_str_t a, const char *data, size_t len, int ci)
     return 1;
 }
 
-/** Read a logical slot without changing either index. */
-static inline uint16_t slot_read(const hwire_table_t *table, uint32_t pos,
-                                 int ci)
-{
-    const hwire_table_entry_t *entry = &table->entries[pos / 2u];
-    return ci ? entry->slots_ci[pos % 2u] : entry->slots[pos % 2u];
-}
-
 /**
  * Probe one index from its hash bucket, wrapping at mask. Return the first
  * empty or equal slot and write its representative to *head. An empty slot
@@ -213,11 +301,13 @@ static uint32_t find_slot(const hwire_table_t *table, const char *key,
                           size_t keylen, int ci, uint16_t *head_out)
 {
     uint32_t pos = (uint32_t)hash_key(table, key, keylen, ci) & table->mask;
+    const hwire_table_index_t *slots =
+        ci ? index_ci_slot_region_const(table) : index_slot_region_const(table);
 
     for (;;) {
-        uint16_t head = slot_read(table, pos, ci);
+        uint16_t head = slots[pos];
         if (head != EMPTY &&
-            equal_key(table->entries[head - 1u].kv.key, key, keylen, ci)) {
+            equal_key(table->entries[head - 1u].key, key, keylen, ci)) {
             *head_out = head;
             return pos;
         }
@@ -227,13 +317,6 @@ static uint32_t find_slot(const hwire_table_t *table, const char *key,
         }
         pos = (pos + 1u) & table->mask;
     }
-}
-
-/** Map a logical slot to its mutable field inside the caller's entry array. */
-static inline uint16_t *slot_at(hwire_table_t *table, uint32_t pos, int ci)
-{
-    hwire_table_entry_t *entry = &table->entries[pos / 2u];
-    return ci ? &entry->slots_ci[pos % 2u] : &entry->slots[pos % 2u];
 }
 
 /**
@@ -254,33 +337,46 @@ hwire_table_code_t hwire_table_push(hwire_table_t *table,
     /* kv is allowed to refer to an existing entry. */
     hwire_kv_pair_t pair = *kv;
     uint16_t exact_head;
-    uint16_t ci_head;
+    uint16_t ci_head = EMPTY;
     uint32_t exact_pos =
         find_slot(table, pair.key.ptr, pair.key.len, 0, &exact_head);
-    uint32_t ci_pos = find_slot(table, pair.key.ptr, pair.key.len, 1, &ci_head);
-    uint16_t index  = table->len;
-    uint16_t ref    = (uint16_t)(index + 1u);
-    hwire_table_entry_t *entry = &table->entries[index];
-    entry->kv                  = pair;
-    entry->next                = EMPTY;
-    entry->next_ci             = EMPTY;
-    entry->tail                = ref;
-    entry->tail_ci             = ref;
+    uint32_t ci_pos            = 0;
+    uint16_t index             = table->len;
+    uint16_t ref               = (uint16_t)(index + 1u);
+    hwire_table_index_t *slots = index_slot_region(table);
+    hwire_table_index_t *next  = index_next_region(table);
+    hwire_table_index_t *tail  = index_tail_region(table);
 
-    if (exact_head == EMPTY) {
-        *slot_at(table, exact_pos, 0) = ref;
-    } else {
-        hwire_table_entry_t *head            = &table->entries[exact_head - 1u];
-        table->entries[head->tail - 1u].next = ref;
-        head->tail                           = ref;
+    if (table->enabled_ci != 0) {
+        ci_pos = find_slot(table, pair.key.ptr, pair.key.len, 1, &ci_head);
     }
 
-    if (ci_head == EMPTY) {
-        *slot_at(table, ci_pos, 1) = ref;
+    table->entries[index] = pair;
+    next[index]           = EMPTY;
+    tail[index]           = ref;
+
+    if (exact_head == EMPTY) {
+        slots[exact_pos] = ref;
     } else {
-        hwire_table_entry_t *head = &table->entries[ci_head - 1u];
-        table->entries[head->tail_ci - 1u].next_ci = ref;
-        head->tail_ci                              = ref;
+        uint16_t head_index         = (uint16_t)(exact_head - 1u);
+        next[tail[head_index] - 1u] = ref;
+        tail[head_index]            = ref;
+    }
+
+    if (table->enabled_ci != 0) {
+        hwire_table_index_t *ci_slots = index_ci_slot_region(table);
+        hwire_table_index_t *ci_next  = index_ci_next_region(table);
+        hwire_table_index_t *ci_tail  = index_ci_tail_region(table);
+        ci_next[index]                = EMPTY;
+        ci_tail[index]                = ref;
+
+        if (ci_head == EMPTY) {
+            ci_slots[ci_pos] = ref;
+        } else {
+            uint16_t head_index               = (uint16_t)(ci_head - 1u);
+            ci_next[ci_tail[head_index] - 1u] = ref;
+            ci_tail[head_index]               = ref;
+        }
     }
 
     table->len = (uint16_t)(index + 1u);
@@ -288,10 +384,11 @@ hwire_table_code_t hwire_table_push(hwire_table_t *table,
 }
 
 /** Resolve one key group for a read without rereading the final slot. */
-static inline const hwire_table_entry_t *
+static inline const hwire_kv_pair_t *
 get_key(const hwire_table_t *table, const char *key, size_t keylen, int ci)
 {
-    if (!table || !table->len || (keylen && !key)) {
+    if (!table || !table->len || (keylen && !key) ||
+        (ci && table->enabled_ci == 0)) {
         return NULL;
     }
     uint16_t head;
@@ -300,39 +397,46 @@ get_key(const hwire_table_t *table, const char *key, size_t keylen, int ci)
 }
 
 /** Select the exact index for a public lookup. */
-const hwire_table_entry_t *hwire_table_get(const hwire_table_t *table,
-                                           const char *key, size_t keylen)
+const hwire_kv_pair_t *hwire_table_get(const hwire_table_t *table,
+                                       const char *key, size_t keylen)
 {
     return get_key(table, key, keylen, 0);
 }
 
 /** Select the ASCII-CI index for a public lookup. */
-const hwire_table_entry_t *hwire_table_get_ci(const hwire_table_t *table,
-                                              const char *key, size_t keylen)
+const hwire_kv_pair_t *hwire_table_get_ci(const hwire_table_t *table,
+                                          const char *key, size_t keylen)
 {
     return get_key(table, key, keylen, 1);
 }
 
-/** Follow the stored exact duplicate link; no probe or comparison is needed. */
-const hwire_table_entry_t *hwire_table_next(const hwire_table_t *table,
-                                            const hwire_table_entry_t *entry)
+/** Follow the exact next region; no probe or comparison is needed. */
+const hwire_kv_pair_t *hwire_table_next(const hwire_table_t *table,
+                                        const hwire_kv_pair_t *pair)
 {
-    return (!entry || entry->next == EMPTY) ? NULL :
-                                              &table->entries[entry->next - 1u];
+    if (pair) {
+        size_t index  = (size_t)(pair - table->entries);
+        uint16_t next = index_next_region_const(table)[index];
+        return next == EMPTY ? NULL : &table->entries[next - 1u];
+    }
+    return NULL;
 }
 
-/** Follow the stored ASCII-CI duplicate link. */
-const hwire_table_entry_t *hwire_table_next_ci(const hwire_table_t *table,
-                                               const hwire_table_entry_t *entry)
+/** Follow the CI next region when that optional index is enabled. */
+const hwire_kv_pair_t *hwire_table_next_ci(const hwire_table_t *table,
+                                           const hwire_kv_pair_t *pair)
 {
-    return (!entry || entry->next_ci == EMPTY) ?
-               NULL :
-               &table->entries[entry->next_ci - 1u];
+    if (pair && table->enabled_ci) {
+        size_t index  = (size_t)(pair - table->entries);
+        uint16_t next = index_ci_next_region_const(table)[index];
+        return next == EMPTY ? NULL : &table->entries[next - 1u];
+    }
+    return NULL;
 }
 
-/** Return the next physical entry and advance the caller's position. */
-const hwire_table_entry_t *hwire_table_iterate(const hwire_table_t *table,
-                                               hwire_table_iter_t *iter)
+/** Return the next physical pair and advance the caller's position. */
+const hwire_kv_pair_t *hwire_table_iterate(const hwire_table_t *table,
+                                           hwire_table_iter_t *iter)
 {
     return (*iter >= table->len) ? NULL : &table->entries[(*iter)++];
 }

@@ -33,9 +33,11 @@ static void check_key(const char *raw, const char *normalized, size_t len)
     hwire_table_key_t key = {
         {1, UINT64_MAX}
     };
-    hwire_table_entry_t storage[1];
+    hwire_kv_pair_t storage[1];
+    hwire_table_index_t index[HWIRE_TABLE_INDEX_CI_CAPACITY(1)];
     hwire_table_t table;
-    assert(hwire_table_init(&table, storage, 1, &key) == HWIRE_TABLE_OK);
+    assert(hwire_table_init(&table, storage, index, 1, &key, 1) ==
+           HWIRE_TABLE_OK);
 #if defined(HWIRE_TABLE_HAVE_AES)
     assert(hash_key(&table, raw, len, 0) == hash_aes(&key, raw, len, 0));
 #else
@@ -48,7 +50,7 @@ static void check_key(const char *raw, const char *normalized, size_t len)
         {0,   NULL}
     };
     assert(hwire_table_push(&table, &pair) == HWIRE_TABLE_OK);
-    const hwire_table_entry_t *entry = &storage[0];
+    const hwire_kv_pair_t *entry = &storage[0];
     assert(entry == &storage[0]);
     assert(hwire_table_get(&table, raw, len) == entry);
     assert(hwire_table_get_ci(&table, raw, len) == entry);
