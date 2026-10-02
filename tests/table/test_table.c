@@ -23,10 +23,9 @@ static hwire_kv_pair_t pair(const char *key, size_t keylen, const char *value,
 static const hwire_table_entry_t *push(hwire_table_t *target,
                                        const hwire_kv_pair_t *kv)
 {
-    const hwire_table_entry_t *entry = NULL;
-    assert(hwire_table_push(target, kv, &entry) == HWIRE_TABLE_OK);
-    assert(entry != NULL);
-    return entry;
+    uint16_t index = target->len;
+    assert(hwire_table_push(target, kv) == HWIRE_TABLE_OK);
+    return &target->entries[index];
 }
 
 static void init(void)
@@ -102,10 +101,9 @@ static void test_chains(void)
     assert(hwire_table_iterate(&table, &it) == ec);
     assert(hwire_table_iterate(&table, &it) == ed);
     assert(hwire_table_iterate(&table, &it) == NULL && it == CAP);
-    hwire_kv_pair_t overflow          = pair("baz", 3, "E", 1);
-    const hwire_table_entry_t *failed = ea;
-    assert(hwire_table_push(&table, &overflow, &failed) == HWIRE_TABLE_EFULL);
-    assert(failed == NULL && table.len == CAP);
+    hwire_kv_pair_t overflow = pair("baz", 3, "E", 1);
+    assert(hwire_table_push(&table, &overflow) == HWIRE_TABLE_EFULL);
+    assert(table.len == CAP);
     assert(hwire_table_get(&table, "foo", 3) == ea);
     init();
     assert(table.len == 0 && hwire_table_get(&table, "foo", 3) == NULL);
@@ -136,7 +134,7 @@ static void test_binary_and_errors(void)
     assert(push(&table, &kv));
     assert(hwire_table_next_ci(&table, first) == &entries[3]);
     kv = pair(NULL, 1, NULL, 0);
-    assert(hwire_table_push(&table, &kv, NULL) == HWIRE_TABLE_EINVAL);
+    assert(hwire_table_push(&table, &kv) == HWIRE_TABLE_EINVAL);
     assert(table.len == 4);
     assert(hwire_table_get(&table, NULL, 1) == NULL);
     assert(hwire_table_get_ci(&table, NULL, 1) == NULL);
@@ -165,7 +163,7 @@ static void test_full_unique(void)
         assert(hwire_table_get_ci(&t, names[i], 5) == &storage[i]);
     }
     hwire_kv_pair_t extra = pair("extra", 5, NULL, 0);
-    assert(hwire_table_push(&t, &extra, NULL) == HWIRE_TABLE_EFULL);
+    assert(hwire_table_push(&t, &extra) == HWIRE_TABLE_EFULL);
 }
 
 static void test_capacity_one_and_invalid_push(void)
@@ -177,24 +175,24 @@ static void test_capacity_one_and_invalid_push(void)
     };
     assert(hwire_table_init(&t, storage, 1, &key) == 0);
     hwire_kv_pair_t invalid = pair(NULL, 1, NULL, 0);
-    assert(hwire_table_push(NULL, &invalid, NULL) == HWIRE_TABLE_EINVAL);
-    assert(hwire_table_push(&t, NULL, NULL) == HWIRE_TABLE_EINVAL);
-    assert(hwire_table_push(&t, &invalid, NULL) == HWIRE_TABLE_EINVAL);
+    assert(hwire_table_push(NULL, &invalid) == HWIRE_TABLE_EINVAL);
+    assert(hwire_table_push(&t, NULL) == HWIRE_TABLE_EINVAL);
+    assert(hwire_table_push(&t, &invalid) == HWIRE_TABLE_EINVAL);
     assert(t.len == 0);
     invalid = pair("x", 1, NULL, 1);
-    assert(hwire_table_push(&t, &invalid, NULL) == HWIRE_TABLE_EINVAL);
+    assert(hwire_table_push(&t, &invalid) == HWIRE_TABLE_EINVAL);
     assert(t.len == 0);
     hwire_kv_pair_t good = pair("x", 1, NULL, 0);
     assert(push(&t, &good) == &storage[0]);
     assert(hwire_table_get(&t, "x", 1) == &storage[0]);
     assert(hwire_table_get_ci(&t, "X", 1) == &storage[0]);
-    assert(hwire_table_push(&t, &good, NULL) == HWIRE_TABLE_EFULL);
+    assert(hwire_table_push(&t, &good) == HWIRE_TABLE_EFULL);
     assert(t.len == 1);
     hwire_table_iter_t iter = 0;
     assert(hwire_table_iterate(&t, &iter) == &storage[0]);
     assert(hwire_table_iterate(&t, &iter) == NULL && iter == 1);
     assert(hwire_table_init(&t, storage, 1, &key) == HWIRE_TABLE_OK);
-    assert(hwire_table_push(&t, &good, NULL) == HWIRE_TABLE_OK);
+    assert(hwire_table_push(&t, &good) == HWIRE_TABLE_OK);
     assert(hwire_table_get(&t, "x", 1) == &storage[0]);
 }
 

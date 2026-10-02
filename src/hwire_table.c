@@ -241,12 +241,8 @@ static inline uint16_t *slot_at(hwire_table_t *table, uint32_t pos, int ci)
  * chain through the representative's tail, then publish the new length.
  */
 hwire_table_code_t hwire_table_push(hwire_table_t *table,
-                                    const hwire_kv_pair_t *kv,
-                                    const hwire_table_entry_t **out_entry)
+                                    const hwire_kv_pair_t *kv)
 {
-    if (out_entry) {
-        *out_entry = NULL;
-    }
     if (!table || !kv || (kv->key.len && !kv->key.ptr) ||
         (kv->value.len && !kv->value.ptr)) {
         return HWIRE_TABLE_EINVAL;
@@ -288,9 +284,6 @@ hwire_table_code_t hwire_table_push(hwire_table_t *table,
     }
 
     table->len = (uint16_t)(index + 1u);
-    if (out_entry) {
-        *out_entry = entry;
-    }
     return HWIRE_TABLE_OK;
 }
 
