@@ -888,8 +888,8 @@ Build the table alongside the parser as described in
   invalidates their addresses.
 - **Borrowed key/value storage** — copies pair descriptors and references the
   supplied bytes without copying or modifying them.
-- **Optional ASCII case-insensitive index** — exact lookup is always available;
-  enable the additional ASCII case-insensitive index only where it is needed.
+- **Selectable indexes** — enable exact lookup, ASCII case-insensitive lookup,
+  or both.
 - **Insertion order** — duplicate traversal and full-table iteration preserve
   the order in which pairs were pushed.
 - **Accelerated hashing** — selects AES instructions on supported ARM and x86
@@ -901,7 +901,7 @@ Build the table alongside the parser as described in
 - `hwire_kv_pair_t` is the stored pair descriptor. Supply a mutable pair array
   on the stack, in static storage, or in caller-allocated memory.
 - `hwire_table_index_t` is the element type for the separate mutable index
-  array. Exact-only and CI-enabled tables require different array lengths.
+  array. Single-index and dual-index tables require different array lengths.
 - `hwire_table_key_t` holds two 64-bit hash-key words, copied by initialization.
 - `hwire_table_iter_t` is an iteration position; start it at zero.
 
@@ -918,26 +918,63 @@ folds only ASCII `A`–`Z` to `a`–`z`; it does not perform Unicode case foldin
 or normalization. Values are stored as supplied.
 
 Capacity counts all pairs, including duplicates. Pass a power of two from
-1 through 32768 to `hwire_table_init`. `HWIRE_TABLE_CAPACITY(n)` rounds a
-requested count up to a supported capacity, so
-`hwire_kv_pair_t entries[HWIRE_TABLE_CAPACITY(100)]` provides 128 pair slots.
-Zero or out-of-range requests produce zero; do not give the macro an
-expression with side effects.
+1 through 32768 to `hwire_table_init`. Use the capacity macros documented
+under API below to size the pair and index arrays.
 
-Use `HWIRE_TABLE_INDEX_CAPACITY(capacity)` index elements for exact lookup.
-Use `HWIRE_TABLE_INDEX_CI_CAPACITY(capacity)` when ASCII case-insensitive
-lookup is enabled. These macros return element counts, not byte counts. The
-exact index uses `4 * capacity` elements: `2N` hash slots, `N` duplicate-next
-references, and `N` duplicate-tail references. CI mode adds the same layout
-for the folded-key index, for `8 * capacity` elements in total.
+| Mode | Indexed comparison | Index capacity macro |
+|---|---|---|
+| `HWIRE_TABLE_CASE_SENSITIVE` | Exact | `HWIRE_TABLE_INDEX_CAPACITY` |
+| `HWIRE_TABLE_CASE_INSENSITIVE` | ASCII case-insensitive | `HWIRE_TABLE_INDEX_CAPACITY` |
+| Both flags | Exact and ASCII case-insensitive | `HWIRE_TABLE_INDEX_BOTH_CAPACITY` |
 
-All `capacity` entries can be filled, including with distinct keys: the example
-array can store 128 pairs. No entries need to be reserved to keep the hash index
+Use `HWIRE_TABLE_CASE_SENSITIVE | HWIRE_TABLE_CASE_INSENSITIVE` to enable both
+indexes. The mode type is an integer bit set, so the OR expression also works
+in C++ without a cast.
+
+CI-only mode avoids constructing an exact index. It is suitable for HTTP
+headers; exact-only mode is suitable for case-sensitive query parameters.
+
+All `capacity` entries can be filled, including with distinct keys.
+No entries need to be reserved to keep the hash index
 below a load-factor threshold. The table never rehashes, resizes, or allocates
 additional storage. After `capacity` pairs have been stored, another push returns
 `HWIRE_TABLE_EFULL`. Deletion is not supported.
 
 ## API
+
+```c
+HWIRE_TABLE_CAPACITY(n)
+```
+
+Round the requested pair count up to a supported power-of-two capacity.
+For example, `hwire_kv_pair_t entries[HWIRE_TABLE_CAPACITY(100)]` provides
+128 pair slots. Zero, negative, or greater-than-32768 requests produce zero.
+The argument may be evaluated multiple times; do not pass an expression with
+side effects.
+
+```c
+HWIRE_TABLE_INDEX_CAPACITY(capacity)
+HWIRE_TABLE_INDEX_BOTH_CAPACITY(capacity)
+```
+
+Return the number of `hwire_table_index_t` elements required for a supported
+pair capacity, not the number of bytes. These macros do not round or validate
+the capacity. Use `HWIRE_TABLE_INDEX_CAPACITY` for either exact-only or CI-only
+lookup, and `HWIRE_TABLE_INDEX_BOTH_CAPACITY` when both flags are enabled.
+
+| Macro | Elements | Layout |
+|---|---:|---|
+| `HWIRE_TABLE_INDEX_CAPACITY(capacity)` | `4 * capacity` | `2N` hash slots, `N` duplicate-next references, `N` duplicate-tail references |
+| `HWIRE_TABLE_INDEX_BOTH_CAPACITY(capacity)` | `8 * capacity` | One layout for exact lookup and one for CI lookup |
+
+`HWIRE_TABLE_INDEX_FACTOR` is `4u`, the sum of the single-index regions above.
+`HWIRE_TABLE_INDEX_BOTH_FACTOR` is twice that factor, for two indexes.
+
+```c
+enum { CAPACITY = HWIRE_TABLE_CAPACITY(100) };
+hwire_kv_pair_t entries[CAPACITY];
+hwire_table_index_t index[HWIRE_TABLE_INDEX_CAPACITY(CAPACITY)];
+```
 
 ```c
 void hwire_table_key_init(hwire_table_key_t *key, uint64_t seed);
@@ -954,13 +991,14 @@ hwire_table_code_t hwire_table_init(hwire_table_t *table,
                                     hwire_table_index_t *index,
                                     size_t capacity,
                                     const hwire_table_key_t *key,
-                                    int enabled_ci);
+                                    hwire_table_mode_t mode);
 ```
 
 Initialize or reset a table and copy the key. All pointers must be non-NULL.
 The pair array must hold at least `capacity` elements. The index array must use
-the exact capacity macro when `enabled_ci` is zero and the CI capacity macro
-when it is nonzero. Initialization clears the complete index array for the
+the single-index capacity macro for either single mode, and the both-index
+capacity macro when both flags are set. Zero or unknown mode bits return
+`HWIRE_TABLE_EINVAL`. Initialization clears the complete index array for the
 selected mode and leaves the pair array unchanged. Return
 `HWIRE_TABLE_OK`, `HWIRE_TABLE_EINVAL`, or `HWIRE_TABLE_ECAPACITY`. Invalid
 arguments leave the table and both arrays unchanged.
@@ -982,8 +1020,8 @@ const hwire_kv_pair_t *hwire_table_get_ci(const hwire_table_t *table,
 ```
 
 Find the first matching pair in insertion order using exact or ASCII
-case-insensitive comparison. Return NULL when no key matches. `get_ci` also
-returns NULL when CI indexing was disabled. `table` must be initialized; `key`
+case-insensitive comparison. Return NULL when no key matches or the requested
+index was not enabled. `table` must be initialized; `key`
 may be NULL only when `keylen` is zero. A missing key is an ordinary lookup
 result.
 
@@ -996,7 +1034,7 @@ const hwire_kv_pair_t *hwire_table_next_ci(const hwire_table_t *table,
 
 Follow exact or ASCII case-insensitive duplicates in insertion order. Pass a
 live pair from the same table. Return NULL at the end or when `pair` is NULL.
-`next_ci` also returns NULL when CI indexing was disabled.
+Both functions also return NULL when their requested index was not enabled.
 Use `get` with `next`, or `get_ci` with `next_ci`, to traverse a key group.
 
 ```c
@@ -1052,7 +1090,7 @@ typedef struct {
     hwire_kv_pair_t header_entries[HEADER_CAPACITY];
     hwire_kv_pair_t query_entries[QUERY_CAPACITY];
     hwire_table_index_t
-        header_index[HWIRE_TABLE_INDEX_CI_CAPACITY(HEADER_CAPACITY)];
+        header_index[HWIRE_TABLE_INDEX_CAPACITY(HEADER_CAPACITY)];
     hwire_table_index_t
         query_index[HWIRE_TABLE_INDEX_CAPACITY(QUERY_CAPACITY)];
     char query_storage[256];
@@ -1104,9 +1142,9 @@ int main(void)
     hwire_table_key_t key;
     hwire_table_key_init(&key, 42); /* deterministic example seed */
     if (hwire_table_init(&app.headers, app.header_entries, app.header_index,
-                         HEADER_CAPACITY, &key, 1) != HWIRE_TABLE_OK ||
+                         HEADER_CAPACITY, &key, HWIRE_TABLE_CASE_INSENSITIVE) != HWIRE_TABLE_OK ||
         hwire_table_init(&app.query_params, app.query_entries, app.query_index,
-                         QUERY_CAPACITY, &key, 0) != HWIRE_TABLE_OK) {
+                         QUERY_CAPACITY, &key, HWIRE_TABLE_CASE_SENSITIVE) != HWIRE_TABLE_OK) {
         return 1;
     }
 
