@@ -48,25 +48,33 @@ typedef struct {
  *
  * References encode entry index + 1; zero means an empty slot or the end of a
  * duplicate chain. Applications allocate the required number of elements with
- * HWIRE_TABLE_INDEX_CAPACITY or HWIRE_TABLE_INDEX_CI_CAPACITY.
+ * HWIRE_TABLE_INDEX_CAPACITY or HWIRE_TABLE_INDEX_BOTH_CAPACITY.
  */
 typedef uint16_t hwire_table_index_t;
 
 /**
- * Exact indexing needs 4N elements: 2N hash slots, N next references, and N
+ * A single index needs 4N elements: 2N hash slots, N next references, and N
  * tail references. Twice that storage holds the same three regions for both
  * the exact and ASCII case-insensitive indexes.
  */
-#define HWIRE_TABLE_INDEX_FACTOR    4u
-#define HWIRE_TABLE_INDEX_CI_FACTOR (HWIRE_TABLE_INDEX_FACTOR * 2u)
+#define HWIRE_TABLE_INDEX_FACTOR      4u
+#define HWIRE_TABLE_INDEX_BOTH_FACTOR (HWIRE_TABLE_INDEX_FACTOR * 2u)
 
-/** Number of hwire_table_index_t elements required for exact lookup. */
+/** Number of index elements required for exact-only or CI-only lookup. */
 #define HWIRE_TABLE_INDEX_CAPACITY(capacity)                                   \
     ((size_t)(capacity) * HWIRE_TABLE_INDEX_FACTOR)
 
 /** Number of hwire_table_index_t elements required for exact and CI lookup. */
-#define HWIRE_TABLE_INDEX_CI_CAPACITY(capacity)                                \
-    ((size_t)(capacity) * HWIRE_TABLE_INDEX_CI_FACTOR)
+#define HWIRE_TABLE_INDEX_BOTH_CAPACITY(capacity)                              \
+    ((size_t)(capacity) * HWIRE_TABLE_INDEX_BOTH_FACTOR)
+
+/** Bit set selecting key comparisons; combine the two flags with bitwise OR. */
+typedef uint16_t hwire_table_mode_t;
+
+/** Enable exact indexing. */
+#define HWIRE_TABLE_CASE_SENSITIVE   UINT16_C(0x01)
+/** Enable ASCII-CI indexing. */
+#define HWIRE_TABLE_CASE_INSENSITIVE UINT16_C(0x02)
 
 /** Table descriptor; initialize it before using any lookup or iteration API. */
 typedef struct {
@@ -76,7 +84,7 @@ typedef struct {
     uint16_t mask;
     uint16_t capacity;
     uint16_t len;
-    uint16_t enabled_ci;
+    hwire_table_mode_t mode; /**< Validated indexing flags */
 } hwire_table_t;
 
 /** Iterator position; includes the end position after 32768 entries. */
@@ -105,16 +113,16 @@ void hwire_table_key_init(hwire_table_key_t *key, uint64_t seed);
  * @param table Non-NULL table descriptor.
  * @param entries Non-NULL mutable array of at least capacity pairs.
  * @param index Non-NULL mutable array. Supply at least
- *              HWIRE_TABLE_INDEX_CAPACITY(capacity) elements for exact-only
- *              indexing or HWIRE_TABLE_INDEX_CI_CAPACITY(capacity) elements
- *              when enabled_ci is nonzero.
+ *              HWIRE_TABLE_INDEX_CAPACITY(capacity) elements for a single
+ *              index or HWIRE_TABLE_INDEX_BOTH_CAPACITY(capacity) when both
+ *              flags are enabled.
  * @param capacity Maximum number of pairs, including duplicates; a power of
  *                 two in [1, 32768].
  * @param key Non-NULL hash key, copied into the table.
- * @param enabled_ci Zero builds only the exact index. A nonzero value also
- *                   builds the ASCII case-insensitive index.
- * @return HWIRE_TABLE_OK, HWIRE_TABLE_EINVAL for NULL arguments, or
- *         HWIRE_TABLE_ECAPACITY for an unsupported capacity.
+ * @param mode HWIRE_TABLE_CASE_SENSITIVE, HWIRE_TABLE_CASE_INSENSITIVE, or
+ *             their bitwise OR. Zero and unknown bits are invalid.
+ * @return HWIRE_TABLE_OK, HWIRE_TABLE_EINVAL for NULL arguments or invalid
+ *         mode, or HWIRE_TABLE_ECAPACITY for an unsupported capacity.
  *
  * No allocation occurs. Initialization zeroes the complete index array for
  * the selected mode and leaves the pair array unchanged. The build uses AES
@@ -129,7 +137,7 @@ hwire_table_code_t hwire_table_init(hwire_table_t *table,
                                     hwire_kv_pair_t *entries,
                                     hwire_table_index_t *index, size_t capacity,
                                     const hwire_table_key_t *key,
-                                    int enabled_ci);
+                                    hwire_table_mode_t mode);
 
 /**
  * @brief Append a borrowed key/value pair to every enabled index.
@@ -149,7 +157,8 @@ hwire_table_code_t hwire_table_push(hwire_table_t *table,
  * @param table Initialized table.
  * @param key Query bytes; may be NULL only when keylen is zero.
  * @param keylen Number of query bytes; embedded NUL bytes are significant.
- * @return First matching pair in push order, or NULL if absent.
+ * @return First matching pair in push order, or NULL if absent or exact
+ *         indexing was disabled during initialization.
  *
  * The table must be initialized; key must be non-NULL if keylen is nonzero.
  * Absence is an ordinary lookup result, not an error code.
@@ -175,7 +184,8 @@ const hwire_kv_pair_t *hwire_table_get_ci(const hwire_table_t *table,
  * @brief Return the next pair with the same exact key.
  * @param table Initialized table that produced pair.
  * @param pair Live pair from table, or NULL to return NULL.
- * @return Next exact duplicate in push order, or NULL at the end.
+ * @return Next exact duplicate in push order, or NULL at the end or when exact
+ *         indexing was disabled during initialization.
  */
 const hwire_kv_pair_t *hwire_table_next(const hwire_table_t *table,
                                         const hwire_kv_pair_t *pair);
