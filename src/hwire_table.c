@@ -60,7 +60,8 @@ static inline hwire_table_index_t *index_tail_region(hwire_table_t *table)
     return table->index + (size_t)table->capacity * INDEX_TAIL_BASE_FACTOR;
 }
 
-/** Return the second slot region for insertion when both indexes are enabled. */
+/** Return the second slot region for insertion when both indexes are enabled.
+ */
 static inline hwire_table_index_t *index_ci_slot_region(hwire_table_t *table)
 {
     return table->index + (size_t)table->capacity * INDEX_CI_SLOT_BASE_FACTOR;
@@ -78,7 +79,8 @@ index_ci_slot_region_const(const hwire_table_t *table)
                                    INDEX_SLOT_BASE_FACTOR);
 }
 
-/** Return the second next region for insertion when both indexes are enabled. */
+/** Return the second next region for insertion when both indexes are enabled.
+ */
 static inline hwire_table_index_t *index_ci_next_region(hwire_table_t *table)
 {
     return table->index + (size_t)table->capacity * INDEX_CI_NEXT_BASE_FACTOR;
@@ -96,7 +98,8 @@ index_ci_next_region_const(const hwire_table_t *table)
                                    INDEX_NEXT_BASE_FACTOR);
 }
 
-/** Return the second tail region for insertion when both indexes are enabled. */
+/** Return the second tail region for insertion when both indexes are enabled.
+ */
 static inline hwire_table_index_t *index_ci_tail_region(hwire_table_t *table)
 {
     return table->index + (size_t)table->capacity * INDEX_CI_TAIL_BASE_FACTOR;
@@ -401,61 +404,95 @@ hwire_table_code_t hwire_table_push(hwire_table_t *table,
     return HWIRE_TABLE_OK;
 }
 
-/** Resolve one key group for a read without rereading the final slot. */
-static inline const hwire_kv_pair_t *
-get_key(const hwire_table_t *table, const char *key, size_t keylen, int ci)
+/** Resolve a key group and record its position in an optional cursor. */
+static inline const hwire_kv_pair_t *get_key(const hwire_table_t *table,
+                                             const char *key, size_t keylen,
+                                             int ci, hwire_table_iter_t *iter)
 {
+    if (iter) {
+        *iter = (hwire_table_iter_t){.table = NULL};
+    }
+    hwire_table_mode_t mode =
+        ci ? HWIRE_TABLE_CASE_INSENSITIVE : HWIRE_TABLE_CASE_SENSITIVE;
     if (!table || !table->len || (keylen && !key) ||
-        (table->mode & (ci ? HWIRE_TABLE_CASE_INSENSITIVE :
-                             HWIRE_TABLE_CASE_SENSITIVE)) == 0) {
+        (table->mode & mode) == 0) {
         return NULL;
     }
     uint16_t head;
     (void)find_slot(table, key, keylen, ci, &head);
-    return (head == EMPTY) ? NULL : &table->entries[head - 1u];
+    if (head != EMPTY) {
+        uint16_t index = (uint16_t)(head - 1u);
+        if (iter) {
+            *iter = (hwire_table_iter_t){
+                .table = table,
+                .index = index,
+            };
+        }
+        return &table->entries[index];
+    }
+    return NULL;
 }
 
-/** Select the exact index for a public lookup. */
+/** Select exact comparison and optionally record the matching position. */
 const hwire_kv_pair_t *hwire_table_get(const hwire_table_t *table,
-                                       const char *key, size_t keylen)
+                                       const char *key, size_t keylen,
+                                       hwire_table_iter_t *iter)
 {
-    return get_key(table, key, keylen, 0);
+    return get_key(table, key, keylen, 0, iter);
 }
 
-/** Select the ASCII-CI index for a public lookup. */
+/** Select ASCII-CI comparison and optionally record the matching position. */
 const hwire_kv_pair_t *hwire_table_get_ci(const hwire_table_t *table,
-                                          const char *key, size_t keylen)
+                                          const char *key, size_t keylen,
+                                          hwire_table_iter_t *iter)
 {
-    return get_key(table, key, keylen, 1);
+    return get_key(table, key, keylen, 1, iter);
 }
 
-/** Follow the exact next region; no probe or comparison is needed. */
-const hwire_kv_pair_t *hwire_table_next(const hwire_table_t *table,
-                                        const hwire_kv_pair_t *pair)
+/** Follow the duplicate index selected by the API, independently of the
+ * lookup that initialized the cursor. */
+static const hwire_kv_pair_t *next_key(hwire_table_iter_t *iter, int ci)
 {
-    if (pair && (table->mode & HWIRE_TABLE_CASE_SENSITIVE) != 0) {
-        size_t index  = (size_t)(pair - table->entries);
-        uint16_t next = index_next_region_const(table)[index];
-        return next == EMPTY ? NULL : &table->entries[next - 1u];
+    hwire_table_mode_t mode =
+        ci ? HWIRE_TABLE_CASE_INSENSITIVE : HWIRE_TABLE_CASE_SENSITIVE;
+    if (iter && iter->table && (iter->table->mode & mode) != 0) {
+        const hwire_table_t *table = iter->table;
+        const hwire_table_index_t *next =
+            ci ? index_ci_next_region_const(table) :
+                 index_next_region_const(table);
+        uint16_t ref = next[iter->index];
+        if (ref != EMPTY) {
+            iter->index = (uint16_t)(ref - 1u);
+            return &table->entries[iter->index];
+        }
     }
     return NULL;
 }
 
-/** Follow the CI next region when that optional index is enabled. */
-const hwire_kv_pair_t *hwire_table_next_ci(const hwire_table_t *table,
-                                           const hwire_kv_pair_t *pair)
+/** Advance to the next exact duplicate at the cursor position. */
+const hwire_kv_pair_t *hwire_table_next(hwire_table_iter_t *iter)
 {
-    if (pair && (table->mode & HWIRE_TABLE_CASE_INSENSITIVE) != 0) {
-        size_t index  = (size_t)(pair - table->entries);
-        uint16_t next = index_ci_next_region_const(table)[index];
-        return next == EMPTY ? NULL : &table->entries[next - 1u];
-    }
-    return NULL;
+    return next_key(iter, 0);
 }
 
-/** Return the next physical pair and advance the caller's position. */
+/** Advance to the next ASCII-CI duplicate at the cursor position. */
+const hwire_kv_pair_t *hwire_table_next_ci(hwire_table_iter_t *iter)
+{
+    return next_key(iter, 1);
+}
+
+/** Advance after the cursor's current pair; full iteration does not hash keys.
+ */
 const hwire_kv_pair_t *hwire_table_iterate(const hwire_table_t *table,
                                            hwire_table_iter_t *iter)
 {
-    return (*iter >= table->len) ? NULL : &table->entries[(*iter)++];
+    size_t index = iter->table ? (size_t)iter->index + 1u : 0;
+    if (index < table->len) {
+        *iter = (hwire_table_iter_t){
+            .table = table,
+            .index = (uint16_t)index,
+        };
+        return &table->entries[index];
+    }
+    return NULL;
 }

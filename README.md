@@ -903,7 +903,8 @@ Build the table alongside the parser as described in
 - `hwire_table_index_t` is the element type for the separate mutable index
   array. Single-index and dual-index tables require different array lengths.
 - `hwire_table_key_t` holds two 64-bit hash-key words, copied by initialization.
-- `hwire_table_iter_t` is an iteration position; start it at zero.
+- `hwire_table_iter_t` holds a current pair position;
+  initialize it with `{0}` for iteration.
 
 `hwire_table_push` copies an `hwire_kv_pair_t`, whose `key` and `value` are
 `hwire_str_t` slices (`len`, `ptr`). It borrows the referenced bytes. Keep the
@@ -1014,38 +1015,46 @@ pointers. Return `HWIRE_TABLE_OK`, `HWIRE_TABLE_EINVAL`, or
 
 ```c
 const hwire_kv_pair_t *hwire_table_get(const hwire_table_t *table,
-                                       const char *key, size_t keylen);
+                                       const char *key, size_t keylen,
+                                       hwire_table_iter_t *iter);
 const hwire_kv_pair_t *hwire_table_get_ci(const hwire_table_t *table,
-                                          const char *key, size_t keylen);
+                                          const char *key, size_t keylen,
+                                          hwire_table_iter_t *iter);
 ```
 
 Find the first matching pair in insertion order using exact or ASCII
 case-insensitive comparison. Return NULL when no key matches or the requested
 index was not enabled. `table` must be initialized; `key`
-may be NULL only when `keylen` is zero. A missing key is an ordinary lookup
-result.
+may be NULL only when `keylen` is zero. Pass NULL for `iter` when only the
+first pair is needed. Otherwise lookup records the owning table and
+current entry index; failed lookup clears the cursor. A missing key is an
+ordinary lookup result.
 
 ```c
-const hwire_kv_pair_t *hwire_table_next(const hwire_table_t *table,
-                                        const hwire_kv_pair_t *pair);
-const hwire_kv_pair_t *hwire_table_next_ci(const hwire_table_t *table,
-                                           const hwire_kv_pair_t *pair);
+const hwire_kv_pair_t *hwire_table_next(hwire_table_iter_t *iter);
+const hwire_kv_pair_t *hwire_table_next_ci(hwire_table_iter_t *iter);
 ```
 
-Follow exact or ASCII case-insensitive duplicates in insertion order. Pass a
-live pair from the same table. Return NULL at the end or when `pair` is NULL.
-Both functions also return NULL when their requested index was not enabled.
-Use `get` with `next`, or `get_ci` with `next_ci`, to traverse a key group.
+Follow exact or ASCII case-insensitive duplicates after the current cursor
+position in insertion order. Use a cursor from get, get_ci, iterate or next.
+Return NULL at the end, for a NULL/empty cursor, or when the requested index
+is disabled. On success, update the position; otherwise leave it unchanged.
+These functions follow duplicate indexes without recomputing the hash.
+
+Comparison is selected by the called function: get followed by next_ci is
+supported, and only later CI matches are visited. Cursor fields are maintained
+by the APIs.
 
 ```c
 const hwire_kv_pair_t *hwire_table_iterate(const hwire_table_t *table,
                                            hwire_table_iter_t *iter);
 ```
 
-Visit every pair in an initialized table in insertion order. Set `*iter` to
-zero before the first call; `iter` must be non-NULL. Each result advances it. At the end, return NULL
-without advancing. Pairs appended during iteration become visible on later
-calls; reset invalidates the iterator position.
+Visit every pair in an initialized table in insertion order. Initialize the
+non-NULL cursor with `{0}` before the first call. Each result records the
+current pair. Return NULL at the end without changing the cursor. The same cursor may be used for next/next_ci; iteration
+then continues after its current pair. Pairs appended during iteration become
+visible on later calls. Reset invalidates prior cursor positions.
 
 | Result | Meaning |
 |---|---|
@@ -1166,26 +1175,27 @@ int main(void)
     printf("%.*s %.*s\n", (int)app.request.method.len, app.request.method.ptr,
            (int)app.request.uri.len, app.request.uri.ptr);
 
+    hwire_table_iter_t duplicates = {.table = NULL};
     printf("header x-tag: ");
-    for (const hwire_kv_pair_t *e = hwire_table_get_ci(&app.headers, "X-TAG", 5);
-         e != NULL; e = hwire_table_next_ci(&app.headers, e)) {
+    for (const hwire_kv_pair_t *e = hwire_table_get_ci(&app.headers, "X-TAG", 5, &duplicates);
+         e != NULL; e = hwire_table_next_ci(&duplicates)) {
         fwrite(e->value.ptr, 1, e->value.len, stdout);
     }
     putchar('\n');
 
-    const hwire_kv_pair_t *name = hwire_table_get(&app.query_params, "name", 4);
+    const hwire_kv_pair_t *name = hwire_table_get(&app.query_params, "name", 4, NULL);
     if (name != NULL) {
         printf("query name: %.*s\n", (int)name->value.len, name->value.ptr);
     }
     printf("query tag: ");
-    for (const hwire_kv_pair_t *e = hwire_table_get(&app.query_params, "tag", 3);
-         e != NULL; e = hwire_table_next(&app.query_params, e)) {
+    for (const hwire_kv_pair_t *e = hwire_table_get(&app.query_params, "tag", 3, &duplicates);
+         e != NULL; e = hwire_table_next(&duplicates)) {
         fwrite(e->value.ptr, 1, e->value.len, stdout);
     }
     putchar('\n');
 
     puts("headers:");
-    hwire_table_iter_t iter = 0;
+    hwire_table_iter_t iter = {.table = NULL};
     const hwire_kv_pair_t *e;
     while ((e = hwire_table_iterate(&app.headers, &iter)) != NULL) {
         printf("%.*s: %.*s\n", (int)e->key.len, e->key.ptr,

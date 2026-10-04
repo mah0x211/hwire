@@ -29,6 +29,21 @@ static const hwire_kv_pair_t *push(hwire_table_t *target,
     return &target->entries[entry_index];
 }
 
+static const hwire_kv_pair_t *next_from(const hwire_table_t *target,
+                                         const hwire_kv_pair_t *current, int ci)
+{
+    hwire_table_iter_t iter = {.table = NULL};
+    if (!current) {
+        return ci ? hwire_table_next_ci(NULL) : hwire_table_next(NULL);
+    }
+    const hwire_kv_pair_t *entry;
+    do {
+        entry = hwire_table_iterate(target, &iter);
+        assert(entry != NULL);
+    } while (entry != current);
+    return ci ? hwire_table_next_ci(&iter) : hwire_table_next(&iter);
+}
+
 static void init(void)
 {
     hwire_table_key_t key;
@@ -144,11 +159,11 @@ static void test_index_modes_and_initialization(void)
     hwire_kv_pair_t b             = pair("foo", 3, "B", 1);
     const hwire_kv_pair_t *first  = push(&t, &a);
     const hwire_kv_pair_t *second = push(&t, &b);
-    assert(hwire_table_get(&t, "foo", 3) == first);
-    assert(hwire_table_next(&t, first) == second);
-    assert(hwire_table_next(&t, second) == NULL);
-    assert(hwire_table_get_ci(&t, "FOO", 3) == NULL);
-    assert(hwire_table_next_ci(&t, first) == NULL);
+    assert(hwire_table_get(&t, "foo", 3, NULL) == first);
+    assert(next_from(&t, first, 0) == second);
+    assert(next_from(&t, second, 0) == NULL);
+    assert(hwire_table_get_ci(&t, "FOO", 3, NULL) == NULL);
+    assert(next_from(&t, first, 1) == NULL);
 
     for (size_t i = 0; i < HWIRE_TABLE_INDEX_BOTH_CAPACITY(N) + 2u; ++i) {
         ci_index[i] = marker;
@@ -168,47 +183,47 @@ static void test_index_modes_and_initialization(void)
 static void test_chains(void)
 {
     init();
-    assert(hwire_table_get(&table, "foo", 3) == NULL);
+    assert(hwire_table_get(&table, "foo", 3, NULL) == NULL);
     const hwire_kv_pair_t a   = pair("foo", 3, "A", 1);
     const hwire_kv_pair_t b   = pair("Foo", 3, "B", 1);
     const hwire_kv_pair_t c   = pair("foo", 3, "C", 1);
     const hwire_kv_pair_t d   = pair("bar", 3, NULL, 0);
     const hwire_kv_pair_t *ea = push(&table, &a);
     assert(ea == &entries[0] && ea->key.ptr == a.key.ptr);
-    assert(hwire_table_get(&table, "foo", 3) == ea);
+    assert(hwire_table_get(&table, "foo", 3, NULL) == ea);
     const hwire_kv_pair_t *eb = push(&table, &b);
     const hwire_kv_pair_t *ec = push(&table, &c);
     const hwire_kv_pair_t *ed = push(&table, &d);
     assert(ea == &entries[0] && eb == &entries[1]);
-    assert(hwire_table_get(&table, "foo", 3) == ea);
-    assert(hwire_table_get(&table, "Foo", 3) == eb);
-    assert(hwire_table_get_ci(&table, "FOO", 3) == ea);
-    assert(hwire_table_next(&table, ea) == ec);
-    assert(hwire_table_next(&table, ec) == NULL);
-    assert(hwire_table_next(&table, eb) == NULL);
-    assert(hwire_table_next_ci(&table, ea) == eb);
-    assert(hwire_table_next_ci(&table, eb) == ec);
-    assert(hwire_table_next_ci(&table, ec) == NULL);
-    assert(hwire_table_next(&table, NULL) == NULL);
-    assert(hwire_table_next_ci(&table, NULL) == NULL);
-    assert(hwire_table_get_ci(&table, "BAR", 3) == ed);
+    assert(hwire_table_get(&table, "foo", 3, NULL) == ea);
+    assert(hwire_table_get(&table, "Foo", 3, NULL) == eb);
+    assert(hwire_table_get_ci(&table, "FOO", 3, NULL) == ea);
+    assert(next_from(&table, ea, 0) == ec);
+    assert(next_from(&table, ec, 0) == NULL);
+    assert(next_from(&table, eb, 0) == NULL);
+    assert(next_from(&table, ea, 1) == eb);
+    assert(next_from(&table, eb, 1) == ec);
+    assert(next_from(&table, ec, 1) == NULL);
+    assert(next_from(&table, NULL, 0) == NULL);
+    assert(next_from(&table, NULL, 1) == NULL);
+    assert(hwire_table_get_ci(&table, "BAR", 3, NULL) == ed);
     assert(ed->value.ptr == NULL && ed->value.len == 0);
-    assert(hwire_table_get(&table, "absent", 6) == NULL);
-    assert(hwire_table_get_ci(&table, "absent", 6) == NULL);
-    assert(hwire_table_get(NULL, "foo", 3) == NULL);
-    assert(hwire_table_get_ci(NULL, "foo", 3) == NULL);
-    hwire_table_iter_t it = 0;
+    assert(hwire_table_get(&table, "absent", 6, NULL) == NULL);
+    assert(hwire_table_get_ci(&table, "absent", 6, NULL) == NULL);
+    assert(hwire_table_get(NULL, "foo", 3, NULL) == NULL);
+    assert(hwire_table_get_ci(NULL, "foo", 3, NULL) == NULL);
+    hwire_table_iter_t it = {.table = NULL};
     assert(hwire_table_iterate(&table, &it) == ea);
     assert(hwire_table_iterate(&table, &it) == eb);
     assert(hwire_table_iterate(&table, &it) == ec);
     assert(hwire_table_iterate(&table, &it) == ed);
-    assert(hwire_table_iterate(&table, &it) == NULL && it == CAP);
+    assert(hwire_table_iterate(&table, &it) == NULL && it.table == &table && it.index == CAP - 1u);
     hwire_kv_pair_t overflow = pair("baz", 3, "E", 1);
     assert(hwire_table_push(&table, &overflow) == HWIRE_TABLE_EFULL);
     assert(table.len == CAP);
-    assert(hwire_table_get(&table, "foo", 3) == ea);
+    assert(hwire_table_get(&table, "foo", 3, NULL) == ea);
     init();
-    assert(table.len == 0 && hwire_table_get(&table, "foo", 3) == NULL);
+    assert(table.len == 0 && hwire_table_get(&table, "foo", 3, NULL) == NULL);
 }
 
 static void test_binary_and_errors(void)
@@ -220,26 +235,26 @@ static void test_binary_and_errors(void)
     const char high_lower[]      = {(char)0xc0, 'a'};
     hwire_kv_pair_t kv           = pair(NULL, 0, "", 0);
     const hwire_kv_pair_t *empty = push(&table, &kv);
-    assert(empty && hwire_table_get(&table, NULL, 0) == empty);
+    assert(empty && hwire_table_get(&table, NULL, 0, NULL) == empty);
     assert(empty->value.ptr != NULL);
     kv                           = pair(binary, sizeof binary, "v", 1);
     const hwire_kv_pair_t *first = push(&table, &kv);
     assert(first);
-    assert(hwire_table_get(&table, binary, 3) == first);
-    assert(hwire_table_get(&table, lower, 3) == NULL);
-    assert(hwire_table_get_ci(&table, lower, 3) == first);
-    assert(hwire_table_get(&table, binary, 2) == NULL);
+    assert(hwire_table_get(&table, binary, 3, NULL) == first);
+    assert(hwire_table_get(&table, lower, 3, NULL) == NULL);
+    assert(hwire_table_get_ci(&table, lower, 3, NULL) == first);
+    assert(hwire_table_get(&table, binary, 2, NULL) == NULL);
     kv = pair(high, sizeof high, NULL, 0);
     assert(push(&table, &kv));
-    assert(hwire_table_get_ci(&table, high_lower, 2) == &entries[2]);
+    assert(hwire_table_get_ci(&table, high_lower, 2, NULL) == &entries[2]);
     kv = pair(lower, sizeof lower, NULL, 0);
     assert(push(&table, &kv));
-    assert(hwire_table_next_ci(&table, first) == &entries[3]);
+    assert(next_from(&table, first, 1) == &entries[3]);
     kv = pair(NULL, 1, NULL, 0);
     assert(hwire_table_push(&table, &kv) == HWIRE_TABLE_EINVAL);
     assert(table.len == 4);
-    assert(hwire_table_get(&table, NULL, 1) == NULL);
-    assert(hwire_table_get_ci(&table, NULL, 1) == NULL);
+    assert(hwire_table_get(&table, NULL, 1, NULL) == NULL);
+    assert(hwire_table_get_ci(&table, NULL, 1, NULL) == NULL);
 }
 
 static void test_full_unique(hwire_table_mode_t mode)
@@ -263,9 +278,9 @@ static void test_full_unique(hwire_table_mode_t mode)
     }
     assert(t.len == N);
     for (unsigned i = 0; i < N; ++i) {
-        assert(hwire_table_get(&t, names[i], 5) ==
+        assert(hwire_table_get(&t, names[i], 5, NULL) ==
                (mode == HWIRE_TABLE_CASE_INSENSITIVE ? NULL : &storage[i]));
-        assert(hwire_table_get_ci(&t, names[i], 5) ==
+        assert(hwire_table_get_ci(&t, names[i], 5, NULL) ==
                (mode == HWIRE_TABLE_CASE_SENSITIVE ? NULL : &storage[i]));
     }
     hwire_kv_pair_t extra = pair("extra", 5, NULL, 0);
@@ -296,12 +311,20 @@ static void test_max_capacity(void)
     }
 
     assert(t.len == N);
-    assert(hwire_table_get(&t, (const char *)&keys[0], sizeof keys[0]) ==
+    assert(hwire_table_get(&t, (const char *)&keys[0], sizeof keys[0], NULL) ==
            &storage[0]);
     assert(hwire_table_get(&t, (const char *)&keys[N / 2],
-                           sizeof keys[N / 2]) == &storage[N / 2]);
+                           sizeof keys[N / 2], NULL) == &storage[N / 2]);
     assert(hwire_table_get(&t, (const char *)&keys[N - 1],
-                           sizeof keys[N - 1]) == &storage[N - 1]);
+                           sizeof keys[N - 1], NULL) == &storage[N - 1]);
+    hwire_table_iter_t iter = {.table = NULL};
+    assert(hwire_table_get(&t, (const char *)&keys[N - 1], sizeof keys[0],
+                           &iter) == &storage[N - 1]);
+    assert(iter.index == N - 1u && iter.table == &t);
+    assert(hwire_table_next(&iter) == NULL);
+    assert(hwire_table_iterate(&t, &iter) == NULL);
+    assert(iter.index == N - 1u);
+
 }
 
 static void test_capacity_one_and_invalid_push(void)
@@ -325,18 +348,18 @@ static void test_capacity_one_and_invalid_push(void)
     assert(t.len == 0);
     hwire_kv_pair_t good = pair("x", 1, NULL, 0);
     assert(push(&t, &good) == &storage[0]);
-    assert(hwire_table_get(&t, "x", 1) == &storage[0]);
-    assert(hwire_table_get_ci(&t, "X", 1) == &storage[0]);
+    assert(hwire_table_get(&t, "x", 1, NULL) == &storage[0]);
+    assert(hwire_table_get_ci(&t, "X", 1, NULL) == &storage[0]);
     assert(hwire_table_push(&t, &good) == HWIRE_TABLE_EFULL);
     assert(t.len == 1);
-    hwire_table_iter_t iter = 0;
+    hwire_table_iter_t iter = {.table = NULL};
     assert(hwire_table_iterate(&t, &iter) == &storage[0]);
-    assert(hwire_table_iterate(&t, &iter) == NULL && iter == 1);
+    assert(hwire_table_iterate(&t, &iter) == NULL && iter.table == &t && iter.index == 0);
     assert(hwire_table_init(&t, storage, storage_index, 1, &key,
                             (HWIRE_TABLE_CASE_SENSITIVE |
                              HWIRE_TABLE_CASE_INSENSITIVE)) == HWIRE_TABLE_OK);
     assert(hwire_table_push(&t, &good) == HWIRE_TABLE_OK);
-    assert(hwire_table_get(&t, "x", 1) == &storage[0]);
+    assert(hwire_table_get(&t, "x", 1, NULL) == &storage[0]);
 }
 
 static void test_reference_groups(void)
@@ -362,17 +385,19 @@ static void test_reference_groups(void)
         assert(push(&t, &kv) == &storage[i]);
     }
     for (unsigned q = 0; q < N; ++q) {
-        const hwire_kv_pair_t *exact = hwire_table_get(&t, names[q], 3);
-        const hwire_kv_pair_t *ci    = hwire_table_get_ci(&t, names[q], 3);
+        hwire_table_iter_t exact_iter = {.table = NULL};
+        hwire_table_iter_t ci_iter = {.table = NULL};
+        const hwire_kv_pair_t *exact = hwire_table_get(&t, names[q], 3, &exact_iter);
+        const hwire_kv_pair_t *ci    = hwire_table_get_ci(&t, names[q], 3, &ci_iter);
         for (unsigned j = 0; j < N; ++j) {
             int same_group = memcmp(names[q] + 1, names[j] + 1, 2) == 0;
             if (same_group && names[q][0] == names[j][0]) {
                 assert(exact == &storage[j]);
-                exact = hwire_table_next(&t, exact);
+                exact = hwire_table_next(&exact_iter);
             }
             if (same_group) {
                 assert(ci == &storage[j]);
-                ci = hwire_table_next_ci(&t, ci);
+                ci = hwire_table_next_ci(&ci_iter);
             }
         }
         assert(exact == NULL && ci == NULL);
@@ -388,23 +413,23 @@ static void test_long_keys(void)
     const size_t len             = sizeof mixed - 1u;
     hwire_kv_pair_t kv           = pair(mixed, len, "A", 1);
     const hwire_kv_pair_t *first = push(&table, &kv);
-    assert(hwire_table_get(&table, mixed, len) == first);
-    assert(hwire_table_get(&table, lower, len) == NULL);
-    assert(hwire_table_get_ci(&table, upper, len) == first);
+    assert(hwire_table_get(&table, mixed, len, NULL) == first);
+    assert(hwire_table_get(&table, lower, len, NULL) == NULL);
+    assert(hwire_table_get_ci(&table, upper, len, NULL) == first);
     kv                            = pair(lower, len, "B", 1);
     const hwire_kv_pair_t *second = push(&table, &kv);
     kv                            = pair(mixed, len, "C", 1);
     const hwire_kv_pair_t *third  = push(&table, &kv);
-    assert(hwire_table_get(&table, lower, len) == second);
-    assert(hwire_table_get(&table, mixed, len) == first);
-    assert(hwire_table_get_ci(&table, lower, len) == first);
-    assert(hwire_table_next(&table, first) == third);
-    assert(hwire_table_next(&table, third) == NULL);
-    assert(hwire_table_next_ci(&table, first) == second);
-    assert(hwire_table_next_ci(&table, second) == third);
-    assert(hwire_table_next_ci(&table, third) == NULL);
-    assert(hwire_table_get(&table, "Content-Type-Lonx", len) == NULL);
-    assert(hwire_table_get_ci(&table, "CONTENT-TYPE-LONX", len) == NULL);
+    assert(hwire_table_get(&table, lower, len, NULL) == second);
+    assert(hwire_table_get(&table, mixed, len, NULL) == first);
+    assert(hwire_table_get_ci(&table, lower, len, NULL) == first);
+    assert(next_from(&table, first, 0) == third);
+    assert(next_from(&table, third, 0) == NULL);
+    assert(next_from(&table, first, 1) == second);
+    assert(next_from(&table, second, 1) == third);
+    assert(next_from(&table, third, 1) == NULL);
+    assert(hwire_table_get(&table, "Content-Type-Lonx", len, NULL) == NULL);
+    assert(hwire_table_get_ci(&table, "CONTENT-TYPE-LONX", len, NULL) == NULL);
 }
 
 static void test_ci_only(void)
@@ -446,26 +471,26 @@ static void test_ci_only(void)
     }
     for (size_t i = 0; i < N; i++) {
         assert(push(&t, &input[i]) == &storage[i]);
-        assert(hwire_table_get(&t, input[i].key.ptr, input[i].key.len) == NULL);
-        assert(hwire_table_next(&t, &storage[i]) == NULL);
+        assert(hwire_table_get(&t, input[i].key.ptr, input[i].key.len, NULL) == NULL);
+        assert(next_from(&t, &storage[i], 0) == NULL);
     }
-    assert(hwire_table_get_ci(&t, "FOO", 3) == &storage[0]);
-    assert(hwire_table_next_ci(&t, &storage[0]) == &storage[1]);
-    assert(hwire_table_next_ci(&t, &storage[1]) == &storage[2]);
-    assert(hwire_table_next_ci(&t, &storage[2]) == NULL);
-    assert(hwire_table_get_ci(&t, lower_long, sizeof lower_long - 1u) ==
+    assert(hwire_table_get_ci(&t, "FOO", 3, NULL) == &storage[0]);
+    assert(next_from(&t, &storage[0], 1) == &storage[1]);
+    assert(next_from(&t, &storage[1], 1) == &storage[2]);
+    assert(next_from(&t, &storage[2], 1) == NULL);
+    assert(hwire_table_get_ci(&t, lower_long, sizeof lower_long - 1u, NULL) ==
            &storage[3]);
-    assert(hwire_table_next_ci(&t, &storage[3]) == &storage[4]);
-    assert(hwire_table_next_ci(&t, &storage[4]) == NULL);
-    assert(hwire_table_get_ci(&t, NULL, 0) == &storage[5]);
-    assert(hwire_table_get_ci(&t, lower, sizeof lower) == &storage[6]);
-    assert(hwire_table_next_ci(&t, &storage[6]) == &storage[7]);
-    assert(hwire_table_next_ci(&t, &storage[7]) == NULL);
-    assert(hwire_table_get_ci(&t, "absent", 6) == NULL);
-    assert(hwire_table_next(&t, NULL) == NULL);
-    assert(hwire_table_next_ci(&t, NULL) == NULL);
+    assert(next_from(&t, &storage[3], 1) == &storage[4]);
+    assert(next_from(&t, &storage[4], 1) == NULL);
+    assert(hwire_table_get_ci(&t, NULL, 0, NULL) == &storage[5]);
+    assert(hwire_table_get_ci(&t, lower, sizeof lower, NULL) == &storage[6]);
+    assert(next_from(&t, &storage[6], 1) == &storage[7]);
+    assert(next_from(&t, &storage[7], 1) == NULL);
+    assert(hwire_table_get_ci(&t, "absent", 6, NULL) == NULL);
+    assert(next_from(&t, NULL, 0) == NULL);
+    assert(next_from(&t, NULL, 1) == NULL);
     assert(hwire_table_push(&t, &input[0]) == HWIRE_TABLE_EFULL);
-    hwire_table_iter_t it = 0;
+    hwire_table_iter_t it = {.table = NULL};
     for (size_t i = 0; i < N; i++) {
         assert(hwire_table_iterate(&t, &it) == &storage[i]);
     }
@@ -474,20 +499,77 @@ static void test_ci_only(void)
     assert(indexes[HWIRE_TABLE_INDEX_CAPACITY(N) + 1u] == marker);
     assert(hwire_table_init(&t, storage, indexes + 1, N, &t.key,
                             HWIRE_TABLE_CASE_INSENSITIVE) == HWIRE_TABLE_OK);
-    assert(hwire_table_get_ci(&t, "FOO", 3) == NULL);
+    assert(hwire_table_get_ci(&t, "FOO", 3, NULL) == NULL);
     input[0] = pair(high, sizeof high, NULL, 0);
     assert(push(&t, &input[0]) == &storage[0]);
-    assert(hwire_table_get_ci(&t, high_lower, sizeof high_lower) ==
+    assert(hwire_table_get_ci(&t, high_lower, sizeof high_lower, NULL) ==
            &storage[0]);
-    assert(hwire_table_get_ci(&t, other_high, sizeof other_high) == NULL);
+    assert(hwire_table_get_ci(&t, other_high, sizeof other_high, NULL) == NULL);
     /* Reusing the same compact region as an exact index must not retain CI
      * data. */
     assert(hwire_table_init(&t, storage, indexes + 1, N, &t.key,
                             HWIRE_TABLE_CASE_SENSITIVE) == HWIRE_TABLE_OK);
     assert(push(&t, &input[0]) == &storage[0]);
-    assert(hwire_table_get(&t, high, sizeof high) == &storage[0]);
-    assert(hwire_table_get(&t, high_lower, sizeof high_lower) == NULL);
-    assert(hwire_table_get_ci(&t, high, sizeof high) == NULL);
+    assert(hwire_table_get(&t, high, sizeof high, NULL) == &storage[0]);
+    assert(hwire_table_get(&t, high_lower, sizeof high_lower, NULL) == NULL);
+    assert(hwire_table_get_ci(&t, high, sizeof high, NULL) == NULL);
+}
+
+static void test_cursor(void)
+{
+    init();
+    hwire_table_iter_t iter = {.table = NULL};
+    assert(hwire_table_iterate(&table, &iter) == NULL);
+    assert(iter.table == NULL);
+    hwire_kv_pair_t a = pair("foo", 3, "A", 1);
+    hwire_kv_pair_t b = pair("Foo", 3, "B", 1);
+    assert(push(&table, &a) == &entries[0]);
+    assert(push(&table, &b) == &entries[1]);
+    assert(push(&table, &a) == &entries[2]);
+    assert(hwire_table_get(&table, "foo", 3, &iter) == &entries[0]);
+    assert(iter.table == &table && iter.index == 0);
+    assert(hwire_table_next(&iter) == &entries[2]);
+    assert(hwire_table_next(&iter) == NULL && iter.index == 2);
+    assert(push(&table, &a) == &entries[3]);
+    assert(hwire_table_next(&iter) == &entries[3]);
+    assert(hwire_table_get(&table, "foo", 3, &iter) == &entries[0]);
+    assert(hwire_table_next_ci(&iter) == &entries[1]);
+    assert(hwire_table_next(&iter) == NULL && iter.index == 1);
+    assert(hwire_table_next_ci(&iter) == &entries[2]);
+    assert(hwire_table_get_ci(&table, "FOO", 3, &iter) == &entries[0]);
+    assert(hwire_table_next_ci(&iter) == &entries[1]);
+    assert(hwire_table_get_ci(&table, "FOO", 3, &iter) == &entries[0]);
+    assert(hwire_table_next(&iter) == &entries[2]);
+    assert(hwire_table_get(&table, "absent", 6, &iter) == NULL);
+    assert(iter.table == NULL && iter.index == 0);
+    assert(hwire_table_next(&iter) == NULL && hwire_table_next_ci(&iter) == NULL);
+    assert(hwire_table_iterate(&table, &iter) == &entries[0]);
+    assert(hwire_table_next_ci(&iter) == &entries[1]);
+    assert(hwire_table_iterate(&table, &iter) == &entries[2]);
+    assert(hwire_table_get(&table, "foo", 3, &iter) == &entries[0]);
+    assert(hwire_table_iterate(&table, &iter) == &entries[1]);
+    while (hwire_table_iterate(&table, &iter)) {
+    }
+    assert(iter.index == 3 && iter.table == &table);
+    assert(hwire_table_get(NULL, "foo", 3, &iter) == NULL && iter.table == NULL);
+    assert(hwire_table_get(&table, NULL, 1, &iter) == NULL && iter.table == NULL);
+    assert(hwire_table_get_ci(&table, NULL, 1, &iter) == NULL && iter.table == NULL);
+    assert(hwire_table_get_ci(&table, "missing", 7, &iter) == NULL && iter.table == NULL);
+    hwire_table_key_t key = table.key;
+    assert(hwire_table_init(&table, entries, index_storage, CAP, &key,
+                            HWIRE_TABLE_CASE_SENSITIVE) == HWIRE_TABLE_OK);
+    assert(push(&table, &a) == &entries[0]);
+    assert(hwire_table_get(&table, "foo", 3, &iter) == &entries[0]);
+    assert(hwire_table_next_ci(&iter) == NULL);
+    assert(iter.index == 0 && iter.table == &table);
+    assert(hwire_table_get_ci(&table, "foo", 3, &iter) == NULL && iter.table == NULL);
+    key = table.key;
+    assert(hwire_table_init(&table, entries, index_storage, CAP, &key,
+                            HWIRE_TABLE_CASE_INSENSITIVE) == HWIRE_TABLE_OK);
+    assert(push(&table, &a) == &entries[0]);
+    assert(hwire_table_get_ci(&table, "FOO", 3, &iter) == &entries[0]);
+    assert(hwire_table_next(&iter) == NULL && iter.index == 0);
+    assert(hwire_table_get(&table, "foo", 3, &iter) == NULL && iter.table == NULL);
 }
 
 int main(void)
@@ -495,6 +577,7 @@ int main(void)
     test_capacity();
     test_index_modes_and_initialization();
     test_chains();
+    test_cursor();
     test_binary_and_errors();
     test_full_unique(HWIRE_TABLE_CASE_SENSITIVE);
     test_full_unique(HWIRE_TABLE_CASE_INSENSITIVE);

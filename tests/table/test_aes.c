@@ -53,9 +53,14 @@ static void check_key(const char *raw, const char *normalized, size_t len)
     assert(hwire_table_push(&table, &pair) == HWIRE_TABLE_OK);
     const hwire_kv_pair_t *entry = &storage[0];
     assert(entry == &storage[0]);
-    assert(hwire_table_get(&table, raw, len) == entry);
-    assert(hwire_table_get_ci(&table, raw, len) == entry);
-    assert(hwire_table_get_ci(&table, normalized, len) == entry);
+    assert(hwire_table_get(&table, raw, len, NULL) == entry);
+    assert(hwire_table_get_ci(&table, raw, len, NULL) == entry);
+    assert(hwire_table_get_ci(&table, normalized, len, NULL) == entry);
+    hwire_table_iter_t iter = {.table = NULL};
+    assert(hwire_table_get(&table, raw, len, &iter) == entry);
+    assert(iter.table == &table && iter.index == 0);
+    assert(hwire_table_get_ci(&table, normalized, len, &iter) == entry);
+    assert(iter.table == &table && iter.index == 0);
 }
 
 /** Cover every byte value and each small-length branch with an unaligned slice.
