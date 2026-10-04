@@ -30,6 +30,15 @@ jobs:
     - name: Run Test with Coverage
       run: make coverage
 
+    - name: Run Table Tests with ASan and UBSan
+      env:
+        ASAN_OPTIONS: halt_on_error=1
+        UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+      run: |
+        make table-test OBJ_DIR=obj-sanitizers \
+          CFLAGS='-std=c99 -Isrc -O1 -g -Wall -Wextra -Werror $(NATIVE_TEST_FLAGS) -fno-omit-frame-pointer -fsanitize=address,undefined' \
+          LDFLAGS='-fsanitize=address,undefined'
+
     - name: Upload Coverage to Codecov
       uses: codecov/codecov-action@v4
       with:

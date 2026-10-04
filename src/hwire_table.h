@@ -87,8 +87,12 @@ typedef struct {
     hwire_table_mode_t mode; /**< Validated indexing flags */
 } hwire_table_t;
 
-/** Iterator position; includes the end position after 32768 entries. */
-typedef uint32_t hwire_table_iter_t;
+/** Current pair position. Initialize with {0} for iteration.
+ * Fields are maintained by the APIs; do not modify a live cursor. */
+typedef struct {
+    const hwire_table_t *table;
+    uint16_t index;
+} hwire_table_iter_t;
 
 /** Results of operations that can reject an input or exhaust pair capacity. */
 typedef enum {
@@ -157,6 +161,8 @@ hwire_table_code_t hwire_table_push(hwire_table_t *table,
  * @param table Initialized table.
  * @param key Query bytes; may be NULL only when keylen is zero.
  * @param keylen Number of query bytes; embedded NUL bytes are significant.
+ * @param iter Optional position destination; cleared on failure.
+ *             Pass NULL for first-match-only lookup.
  * @return First matching pair in push order, or NULL if absent or exact
  *         indexing was disabled during initialization.
  *
@@ -164,13 +170,16 @@ hwire_table_code_t hwire_table_push(hwire_table_t *table,
  * Absence is an ordinary lookup result, not an error code.
  */
 const hwire_kv_pair_t *hwire_table_get(const hwire_table_t *table,
-                                       const char *key, size_t keylen);
+                                       const char *key, size_t keylen,
+                                       hwire_table_iter_t *iter);
 
 /**
  * @brief Find the first pair after folding only ASCII A-Z to a-z.
  * @param table Initialized table.
  * @param key Query bytes; may be NULL only when keylen is zero.
  * @param keylen Number of query bytes; embedded NUL bytes are significant.
+ * @param iter Optional position destination; cleared on failure.
+ *             Pass NULL for first-match-only lookup.
  * @return First matching pair in push order, or NULL if absent or CI indexing
  *         was disabled during initialization.
  *
@@ -178,37 +187,40 @@ const hwire_kv_pair_t *hwire_table_get(const hwire_table_t *table,
  * The table must be initialized; key must be non-NULL if keylen is nonzero.
  */
 const hwire_kv_pair_t *hwire_table_get_ci(const hwire_table_t *table,
-                                          const char *key, size_t keylen);
+                                          const char *key, size_t keylen,
+                                          hwire_table_iter_t *iter);
 
 /**
  * @brief Return the next pair with the same exact key.
- * @param table Initialized table that produced pair.
- * @param pair Live pair from table, or NULL to return NULL.
+ * @param iter Current position from get, get_ci, iterate or next; may be NULL.
  * @return Next exact duplicate in push order, or NULL at the end or when exact
- *         indexing was disabled during initialization.
+ *         indexing is disabled. Updates iter on success; otherwise unchanged.
+ *
+ * Uses the duplicate index without hashing. Comparison is selected by this
+ * function regardless of how iter was obtained. Reset invalidates the cursor.
  */
-const hwire_kv_pair_t *hwire_table_next(const hwire_table_t *table,
-                                        const hwire_kv_pair_t *pair);
+const hwire_kv_pair_t *hwire_table_next(hwire_table_iter_t *iter);
 
 /**
  * @brief Return the next pair with the same ASCII-CI key.
- * @param table Initialized table that produced pair.
- * @param pair Live pair from table, or NULL to return NULL.
+ * @param iter Current position, or NULL to return NULL.
  * @return Next CI duplicate in push order, or NULL at the end or when CI
- *         indexing was disabled during initialization.
+ *         indexing is disabled. Updates iter on success; otherwise unchanged.
+ *
+ * Uses the duplicate index without hashing. Only pairs after the current
+ * position are considered; earlier CI matches are not revisited.
  */
-const hwire_kv_pair_t *hwire_table_next_ci(const hwire_table_t *table,
-                                           const hwire_kv_pair_t *pair);
+const hwire_kv_pair_t *hwire_table_next_ci(hwire_table_iter_t *iter);
 
 /**
  * @brief Visit every pair in push order, independently of key equality.
- * @param table Initialized table.
- * @param iter Non-NULL position; set *iter to zero before the first call.
- * @return Current pair and advances *iter, or NULL at the end without
- *         changing *iter.
+ * @param table Initialized table containing the cursor's current pair.
+ * @param iter Non-NULL position; initialize with {0} before the first call.
+ * @return Next pair and updates iter, or NULL at the end without changing it.
  *
- * Appends during iteration become visible on later calls. A reset invalidates
- * the iterator position.
+ * Appends become visible on later calls. A reset invalidates the cursor
+ * position. The same cursor may be used for next/next_ci; iterate then
+ * continues after its current pair.
  */
 const hwire_kv_pair_t *hwire_table_iterate(const hwire_table_t *table,
                                            hwire_table_iter_t *iter);
