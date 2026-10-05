@@ -276,7 +276,57 @@ hwire_table_code_t hwire_table_init(hwire_table_t *table,
     table->len      = 0;
     table->mask     = (uint16_t)(capacity * INDEX_SLOT_COUNT_FACTOR - 1u);
     table->mode     = (uint16_t)mode;
+    table->next     = NULL;
+    table->tail     = table;
     return HWIRE_TABLE_OK;
+}
+
+/** Append only to a full tail and reset the new segment before publishing it.
+ * Both modes share single-index storage; dual-index storage is a separate
+ * class. A candidate already in this chain cannot be linked a second time. */
+hwire_table_code_t hwire_table_link(hwire_table_t *table,
+                                    hwire_table_t *next_table)
+{
+    if (!table || !next_table || next_table->next ||
+        next_table->tail != next_table ||
+        table->tail->len != table->tail->capacity ||
+        ((table->mode ==
+          (HWIRE_TABLE_CASE_SENSITIVE | HWIRE_TABLE_CASE_INSENSITIVE)) !=
+         (next_table->mode ==
+          (HWIRE_TABLE_CASE_SENSITIVE | HWIRE_TABLE_CASE_INSENSITIVE)))) {
+        return HWIRE_TABLE_EINVAL;
+    }
+    if (next_table == table->tail) {
+        return HWIRE_TABLE_EINVAL;
+    }
+    size_t index_count =
+        table->mode ==
+                (HWIRE_TABLE_CASE_SENSITIVE | HWIRE_TABLE_CASE_INSENSITIVE) ?
+            HWIRE_TABLE_INDEX_BOTH_CAPACITY(next_table->capacity) :
+            HWIRE_TABLE_INDEX_CAPACITY(next_table->capacity);
+    memset(next_table->index, 0, index_count * sizeof(*next_table->index));
+    next_table->key   = table->key;
+    next_table->mode  = table->mode;
+    next_table->len   = 0;
+    table->tail->next = next_table;
+    table->tail       = next_table;
+    return HWIRE_TABLE_OK;
+}
+
+/** Unhook the first following segment without changing its stored pairs. */
+hwire_table_t *hwire_table_unlink(hwire_table_t *table)
+{
+    if (!table || !table->next) {
+        return NULL;
+    }
+    hwire_table_t *detached = table->next;
+    table->next             = detached->next;
+    if (table->tail == detached) {
+        table->tail = table;
+    }
+    detached->next = NULL;
+    detached->tail = detached;
+    return detached;
 }
 
 /** Compare binary slices by length and bytes under the requested key rule.
@@ -315,9 +365,10 @@ static int equal_key(hwire_str_t a, const char *data, size_t len, int ci)
  * always exists because each index has twice as many slots as pair capacity.
  */
 static uint32_t find_slot(const hwire_table_t *table, const char *key,
-                          size_t keylen, int ci, uint16_t *head_out)
+                          size_t keylen, int ci, uint64_t hash,
+                          uint16_t *head_out)
 {
-    uint32_t pos = (uint32_t)hash_key(table, key, keylen, ci) & table->mask;
+    uint32_t pos = (uint32_t)hash & table->mask;
     const hwire_table_index_t *slots =
         ci ? index_ci_slot_region_const(table) : index_slot_region_const(table);
 
@@ -348,6 +399,7 @@ hwire_table_code_t hwire_table_push(hwire_table_t *table,
         (kv->value.len && !kv->value.ptr)) {
         return HWIRE_TABLE_EINVAL;
     }
+    table = table->tail;
     if (table->len >= table->capacity) {
         return HWIRE_TABLE_EFULL;
     }
@@ -356,9 +408,10 @@ hwire_table_code_t hwire_table_push(hwire_table_t *table,
     hwire_kv_pair_t pair = *kv;
     uint16_t head;
     uint16_t ci_head = EMPTY;
+    int ci           = (table->mode & HWIRE_TABLE_CASE_SENSITIVE) == 0;
     uint32_t pos =
-        find_slot(table, pair.key.ptr, pair.key.len,
-                  (table->mode & HWIRE_TABLE_CASE_SENSITIVE) == 0, &head);
+        find_slot(table, pair.key.ptr, pair.key.len, ci,
+                  hash_key(table, pair.key.ptr, pair.key.len, ci), &head);
     uint32_t ci_pos            = 0;
     uint16_t index             = table->len;
     uint16_t ref               = (uint16_t)(index + 1u);
@@ -368,15 +421,18 @@ hwire_table_code_t hwire_table_push(hwire_table_t *table,
 
     if (table->mode ==
         (HWIRE_TABLE_CASE_SENSITIVE | HWIRE_TABLE_CASE_INSENSITIVE)) {
-        ci_pos = find_slot(table, pair.key.ptr, pair.key.len, 1, &ci_head);
+        ci_pos =
+            find_slot(table, pair.key.ptr, pair.key.len, 1,
+                      hash_key(table, pair.key.ptr, pair.key.len, 1), &ci_head);
     }
 
+    /* Unused next references remain zero from init/link. Only group
+     * representatives need a tail reference. */
     table->entries[index] = pair;
-    next[index]           = EMPTY;
-    tail[index]           = ref;
 
     if (head == EMPTY) {
-        slots[pos] = ref;
+        slots[pos]  = ref;
+        tail[index] = ref;
     } else {
         uint16_t head_index         = (uint16_t)(head - 1u);
         next[tail[head_index] - 1u] = ref;
@@ -388,11 +444,10 @@ hwire_table_code_t hwire_table_push(hwire_table_t *table,
         hwire_table_index_t *ci_slots = index_ci_slot_region(table);
         hwire_table_index_t *ci_next  = index_ci_next_region(table);
         hwire_table_index_t *ci_tail  = index_ci_tail_region(table);
-        ci_next[index]                = EMPTY;
-        ci_tail[index]                = ref;
 
         if (ci_head == EMPTY) {
             ci_slots[ci_pos] = ref;
+            ci_tail[index]   = ref;
         } else {
             uint16_t head_index               = (uint16_t)(ci_head - 1u);
             ci_next[ci_tail[head_index] - 1u] = ref;
@@ -409,26 +464,30 @@ static inline const hwire_kv_pair_t *get_key(const hwire_table_t *table,
                                              const char *key, size_t keylen,
                                              int ci, hwire_table_iter_t *iter)
 {
-    if (iter) {
-        *iter = (hwire_table_iter_t){.table = NULL};
-    }
     hwire_table_mode_t mode =
         ci ? HWIRE_TABLE_CASE_INSENSITIVE : HWIRE_TABLE_CASE_SENSITIVE;
-    if (!table || !table->len || (keylen && !key) ||
-        (table->mode & mode) == 0) {
-        return NULL;
-    }
-    uint16_t head;
-    (void)find_slot(table, key, keylen, ci, &head);
-    if (head != EMPTY) {
-        uint16_t index = (uint16_t)(head - 1u);
-        if (iter) {
-            *iter = (hwire_table_iter_t){
-                .table = table,
-                .index = index,
-            };
+    if (table && table->len && (keylen == 0 || key) &&
+        (table->mode & mode) != 0) {
+        uint64_t hash = hash_key(table, key, keylen, ci);
+        for (; table; table = table->next) {
+            uint16_t head;
+            (void)find_slot(table, key, keylen, ci, hash, &head);
+            if (head != EMPTY) {
+                uint16_t index = (uint16_t)(head - 1u);
+                if (iter) {
+                    *iter = (hwire_table_iter_t){
+                        .table  = table,
+                        .index  = index,
+                        .cached = mode,
+                        .hash   = hash,
+                    };
+                }
+                return &table->entries[index];
+            }
         }
-        return &table->entries[index];
+    }
+    if (iter) {
+        *iter = (hwire_table_iter_t){.table = NULL};
     }
     return NULL;
 }
@@ -462,8 +521,34 @@ static const hwire_kv_pair_t *next_key(hwire_table_iter_t *iter, int ci)
                  index_next_region_const(table);
         uint16_t ref = next[iter->index];
         if (ref != EMPTY) {
-            iter->index = (uint16_t)(ref - 1u);
+            *iter = (hwire_table_iter_t){
+                .table  = table,
+                .index  = (uint16_t)(ref - 1u),
+                .cached = ci && iter->cached == HWIRE_TABLE_CASE_SENSITIVE ?
+                              0 :
+                              iter->cached,
+                .hash   = iter->hash,
+            };
             return &table->entries[iter->index];
+        }
+        if (table->next) {
+            hwire_str_t key = table->entries[iter->index].key;
+            uint64_t hash   = iter->cached == mode ?
+                                  iter->hash :
+                                  hash_key(table, key.ptr, key.len, ci);
+            for (table = table->next; table; table = table->next) {
+                uint16_t head;
+                (void)find_slot(table, key.ptr, key.len, ci, hash, &head);
+                if (head != EMPTY) {
+                    *iter = (hwire_table_iter_t){
+                        .table  = table,
+                        .index  = (uint16_t)(head - 1u),
+                        .cached = mode,
+                        .hash   = hash,
+                    };
+                    return &table->entries[iter->index];
+                }
+            }
         }
     }
     return NULL;
@@ -486,13 +571,17 @@ const hwire_kv_pair_t *hwire_table_next_ci(hwire_table_iter_t *iter)
 const hwire_kv_pair_t *hwire_table_iterate(const hwire_table_t *table,
                                            hwire_table_iter_t *iter)
 {
-    size_t index = iter->table ? (size_t)iter->index + 1u : 0;
-    if (index < table->len) {
-        *iter = (hwire_table_iter_t){
-            .table = table,
-            .index = (uint16_t)index,
-        };
-        return &table->entries[index];
+    const hwire_table_t *segment = iter->table ? iter->table : table;
+    size_t index                 = iter->table ? (size_t)iter->index + 1u : 0;
+    for (; segment; segment = segment->next) {
+        if (index < segment->len) {
+            *iter = (hwire_table_iter_t){
+                .table = segment,
+                .index = (uint16_t)index,
+            };
+            return &segment->entries[index];
+        }
+        index = 0;
     }
     return NULL;
 }

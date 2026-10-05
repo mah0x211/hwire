@@ -30,7 +30,7 @@ TEST_SRCS = $(wildcard $(TEST_DIR)/test_*.c)
 TEST_CASES = $(filter-out $(TEST_DIR)/test_helpers.c, $(TEST_SRCS))
 # Test executables
 TEST_EXES = $(patsubst $(TEST_DIR)/%.c, $(OBJ_DIR)/%, $(TEST_CASES))
-TABLE_TEST_EXES = $(OBJ_DIR)/table_test_table $(OBJ_DIR)/table_test_siphash $(OBJ_DIR)/table_test_aes $(OBJ_DIR)/table_test_table_noaes $(OBJ_DIR)/table_test_aes_noaes
+TABLE_TEST_EXES = $(OBJ_DIR)/table_test_multitable $(OBJ_DIR)/table_test_multitable_noaes $(OBJ_DIR)/table_test_table $(OBJ_DIR)/table_test_siphash $(OBJ_DIR)/table_test_aes $(OBJ_DIR)/table_test_table_noaes $(OBJ_DIR)/table_test_aes_noaes
 COV_EXES = $(TEST_EXES) $(TABLE_TEST_EXES)
 COV_OBJECTS = $(patsubst %,-object=%,$(wordlist 2,$(words $(COV_EXES)),$(COV_EXES)))
 
@@ -60,6 +60,12 @@ table-test: $(TABLE_TEST_EXES)
 		echo "Running $$exe"; \
 		./$$exe || exit 1; \
 	done
+
+$(OBJ_DIR)/table_test_multitable: $(TEST_DIR)/table/test_multitable.c $(SRC_DIR)/hwire_table.c $(SRC_DIR)/hwire_table.h $(SRC_DIR)/hwire_table_aes.h $(SRC_DIR)/hwire.h | $(OBJ_DIR)
+	$(CC) $(CFLAGS) $(NATIVE_TEST_FLAGS) $(LDFLAGS) -o $@ $(TEST_DIR)/table/test_multitable.c $(SRC_DIR)/hwire_table.c
+
+$(OBJ_DIR)/table_test_multitable_noaes: $(TEST_DIR)/table/test_multitable.c $(SRC_DIR)/hwire_table.c $(SRC_DIR)/hwire_table.h $(SRC_DIR)/hwire_table_aes.h $(SRC_DIR)/hwire.h | $(OBJ_DIR)
+	$(CC) $(CFLAGS) -DHWIRE_NO_AES $(LDFLAGS) -o $@ $(TEST_DIR)/table/test_multitable.c $(SRC_DIR)/hwire_table.c
 
 $(OBJ_DIR)/table_test_table: $(TEST_DIR)/table/test_table.c $(SRC_DIR)/hwire_table.c $(SRC_DIR)/hwire_table.h $(SRC_DIR)/hwire_table_aes.h $(SRC_DIR)/hwire.h | $(OBJ_DIR)
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(TEST_DIR)/table/test_table.c $(SRC_DIR)/hwire_table.c

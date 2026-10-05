@@ -77,14 +77,16 @@ typedef uint16_t hwire_table_mode_t;
 #define HWIRE_TABLE_CASE_INSENSITIVE UINT16_C(0x02)
 
 /** Table descriptor; initialize it before using any lookup or iteration API. */
-typedef struct {
+typedef struct hwire_table {
     hwire_kv_pair_t *entries;
     hwire_table_index_t *index;
     hwire_table_key_t key;
     uint16_t mask;
     uint16_t capacity;
     uint16_t len;
-    hwire_table_mode_t mode; /**< Validated indexing flags */
+    hwire_table_mode_t mode;  /**< Validated indexing flags */
+    struct hwire_table *next; /**< Next caller-owned segment, or NULL */
+    struct hwire_table *tail; /**< Last segment; authoritative at chain root */
 } hwire_table_t;
 
 /** Current pair position. Initialize with {0} for iteration.
@@ -92,12 +94,14 @@ typedef struct {
 typedef struct {
     const hwire_table_t *table;
     uint16_t index;
+    hwire_table_mode_t cached; /**< Comparison used for hash; zero if absent */
+    uint64_t hash; /**< Cached hash for crossing segments, selected by APIs */
 } hwire_table_iter_t;
 
 /** Results of operations that can reject an input or exhaust pair capacity. */
 typedef enum {
     HWIRE_TABLE_OK        = 0,
-    HWIRE_TABLE_EINVAL    = -1, /**< NULL argument or malformed pair slice */
+    HWIRE_TABLE_EINVAL    = -1, /**< Invalid argument, pair slice or link */
     HWIRE_TABLE_ECAPACITY = -2, /**< Unsupported initialization capacity */
     HWIRE_TABLE_EFULL     = -3  /**< Pair capacity already exhausted */
 } hwire_table_code_t;
@@ -135,7 +139,8 @@ void hwire_table_key_init(hwire_table_key_t *key, uint64_t seed);
  * on ARM or -march=native (or -maes -mssse3) on x86. Define HWIRE_NO_AES or
  * HWIRE_NO_SIMD to select SipHash-1-3. There is no runtime CPU check. On
  * invalid arguments the table, entries, and index are unchanged. A successful
- * reset invalidates prior pair and iterator results.
+ * reset invalidates prior pair and iterator results. Unlink all following
+ * segments before resetting a chain root; do not reset a linked segment.
  */
 hwire_table_code_t hwire_table_init(hwire_table_t *table,
                                     hwire_kv_pair_t *entries,
@@ -144,14 +149,44 @@ hwire_table_code_t hwire_table_init(hwire_table_t *table,
                                     hwire_table_mode_t mode);
 
 /**
+ * @brief Append an exclusively owned, standalone segment to a full chain.
+ * @param table Initialized chain root; its final segment must be full.
+ * @param next_table Initialized standalone segment with compatible storage.
+ * @return HWIRE_TABLE_OK or HWIRE_TABLE_EINVAL for NULL, self-link, nonfull
+ *         tail, already linked segment, or incompatible indexing storage.
+ *
+ * Single-index segments may use either comparison; dual-index segments may
+ * link only to dual-index chains. Copies the root key and mode, clears the
+ * appended index and resets its length. Pair bytes are left untouched.
+ * No allocation or reindexing occurs. Rejection changes neither descriptor.
+ * The caller must not link storage already owned by another chain. Operate on
+ * the chain root for push/link/unlink and do not reset linked descriptors.
+ * Link invalidates existing iterators.
+ */
+hwire_table_code_t hwire_table_link(hwire_table_t *table,
+                                    hwire_table_t *next_table);
+
+/**
+ * @brief Detach the segment immediately following the chain root.
+ * @param table Initialized chain root, or NULL.
+ * @return Detached standalone segment, or NULL if none follows.
+ *
+ * Reconnects the remaining suffix in constant time. Detached pairs and indexes
+ * remain readable; the caller owns their storage and may reuse or release it.
+ * Unlink invalidates existing iterators for the affected chain.
+ */
+hwire_table_t *hwire_table_unlink(hwire_table_t *table);
+
+/**
  * @brief Append a borrowed key/value pair to every enabled index.
- * @param table Initialized table.
+ * @param table Initialized chain root.
  * @param kv Non-NULL pair to copy by value. A nonempty slice needs a pointer.
  * @return HWIRE_TABLE_OK, HWIRE_TABLE_EINVAL for invalid arguments, or
  *         HWIRE_TABLE_EFULL when capacity has been exhausted.
  *
  * A failed push leaves the table unchanged. The caller retains ownership of
- * key and value bytes. Values are not normalized or combined.
+ * key and value bytes. Values are not normalized or combined. Inserts into the
+ * final segment; EFULL means that segment needs another linked segment.
  */
 hwire_table_code_t hwire_table_push(hwire_table_t *table,
                                     const hwire_kv_pair_t *kv);
@@ -167,7 +202,8 @@ hwire_table_code_t hwire_table_push(hwire_table_t *table,
  *         indexing was disabled during initialization.
  *
  * The table must be initialized; key must be non-NULL if keylen is nonzero.
- * Absence is an ordinary lookup result, not an error code.
+ * Absence is an ordinary lookup result, not an error code. Hashes once and
+ * searches following segments in insertion order.
  */
 const hwire_kv_pair_t *hwire_table_get(const hwire_table_t *table,
                                        const char *key, size_t keylen,
@@ -196,8 +232,10 @@ const hwire_kv_pair_t *hwire_table_get_ci(const hwire_table_t *table,
  * @return Next exact duplicate in push order, or NULL at the end or when exact
  *         indexing is disabled. Updates iter on success; otherwise unchanged.
  *
- * Uses the duplicate index without hashing. Comparison is selected by this
- * function regardless of how iter was obtained. Reset invalidates the cursor.
+ * Uses the local duplicate index; crossing segments reuses a cached hash or
+ * computes it once if absent or the comparison changed. Comparison is selected
+ * by this function regardless of how iter was obtained. Reset invalidates the
+ * cursor.
  */
 const hwire_kv_pair_t *hwire_table_next(hwire_table_iter_t *iter);
 
@@ -207,19 +245,20 @@ const hwire_kv_pair_t *hwire_table_next(hwire_table_iter_t *iter);
  * @return Next CI duplicate in push order, or NULL at the end or when CI
  *         indexing is disabled. Updates iter on success; otherwise unchanged.
  *
- * Uses the duplicate index without hashing. Only pairs after the current
- * position are considered; earlier CI matches are not revisited.
+ * Uses the local duplicate index and a cached hash across segments. Only pairs
+ * after the current position are considered; earlier CI matches are not
+ * revisited.
  */
 const hwire_kv_pair_t *hwire_table_next_ci(hwire_table_iter_t *iter);
 
 /**
  * @brief Visit every pair in push order, independently of key equality.
- * @param table Initialized table containing the cursor's current pair.
+ * @param table Initialized chain root containing the cursor's current pair.
  * @param iter Non-NULL position; initialize with {0} before the first call.
  * @return Next pair and updates iter, or NULL at the end without changing it.
  *
- * Appends become visible on later calls. A reset invalidates the cursor
- * position. The same cursor may be used for next/next_ci; iterate then
+ * Appends become visible on later calls. Link, unlink or reset invalidates the
+ * cursor position. The same cursor may be used for next/next_ci; iterate then
  * continues after its current pair.
  */
 const hwire_kv_pair_t *hwire_table_iterate(const hwire_table_t *table,
