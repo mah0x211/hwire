@@ -960,27 +960,52 @@ The argument may be evaluated multiple times; do not pass an expression with
 side effects.
 
 ```c
-HWIRE_TABLE_INDEX_CAPACITY(capacity)
-HWIRE_TABLE_INDEX_BOTH_CAPACITY(capacity)
+typedef enum {
+    HWIRE_TABLE_SLOTS_CAP_2N  = 2,
+    HWIRE_TABLE_SLOTS_CAP_4N  = 4,
+    HWIRE_TABLE_SLOTS_CAP_8N  = 8
+} hwire_table_slots_capacity_t;
 ```
 
-Return the number of `hwire_table_index_t` elements required for a supported
-pair capacity, not the number of bytes. These macros do not round or validate
-the capacity. Use `HWIRE_TABLE_INDEX_CAPACITY` for either exact-only or CI-only
-lookup, and `HWIRE_TABLE_INDEX_BOTH_CAPACITY` when both flags are enabled.
+Select the number of hash slots relative to pair capacity for each enabled
+index. More slots lower occupancy and can shorten the probe sequences used
+by insertion and key lookup. With distinct keys filling the pair array,
+2N, 4N, and 8N have slot occupancies of 50%, 25%, and 12.5%, respectively.
+
+The tradeoff is a larger index array and more work to clear it during
+initialization and linking. A larger slot capacity does not guarantee better
+performance: the benefit depends on key count, occupancy, and cache behavior.
+Choose the slot capacity using measurements of your workload, including table
+construction and the expected number of key lookups.
+
+```c
+HWIRE_TABLE_INDEX_CAPACITY(capacity, slots_capacity)
+HWIRE_TABLE_INDEX_BOTH_CAPACITY(capacity, slots_capacity)
+```
+
+Return the number of `hwire_table_index_t` elements required, not the number
+of bytes. Both arguments must be supported values; the macros do not round or
+validate them. Use the single-index macro for exact-only or CI-only lookup,
+and the both-index macro when both flags are enabled. Use the same slot
+capacity when allocating the index array and initializing the table.
+
+Let `N` be the pair capacity and `S` the selected slot multiplier.
 
 | Macro | Elements | Layout |
 |---|---:|---|
-| `HWIRE_TABLE_INDEX_CAPACITY(capacity)` | `4 * capacity` | `2N` hash slots, `N` duplicate-next references, `N` duplicate-tail references |
-| `HWIRE_TABLE_INDEX_BOTH_CAPACITY(capacity)` | `8 * capacity` | One layout for exact lookup and one for CI lookup |
+| `HWIRE_TABLE_INDEX_CAPACITY(N, S)` | `(S + 2) * N` | `S * N` hash slots, `N` duplicate-next references, `N` duplicate-tail references |
+| `HWIRE_TABLE_INDEX_BOTH_CAPACITY(N, S)` | `2 * (S + 2) * N` | One layout for exact lookup and one for CI lookup |
 
-`HWIRE_TABLE_INDEX_FACTOR` is `4u`, the sum of the single-index regions above.
-`HWIRE_TABLE_INDEX_BOTH_FACTOR` is twice that factor, for two indexes.
+`HWIRE_TABLE_INDEX_FACTOR(slots_capacity)` is the slot multiplier plus `2u`,
+for the duplicate-next and duplicate-tail regions.
+`HWIRE_TABLE_INDEX_BOTH_FACTOR(slots_capacity)` is twice that factor.
 
 ```c
 enum { CAPACITY = HWIRE_TABLE_CAPACITY(100) };
 hwire_kv_pair_t entries[CAPACITY];
-hwire_table_index_t index[HWIRE_TABLE_INDEX_CAPACITY(CAPACITY)];
+hwire_table_index_t index[
+    HWIRE_TABLE_INDEX_CAPACITY(CAPACITY, HWIRE_TABLE_SLOTS_CAP_4N)
+];
 ```
 
 ```c
@@ -993,20 +1018,25 @@ secret key material can populate the two `key.words` elements from their
 random source.
 
 ```c
-hwire_table_code_t hwire_table_init(hwire_table_t *table,
-                                    hwire_kv_pair_t *entries,
-                                    hwire_table_index_t *index,
-                                    size_t capacity,
-                                    const hwire_table_key_t *key,
-                                    hwire_table_mode_t mode);
+hwire_table_code_t hwire_table_init(
+    hwire_table_t *table,
+    const hwire_table_key_t *key,
+    hwire_table_mode_t mode,
+    hwire_kv_pair_t *entries,
+    size_t capacity,
+    hwire_table_index_t *index,
+    hwire_table_slots_capacity_t slots_capacity);
 ```
 
 Initialize or reset a table and copy the key. All pointers must be non-NULL.
 The pair array must hold at least `capacity` elements. The index array must use
 the single-index capacity macro for either single mode, and the both-index
-capacity macro when both flags are set. Zero or unknown mode bits return
-`HWIRE_TABLE_EINVAL`. Initialization clears the complete index array for the
-selected mode and leaves the pair array unchanged. Return
+capacity macro when both flags are set. Zero or unknown mode bits and
+unsupported slot capacities return
+`HWIRE_TABLE_EINVAL`. The pair capacity must be a power of two in [1, 32768];
+unsupported pair capacities return `HWIRE_TABLE_ECAPACITY`. Initialization
+clears the complete index array for the
+selected mode and slot capacity and leaves the pair array unchanged. Return
 `HWIRE_TABLE_OK`, `HWIRE_TABLE_EINVAL`, or `HWIRE_TABLE_ECAPACITY`. Invalid
 arguments leave the table and both arrays unchanged. Unlink all following
 segments before resetting a chain root; do not reset linked segments.
@@ -1021,7 +1051,8 @@ Link an initialized, exclusively owned standalone segment to a chain whose
 final segment is full. Single-index segments are compatible with either
 single comparison mode; dual-index segments require dual-index storage.
 Link copies the root key and mode, clears the appended index and resets its
-length without modifying pair bytes. Return `HWIRE_TABLE_OK` or
+length without modifying pair bytes. Each segment keeps its selected slot count;
+segments may use different slot capacities. Return `HWIRE_TABLE_OK` or
 `HWIRE_TABLE_EINVAL`; rejection leaves both tables unchanged. All storage
 remains caller-owned, and no allocation or rehashing occurs.
 
@@ -1142,9 +1173,11 @@ typedef struct {
     hwire_kv_pair_t header_entries[HEADER_CAPACITY];
     hwire_kv_pair_t query_entries[QUERY_CAPACITY];
     hwire_table_index_t
-        header_index[HWIRE_TABLE_INDEX_CAPACITY(HEADER_CAPACITY)];
+        header_index[HWIRE_TABLE_INDEX_CAPACITY(
+            HEADER_CAPACITY, HWIRE_TABLE_SLOTS_CAP_2N)];
     hwire_table_index_t
-        query_index[HWIRE_TABLE_INDEX_CAPACITY(QUERY_CAPACITY)];
+        query_index[HWIRE_TABLE_INDEX_CAPACITY(
+            QUERY_CAPACITY, HWIRE_TABLE_SLOTS_CAP_2N)];
     char query_storage[256];
     hwire_table_code_t table_result;
     int query_result;
@@ -1193,10 +1226,12 @@ int main(void)
     app.query_result = HWIRE_OK;
     hwire_table_key_t key;
     hwire_table_key_init(&key, 42); /* deterministic example seed */
-    if (hwire_table_init(&app.headers, app.header_entries, app.header_index,
-                         HEADER_CAPACITY, &key, HWIRE_TABLE_CASE_INSENSITIVE) != HWIRE_TABLE_OK ||
-        hwire_table_init(&app.query_params, app.query_entries, app.query_index,
-                         QUERY_CAPACITY, &key, HWIRE_TABLE_CASE_SENSITIVE) != HWIRE_TABLE_OK) {
+    if (hwire_table_init(&app.headers, &key, HWIRE_TABLE_CASE_INSENSITIVE,
+                         app.header_entries, HEADER_CAPACITY, app.header_index,
+                         HWIRE_TABLE_SLOTS_CAP_2N) != HWIRE_TABLE_OK ||
+        hwire_table_init(&app.query_params, &key, HWIRE_TABLE_CASE_SENSITIVE,
+                         app.query_entries, QUERY_CAPACITY, app.query_index,
+                         HWIRE_TABLE_SLOTS_CAP_2N) != HWIRE_TABLE_OK) {
         return 1;
     }
 

@@ -8,7 +8,8 @@ enum {
     CAP = HWIRE_TABLE_CAPACITY(3)
 };
 static hwire_kv_pair_t entries[CAP];
-static hwire_table_index_t index_storage[HWIRE_TABLE_INDEX_BOTH_CAPACITY(CAP)];
+static hwire_table_index_t index_storage[HWIRE_TABLE_INDEX_BOTH_CAPACITY(
+    CAP, HWIRE_TABLE_SLOTS_CAP_2N)];
 static hwire_table_t table;
 
 static hwire_kv_pair_t pair(const char *key, size_t keylen, const char *value,
@@ -30,7 +31,7 @@ static const hwire_kv_pair_t *push(hwire_table_t *target,
 }
 
 static const hwire_kv_pair_t *next_from(const hwire_table_t *target,
-                                         const hwire_kv_pair_t *current, int ci)
+                                        const hwire_kv_pair_t *current, int ci)
 {
     hwire_table_iter_t iter = {.table = NULL};
     if (!current) {
@@ -48,9 +49,11 @@ static void init(void)
 {
     hwire_table_key_t key;
     hwire_table_key_init(&key, UINT64_C(12345));
-    assert(hwire_table_init(&table, entries, index_storage, CAP, &key,
-                            (HWIRE_TABLE_CASE_SENSITIVE |
-                             HWIRE_TABLE_CASE_INSENSITIVE)) == HWIRE_TABLE_OK);
+    assert(hwire_table_init(
+               &table, &key,
+               (HWIRE_TABLE_CASE_SENSITIVE | HWIRE_TABLE_CASE_INSENSITIVE),
+               entries, CAP, index_storage,
+               HWIRE_TABLE_SLOTS_CAP_2N) == HWIRE_TABLE_OK);
 }
 
 static void test_capacity(void)
@@ -62,8 +65,10 @@ static void test_capacity(void)
     assert(HWIRE_TABLE_CAPACITY(32768) == 32768);
     assert(HWIRE_TABLE_CAPACITY(32769) == 0);
     assert(sizeof(hwire_table_index_t) == 2u);
-    assert(HWIRE_TABLE_INDEX_CAPACITY(CAP) == (size_t)CAP * 4u);
-    assert(HWIRE_TABLE_INDEX_BOTH_CAPACITY(CAP) == (size_t)CAP * 8u);
+    assert(HWIRE_TABLE_INDEX_CAPACITY(CAP, HWIRE_TABLE_SLOTS_CAP_2N) ==
+           (size_t)CAP * 4u);
+    assert(HWIRE_TABLE_INDEX_BOTH_CAPACITY(CAP, HWIRE_TABLE_SLOTS_CAP_2N) ==
+           (size_t)CAP * 8u);
 
     hwire_table_key_t key = {
         {1, 2}
@@ -75,42 +80,52 @@ static void test_capacity(void)
     hwire_kv_pair_t entry_before = entries[0];
     index_storage[0]             = UINT16_C(0x5a5a);
     assert(hwire_table_init(
-               &table, entries, index_storage, 3, &key,
-               (HWIRE_TABLE_CASE_SENSITIVE | HWIRE_TABLE_CASE_INSENSITIVE)) ==
-           HWIRE_TABLE_ECAPACITY);
+               &table, &key,
+               (HWIRE_TABLE_CASE_SENSITIVE | HWIRE_TABLE_CASE_INSENSITIVE),
+               entries, 3, index_storage,
+               HWIRE_TABLE_SLOTS_CAP_2N) == HWIRE_TABLE_ECAPACITY);
     assert(hwire_table_init(
-               &table, entries, index_storage, 0, &key,
-               (HWIRE_TABLE_CASE_SENSITIVE | HWIRE_TABLE_CASE_INSENSITIVE)) ==
-           HWIRE_TABLE_ECAPACITY);
+               &table, &key,
+               (HWIRE_TABLE_CASE_SENSITIVE | HWIRE_TABLE_CASE_INSENSITIVE),
+               entries, 0, index_storage,
+               HWIRE_TABLE_SLOTS_CAP_2N) == HWIRE_TABLE_ECAPACITY);
     assert(hwire_table_init(
-               &table, entries, index_storage, 32769, &key,
-               (HWIRE_TABLE_CASE_SENSITIVE | HWIRE_TABLE_CASE_INSENSITIVE)) ==
-           HWIRE_TABLE_ECAPACITY);
+               &table, &key,
+               (HWIRE_TABLE_CASE_SENSITIVE | HWIRE_TABLE_CASE_INSENSITIVE),
+               entries, 32769, index_storage,
+               HWIRE_TABLE_SLOTS_CAP_2N) == HWIRE_TABLE_ECAPACITY);
     assert(hwire_table_init(
-               NULL, entries, index_storage, CAP, &key,
-               (HWIRE_TABLE_CASE_SENSITIVE | HWIRE_TABLE_CASE_INSENSITIVE)) ==
-           HWIRE_TABLE_EINVAL);
+               NULL, &key,
+               (HWIRE_TABLE_CASE_SENSITIVE | HWIRE_TABLE_CASE_INSENSITIVE),
+               entries, CAP, index_storage,
+               HWIRE_TABLE_SLOTS_CAP_2N) == HWIRE_TABLE_EINVAL);
     assert(hwire_table_init(
-               &table, NULL, index_storage, CAP, &key,
-               (HWIRE_TABLE_CASE_SENSITIVE | HWIRE_TABLE_CASE_INSENSITIVE)) ==
-           HWIRE_TABLE_EINVAL);
+               &table, &key,
+               (HWIRE_TABLE_CASE_SENSITIVE | HWIRE_TABLE_CASE_INSENSITIVE),
+               NULL, CAP, index_storage,
+               HWIRE_TABLE_SLOTS_CAP_2N) == HWIRE_TABLE_EINVAL);
     assert(hwire_table_init(
-               &table, entries, NULL, CAP, &key,
-               (HWIRE_TABLE_CASE_SENSITIVE | HWIRE_TABLE_CASE_INSENSITIVE)) ==
-           HWIRE_TABLE_EINVAL);
+               &table, &key,
+               (HWIRE_TABLE_CASE_SENSITIVE | HWIRE_TABLE_CASE_INSENSITIVE),
+               entries, CAP, NULL,
+               HWIRE_TABLE_SLOTS_CAP_2N) == HWIRE_TABLE_EINVAL);
     assert(hwire_table_init(
-               &table, entries, index_storage, CAP, NULL,
-               (HWIRE_TABLE_CASE_SENSITIVE | HWIRE_TABLE_CASE_INSENSITIVE)) ==
-           HWIRE_TABLE_EINVAL);
-    assert(hwire_table_init(&table, entries, index_storage, CAP, &key,
-                            (hwire_table_mode_t)42) == HWIRE_TABLE_EINVAL);
-    assert(hwire_table_init(&table, entries, index_storage, CAP, &key,
-                            (hwire_table_mode_t)-1) == HWIRE_TABLE_EINVAL);
-    assert(hwire_table_init(&table, entries, index_storage, CAP, &key, 0) ==
-           HWIRE_TABLE_EINVAL);
-    assert(hwire_table_init(&table, entries, index_storage, CAP, &key,
-                            HWIRE_TABLE_CASE_SENSITIVE | UINT16_C(0x04)) ==
-           HWIRE_TABLE_EINVAL);
+               &table, NULL,
+               (HWIRE_TABLE_CASE_SENSITIVE | HWIRE_TABLE_CASE_INSENSITIVE),
+               entries, CAP, index_storage,
+               HWIRE_TABLE_SLOTS_CAP_2N) == HWIRE_TABLE_EINVAL);
+    assert(hwire_table_init(&table, &key, (hwire_table_mode_t)42, entries, CAP,
+                            index_storage,
+                            HWIRE_TABLE_SLOTS_CAP_2N) == HWIRE_TABLE_EINVAL);
+    assert(hwire_table_init(&table, &key, (hwire_table_mode_t)-1, entries, CAP,
+                            index_storage,
+                            HWIRE_TABLE_SLOTS_CAP_2N) == HWIRE_TABLE_EINVAL);
+    assert(hwire_table_init(&table, &key, 0, entries, CAP, index_storage,
+                            HWIRE_TABLE_SLOTS_CAP_2N) == HWIRE_TABLE_EINVAL);
+    assert(hwire_table_init(&table, &key,
+                            HWIRE_TABLE_CASE_SENSITIVE | UINT16_C(0x04),
+                            entries, CAP, index_storage,
+                            HWIRE_TABLE_SLOTS_CAP_2N) == HWIRE_TABLE_EINVAL);
     assert(memcmp(&table, &table_before, sizeof table) == 0);
     assert(memcmp(&entries[0], &entry_before, sizeof entry_before) == 0);
     assert(index_storage[0] == UINT16_C(0x5a5a));
@@ -130,8 +145,12 @@ static void test_index_modes_and_initialization(void)
     const hwire_table_index_t marker = UINT16_C(0x5a5a);
     hwire_kv_pair_t storage[N];
     hwire_kv_pair_t before[N];
-    hwire_table_index_t exact_index[HWIRE_TABLE_INDEX_CAPACITY(N) + 2u];
-    hwire_table_index_t ci_index[HWIRE_TABLE_INDEX_BOTH_CAPACITY(N) + 2u];
+    hwire_table_index_t
+        exact_index[HWIRE_TABLE_INDEX_CAPACITY(N, HWIRE_TABLE_SLOTS_CAP_2N) +
+                    2u];
+    hwire_table_index_t
+        ci_index[HWIRE_TABLE_INDEX_BOTH_CAPACITY(N, HWIRE_TABLE_SLOTS_CAP_2N) +
+                 2u];
     hwire_table_key_t key = {
         {11, 29}
     };
@@ -141,17 +160,22 @@ static void test_index_modes_and_initialization(void)
         storage[i] = pair("unchanged", 9, "value", 5);
         before[i]  = storage[i];
     }
-    for (size_t i = 0; i < HWIRE_TABLE_INDEX_CAPACITY(N) + 2u; ++i) {
+    for (size_t i = 0;
+         i < HWIRE_TABLE_INDEX_CAPACITY(N, HWIRE_TABLE_SLOTS_CAP_2N) + 2u;
+         ++i) {
         exact_index[i] = marker;
     }
 
-    assert(hwire_table_init(&t, storage, exact_index + 1, N, &key,
-                            HWIRE_TABLE_CASE_SENSITIVE) == HWIRE_TABLE_OK);
+    assert(hwire_table_init(&t, &key, HWIRE_TABLE_CASE_SENSITIVE, storage, N,
+                            exact_index + 1,
+                            HWIRE_TABLE_SLOTS_CAP_2N) == HWIRE_TABLE_OK);
     assert(t.mode == HWIRE_TABLE_CASE_SENSITIVE);
     assert(memcmp(storage, before, sizeof storage) == 0);
     assert(exact_index[0] == marker);
-    assert(exact_index[HWIRE_TABLE_INDEX_CAPACITY(N) + 1u] == marker);
-    for (size_t i = 0; i < HWIRE_TABLE_INDEX_CAPACITY(N); ++i) {
+    assert(exact_index[HWIRE_TABLE_INDEX_CAPACITY(N, HWIRE_TABLE_SLOTS_CAP_2N) +
+                       1u] == marker);
+    for (size_t i = 0;
+         i < HWIRE_TABLE_INDEX_CAPACITY(N, HWIRE_TABLE_SLOTS_CAP_2N); ++i) {
         assert(exact_index[i + 1u] == 0);
     }
 
@@ -165,17 +189,25 @@ static void test_index_modes_and_initialization(void)
     assert(hwire_table_get_ci(&t, "FOO", 3, NULL) == NULL);
     assert(next_from(&t, first, 1) == NULL);
 
-    for (size_t i = 0; i < HWIRE_TABLE_INDEX_BOTH_CAPACITY(N) + 2u; ++i) {
+    for (size_t i = 0;
+         i < HWIRE_TABLE_INDEX_BOTH_CAPACITY(N, HWIRE_TABLE_SLOTS_CAP_2N) + 2u;
+         ++i) {
         ci_index[i] = marker;
     }
-    assert(hwire_table_init(&t, storage, ci_index + 1, N, &key,
-                            (HWIRE_TABLE_CASE_SENSITIVE |
-                             HWIRE_TABLE_CASE_INSENSITIVE)) == HWIRE_TABLE_OK);
+    assert(hwire_table_init(
+               &t, &key,
+               (HWIRE_TABLE_CASE_SENSITIVE | HWIRE_TABLE_CASE_INSENSITIVE),
+               storage, N, ci_index + 1,
+               HWIRE_TABLE_SLOTS_CAP_2N) == HWIRE_TABLE_OK);
     assert(t.mode ==
            (HWIRE_TABLE_CASE_SENSITIVE | HWIRE_TABLE_CASE_INSENSITIVE));
     assert(ci_index[0] == marker);
-    assert(ci_index[HWIRE_TABLE_INDEX_BOTH_CAPACITY(N) + 1u] == marker);
-    for (size_t i = 0; i < HWIRE_TABLE_INDEX_BOTH_CAPACITY(N); ++i) {
+    assert(
+        ci_index[HWIRE_TABLE_INDEX_BOTH_CAPACITY(N, HWIRE_TABLE_SLOTS_CAP_2N) +
+                 1u] == marker);
+    for (size_t i = 0;
+         i < HWIRE_TABLE_INDEX_BOTH_CAPACITY(N, HWIRE_TABLE_SLOTS_CAP_2N);
+         ++i) {
         assert(ci_index[i + 1u] == 0);
     }
 }
@@ -217,7 +249,8 @@ static void test_chains(void)
     assert(hwire_table_iterate(&table, &it) == eb);
     assert(hwire_table_iterate(&table, &it) == ec);
     assert(hwire_table_iterate(&table, &it) == ed);
-    assert(hwire_table_iterate(&table, &it) == NULL && it.table == &table && it.index == CAP - 1u);
+    assert(hwire_table_iterate(&table, &it) == NULL && it.table == &table &&
+           it.index == CAP - 1u);
     hwire_kv_pair_t overflow = pair("baz", 3, "E", 1);
     assert(hwire_table_push(&table, &overflow) == HWIRE_TABLE_EFULL);
     assert(table.len == CAP);
@@ -263,12 +296,13 @@ static void test_full_unique(hwire_table_mode_t mode)
         N = 512
     };
     hwire_kv_pair_t storage[N];
-    hwire_table_index_t storage_index[HWIRE_TABLE_INDEX_BOTH_CAPACITY(N)];
+    hwire_table_index_t storage_index[HWIRE_TABLE_INDEX_BOTH_CAPACITY(
+        N, HWIRE_TABLE_SLOTS_CAP_2N)];
     hwire_table_t t;
     hwire_table_key_t key;
     hwire_table_key_init(&key, 19);
-    assert(hwire_table_init(&t, storage, storage_index, N, &key, mode) ==
-           HWIRE_TABLE_OK);
+    assert(hwire_table_init(&t, &key, mode, storage, N, storage_index,
+                            HWIRE_TABLE_SLOTS_CAP_2N) == HWIRE_TABLE_OK);
     char names[N][8];
     for (unsigned i = 0; i < N; ++i) {
         int len = snprintf(names[i], sizeof names[i], "k%04u", i);
@@ -293,14 +327,16 @@ static void test_max_capacity(void)
         N = 32768
     };
     static hwire_kv_pair_t storage[N];
-    static hwire_table_index_t storage_index[HWIRE_TABLE_INDEX_CAPACITY(N)];
+    static hwire_table_index_t
+        storage_index[HWIRE_TABLE_INDEX_CAPACITY(N, HWIRE_TABLE_SLOTS_CAP_2N)];
     static uint16_t keys[N];
     hwire_table_t t;
     hwire_table_key_t key;
 
     hwire_table_key_init(&key, 23);
-    assert(hwire_table_init(&t, storage, storage_index, N, &key,
-                            HWIRE_TABLE_CASE_SENSITIVE) == HWIRE_TABLE_OK);
+    assert(hwire_table_init(&t, &key, HWIRE_TABLE_CASE_SENSITIVE, storage, N,
+                            storage_index,
+                            HWIRE_TABLE_SLOTS_CAP_2N) == HWIRE_TABLE_OK);
     assert(t.mask == UINT16_MAX);
 
     for (uint32_t i = 0; i < N; ++i) {
@@ -313,10 +349,10 @@ static void test_max_capacity(void)
     assert(t.len == N);
     assert(hwire_table_get(&t, (const char *)&keys[0], sizeof keys[0], NULL) ==
            &storage[0]);
-    assert(hwire_table_get(&t, (const char *)&keys[N / 2],
-                           sizeof keys[N / 2], NULL) == &storage[N / 2]);
-    assert(hwire_table_get(&t, (const char *)&keys[N - 1],
-                           sizeof keys[N - 1], NULL) == &storage[N - 1]);
+    assert(hwire_table_get(&t, (const char *)&keys[N / 2], sizeof keys[N / 2],
+                           NULL) == &storage[N / 2]);
+    assert(hwire_table_get(&t, (const char *)&keys[N - 1], sizeof keys[N - 1],
+                           NULL) == &storage[N - 1]);
     hwire_table_iter_t iter = {.table = NULL};
     assert(hwire_table_get(&t, (const char *)&keys[N - 1], sizeof keys[0],
                            &iter) == &storage[N - 1]);
@@ -324,20 +360,22 @@ static void test_max_capacity(void)
     assert(hwire_table_next(&iter) == NULL);
     assert(hwire_table_iterate(&t, &iter) == NULL);
     assert(iter.index == N - 1u);
-
 }
 
 static void test_capacity_one_and_invalid_push(void)
 {
     hwire_kv_pair_t storage[1];
-    hwire_table_index_t storage_index[HWIRE_TABLE_INDEX_BOTH_CAPACITY(1)];
+    hwire_table_index_t storage_index[HWIRE_TABLE_INDEX_BOTH_CAPACITY(
+        1, HWIRE_TABLE_SLOTS_CAP_2N)];
     hwire_table_t t;
     hwire_table_key_t key = {
         {0, 1}
     };
-    assert(hwire_table_init(&t, storage, storage_index, 1, &key,
-                            (HWIRE_TABLE_CASE_SENSITIVE |
-                             HWIRE_TABLE_CASE_INSENSITIVE)) == HWIRE_TABLE_OK);
+    assert(hwire_table_init(
+               &t, &key,
+               (HWIRE_TABLE_CASE_SENSITIVE | HWIRE_TABLE_CASE_INSENSITIVE),
+               storage, 1, storage_index,
+               HWIRE_TABLE_SLOTS_CAP_2N) == HWIRE_TABLE_OK);
     hwire_kv_pair_t invalid = pair(NULL, 1, NULL, 0);
     assert(hwire_table_push(NULL, &invalid) == HWIRE_TABLE_EINVAL);
     assert(hwire_table_push(&t, NULL) == HWIRE_TABLE_EINVAL);
@@ -354,10 +392,13 @@ static void test_capacity_one_and_invalid_push(void)
     assert(t.len == 1);
     hwire_table_iter_t iter = {.table = NULL};
     assert(hwire_table_iterate(&t, &iter) == &storage[0]);
-    assert(hwire_table_iterate(&t, &iter) == NULL && iter.table == &t && iter.index == 0);
-    assert(hwire_table_init(&t, storage, storage_index, 1, &key,
-                            (HWIRE_TABLE_CASE_SENSITIVE |
-                             HWIRE_TABLE_CASE_INSENSITIVE)) == HWIRE_TABLE_OK);
+    assert(hwire_table_iterate(&t, &iter) == NULL && iter.table == &t &&
+           iter.index == 0);
+    assert(hwire_table_init(
+               &t, &key,
+               (HWIRE_TABLE_CASE_SENSITIVE | HWIRE_TABLE_CASE_INSENSITIVE),
+               storage, 1, storage_index,
+               HWIRE_TABLE_SLOTS_CAP_2N) == HWIRE_TABLE_OK);
     assert(hwire_table_push(&t, &good) == HWIRE_TABLE_OK);
     assert(hwire_table_get(&t, "x", 1, NULL) == &storage[0]);
 }
@@ -368,15 +409,18 @@ static void test_reference_groups(void)
         N = 128
     };
     hwire_kv_pair_t storage[N];
-    hwire_table_index_t storage_index[HWIRE_TABLE_INDEX_BOTH_CAPACITY(N)];
+    hwire_table_index_t storage_index[HWIRE_TABLE_INDEX_BOTH_CAPACITY(
+        N, HWIRE_TABLE_SLOTS_CAP_2N)];
     hwire_table_t t;
     hwire_table_key_t key = {
         {5, 9}
     };
     char names[N][4];
-    assert(hwire_table_init(&t, storage, storage_index, N, &key,
-                            (HWIRE_TABLE_CASE_SENSITIVE |
-                             HWIRE_TABLE_CASE_INSENSITIVE)) == HWIRE_TABLE_OK);
+    assert(hwire_table_init(
+               &t, &key,
+               (HWIRE_TABLE_CASE_SENSITIVE | HWIRE_TABLE_CASE_INSENSITIVE),
+               storage, N, storage_index,
+               HWIRE_TABLE_SLOTS_CAP_2N) == HWIRE_TABLE_OK);
     for (unsigned i = 0; i < N; ++i) {
         names[i][0] = i % 3u == 0 ? 'K' : 'k';
         int length  = snprintf(names[i] + 1, 3, "%02u", i % 23u);
@@ -386,9 +430,11 @@ static void test_reference_groups(void)
     }
     for (unsigned q = 0; q < N; ++q) {
         hwire_table_iter_t exact_iter = {.table = NULL};
-        hwire_table_iter_t ci_iter = {.table = NULL};
-        const hwire_kv_pair_t *exact = hwire_table_get(&t, names[q], 3, &exact_iter);
-        const hwire_kv_pair_t *ci    = hwire_table_get_ci(&t, names[q], 3, &ci_iter);
+        hwire_table_iter_t ci_iter    = {.table = NULL};
+        const hwire_kv_pair_t *exact =
+            hwire_table_get(&t, names[q], 3, &exact_iter);
+        const hwire_kv_pair_t *ci =
+            hwire_table_get_ci(&t, names[q], 3, &ci_iter);
         for (unsigned j = 0; j < N; ++j) {
             int same_group = memcmp(names[q] + 1, names[j] + 1, 2) == 0;
             if (same_group && names[q][0] == names[j][0]) {
@@ -439,7 +485,8 @@ static void test_ci_only(void)
     };
     const hwire_table_index_t marker = UINT16_C(0x5a5a);
     hwire_kv_pair_t storage[N];
-    hwire_table_index_t indexes[HWIRE_TABLE_INDEX_CAPACITY(N) + 2u];
+    hwire_table_index_t
+        indexes[HWIRE_TABLE_INDEX_CAPACITY(N, HWIRE_TABLE_SLOTS_CAP_2N) + 2u];
     hwire_table_t t;
     hwire_table_key_t key = {
         {5, 9}
@@ -463,15 +510,18 @@ static void test_ci_only(void)
     for (size_t i = 0; i < sizeof indexes / sizeof indexes[0]; i++) {
         indexes[i] = marker;
     }
-    assert(hwire_table_init(&t, storage, indexes + 1, N, &key,
-                            HWIRE_TABLE_CASE_INSENSITIVE) == HWIRE_TABLE_OK);
+    assert(hwire_table_init(&t, &key, HWIRE_TABLE_CASE_INSENSITIVE, storage, N,
+                            indexes + 1,
+                            HWIRE_TABLE_SLOTS_CAP_2N) == HWIRE_TABLE_OK);
     assert(t.mode == HWIRE_TABLE_CASE_INSENSITIVE);
-    for (size_t i = 0; i < HWIRE_TABLE_INDEX_CAPACITY(N); i++) {
+    for (size_t i = 0;
+         i < HWIRE_TABLE_INDEX_CAPACITY(N, HWIRE_TABLE_SLOTS_CAP_2N); i++) {
         assert(indexes[i + 1u] == 0);
     }
     for (size_t i = 0; i < N; i++) {
         assert(push(&t, &input[i]) == &storage[i]);
-        assert(hwire_table_get(&t, input[i].key.ptr, input[i].key.len, NULL) == NULL);
+        assert(hwire_table_get(&t, input[i].key.ptr, input[i].key.len, NULL) ==
+               NULL);
         assert(next_from(&t, &storage[i], 0) == NULL);
     }
     assert(hwire_table_get_ci(&t, "FOO", 3, NULL) == &storage[0]);
@@ -496,9 +546,12 @@ static void test_ci_only(void)
     }
     assert(hwire_table_iterate(&t, &it) == NULL);
     assert(indexes[0] == marker);
-    assert(indexes[HWIRE_TABLE_INDEX_CAPACITY(N) + 1u] == marker);
-    assert(hwire_table_init(&t, storage, indexes + 1, N, &t.key,
-                            HWIRE_TABLE_CASE_INSENSITIVE) == HWIRE_TABLE_OK);
+    assert(
+        indexes[HWIRE_TABLE_INDEX_CAPACITY(N, HWIRE_TABLE_SLOTS_CAP_2N) + 1u] ==
+        marker);
+    assert(hwire_table_init(&t, &t.key, HWIRE_TABLE_CASE_INSENSITIVE, storage,
+                            N, indexes + 1,
+                            HWIRE_TABLE_SLOTS_CAP_2N) == HWIRE_TABLE_OK);
     assert(hwire_table_get_ci(&t, "FOO", 3, NULL) == NULL);
     input[0] = pair(high, sizeof high, NULL, 0);
     assert(push(&t, &input[0]) == &storage[0]);
@@ -507,8 +560,9 @@ static void test_ci_only(void)
     assert(hwire_table_get_ci(&t, other_high, sizeof other_high, NULL) == NULL);
     /* Reusing the same compact region as an exact index must not retain CI
      * data. */
-    assert(hwire_table_init(&t, storage, indexes + 1, N, &t.key,
-                            HWIRE_TABLE_CASE_SENSITIVE) == HWIRE_TABLE_OK);
+    assert(hwire_table_init(&t, &t.key, HWIRE_TABLE_CASE_SENSITIVE, storage, N,
+                            indexes + 1,
+                            HWIRE_TABLE_SLOTS_CAP_2N) == HWIRE_TABLE_OK);
     assert(push(&t, &input[0]) == &storage[0]);
     assert(hwire_table_get(&t, high, sizeof high, NULL) == &storage[0]);
     assert(hwire_table_get(&t, high_lower, sizeof high_lower, NULL) == NULL);
@@ -542,34 +596,42 @@ static void test_cursor(void)
     assert(hwire_table_next(&iter) == &entries[2]);
     assert(hwire_table_get(&table, "absent", 6, &iter) == NULL);
     assert(iter.table == NULL && iter.index == 0);
-    assert(hwire_table_next(&iter) == NULL && hwire_table_next_ci(&iter) == NULL);
+    assert(hwire_table_next(&iter) == NULL &&
+           hwire_table_next_ci(&iter) == NULL);
     assert(hwire_table_iterate(&table, &iter) == &entries[0]);
     assert(hwire_table_next_ci(&iter) == &entries[1]);
     assert(hwire_table_iterate(&table, &iter) == &entries[2]);
     assert(hwire_table_get(&table, "foo", 3, &iter) == &entries[0]);
     assert(hwire_table_iterate(&table, &iter) == &entries[1]);
-    while (hwire_table_iterate(&table, &iter)) {
-    }
+    while (hwire_table_iterate(&table, &iter)) {}
     assert(iter.index == 3 && iter.table == &table);
-    assert(hwire_table_get(NULL, "foo", 3, &iter) == NULL && iter.table == NULL);
-    assert(hwire_table_get(&table, NULL, 1, &iter) == NULL && iter.table == NULL);
-    assert(hwire_table_get_ci(&table, NULL, 1, &iter) == NULL && iter.table == NULL);
-    assert(hwire_table_get_ci(&table, "missing", 7, &iter) == NULL && iter.table == NULL);
+    assert(hwire_table_get(NULL, "foo", 3, &iter) == NULL &&
+           iter.table == NULL);
+    assert(hwire_table_get(&table, NULL, 1, &iter) == NULL &&
+           iter.table == NULL);
+    assert(hwire_table_get_ci(&table, NULL, 1, &iter) == NULL &&
+           iter.table == NULL);
+    assert(hwire_table_get_ci(&table, "missing", 7, &iter) == NULL &&
+           iter.table == NULL);
     hwire_table_key_t key = table.key;
-    assert(hwire_table_init(&table, entries, index_storage, CAP, &key,
-                            HWIRE_TABLE_CASE_SENSITIVE) == HWIRE_TABLE_OK);
+    assert(hwire_table_init(&table, &key, HWIRE_TABLE_CASE_SENSITIVE, entries,
+                            CAP, index_storage,
+                            HWIRE_TABLE_SLOTS_CAP_2N) == HWIRE_TABLE_OK);
     assert(push(&table, &a) == &entries[0]);
     assert(hwire_table_get(&table, "foo", 3, &iter) == &entries[0]);
     assert(hwire_table_next_ci(&iter) == NULL);
     assert(iter.index == 0 && iter.table == &table);
-    assert(hwire_table_get_ci(&table, "foo", 3, &iter) == NULL && iter.table == NULL);
+    assert(hwire_table_get_ci(&table, "foo", 3, &iter) == NULL &&
+           iter.table == NULL);
     key = table.key;
-    assert(hwire_table_init(&table, entries, index_storage, CAP, &key,
-                            HWIRE_TABLE_CASE_INSENSITIVE) == HWIRE_TABLE_OK);
+    assert(hwire_table_init(&table, &key, HWIRE_TABLE_CASE_INSENSITIVE, entries,
+                            CAP, index_storage,
+                            HWIRE_TABLE_SLOTS_CAP_2N) == HWIRE_TABLE_OK);
     assert(push(&table, &a) == &entries[0]);
     assert(hwire_table_get_ci(&table, "FOO", 3, &iter) == &entries[0]);
     assert(hwire_table_next(&iter) == NULL && iter.index == 0);
-    assert(hwire_table_get(&table, "foo", 3, &iter) == NULL && iter.table == NULL);
+    assert(hwire_table_get(&table, "foo", 3, &iter) == NULL &&
+           iter.table == NULL);
 }
 
 int main(void)
