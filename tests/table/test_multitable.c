@@ -6,15 +6,24 @@
 typedef struct {
     hwire_table_t table;
     hwire_kv_pair_t pairs[4];
-    hwire_table_index_t index[HWIRE_TABLE_INDEX_BOTH_CAPACITY(4)];
+    hwire_table_index_t
+        index[HWIRE_TABLE_INDEX_BOTH_CAPACITY(4, HWIRE_TABLE_SLOTS_CAP_8N)];
 } segment_t;
 
-static void init(segment_t *segment, size_t capacity, hwire_table_mode_t mode)
+static void init_slots(segment_t *segment, size_t capacity,
+                       hwire_table_mode_t mode,
+                       hwire_table_slots_capacity_t slots_capacity)
 {
     hwire_table_key_t key;
     hwire_table_key_init(&key, capacity);
-    assert(hwire_table_init(&segment->table, segment->pairs, segment->index,
-                            capacity, &key, mode) == HWIRE_TABLE_OK);
+    assert(hwire_table_init(&segment->table, &key, mode, segment->pairs,
+                            capacity, segment->index,
+                            slots_capacity) == HWIRE_TABLE_OK);
+}
+
+static void init(segment_t *segment, size_t capacity, hwire_table_mode_t mode)
+{
+    init_slots(segment, capacity, mode, HWIRE_TABLE_SLOTS_CAP_2N);
 }
 
 static void push(hwire_table_t *table, const char *key)
@@ -30,8 +39,8 @@ static void test_links(hwire_table_mode_t mode)
 {
     segment_t a, b, c, wrong;
     init(&a, 1, mode);
-    init(&b, 2, mode);
-    init(&c, 4, mode);
+    init_slots(&b, 2, mode, HWIRE_TABLE_SLOTS_CAP_4N);
+    init_slots(&c, 4, mode, HWIRE_TABLE_SLOTS_CAP_8N);
     init(&wrong, 1,
          mode == (HWIRE_TABLE_CASE_SENSITIVE | HWIRE_TABLE_CASE_INSENSITIVE) ?
              HWIRE_TABLE_CASE_SENSITIVE :
@@ -47,6 +56,7 @@ static void test_links(hwire_table_mode_t mode)
     hwire_kv_pair_t old = b.pairs[0];
     assert(hwire_table_link(&a.table, &b.table) == HWIRE_TABLE_OK);
     assert(b.table.len == 0 && memcmp(&old, &b.pairs[0], sizeof(old)) == 0);
+    assert(b.table.mask == 2u * HWIRE_TABLE_SLOTS_CAP_4N - 1u);
     assert(memcmp(&a.table.key, &b.table.key, sizeof(a.table.key)) == 0);
     assert(a.table.tail == &b.table && a.table.next == &b.table);
     assert(hwire_table_link(&a.table, &c.table) == HWIRE_TABLE_EINVAL);
@@ -56,6 +66,7 @@ static void test_links(hwire_table_mode_t mode)
     assert(hwire_table_link(&a.table, &b.table) == HWIRE_TABLE_EINVAL);
     assert(hwire_table_link(&a.table, &c.table) == HWIRE_TABLE_OK);
     assert(a.table.tail == &c.table && b.table.next == &c.table);
+    assert(c.table.mask == 4u * HWIRE_TABLE_SLOTS_CAP_8N - 1u);
     push(&a.table, "four");
     assert(c.table.len == 1);
     assert(hwire_table_unlink(&a.table) == &b.table);
@@ -200,8 +211,8 @@ static void test_reference(void)
     };
     hwire_table_t tables[SEGMENTS];
     hwire_kv_pair_t storage[SEGMENTS][MAX_CAPACITY];
-    hwire_table_index_t indexes[SEGMENTS]
-                               [HWIRE_TABLE_INDEX_BOTH_CAPACITY(MAX_CAPACITY)];
+    hwire_table_index_t indexes[SEGMENTS][HWIRE_TABLE_INDEX_BOTH_CAPACITY(
+        MAX_CAPACITY, HWIRE_TABLE_SLOTS_CAP_8N)];
     const hwire_str_t keys[] = {
         {.ptr = "foo",    .len = 3},
         {.ptr = "Foo",    .len = 3},
@@ -216,8 +227,10 @@ static void test_reference(void)
     hwire_table_key_init(&key, 987);
     for (size_t i = 0; i < SEGMENTS; ++i) {
         assert(hwire_table_init(
-                   &tables[i], storage[i], indexes[i], (size_t)1 << i, &key,
-                   HWIRE_TABLE_CASE_SENSITIVE | HWIRE_TABLE_CASE_INSENSITIVE) ==
+                   &tables[i], &key,
+                   HWIRE_TABLE_CASE_SENSITIVE | HWIRE_TABLE_CASE_INSENSITIVE,
+                   storage[i], (size_t)1 << i, indexes[i],
+                   (hwire_table_slots_capacity_t)(2u << (i % 3u))) ==
                HWIRE_TABLE_OK);
     }
     size_t segment = 0;

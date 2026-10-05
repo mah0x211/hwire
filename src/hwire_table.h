@@ -53,20 +53,34 @@ typedef struct {
 typedef uint16_t hwire_table_index_t;
 
 /**
- * A single index needs 4N elements: 2N hash slots, N next references, and N
- * tail references. Twice that storage holds the same three regions for both
- * the exact and ASCII case-insensitive indexes.
+ * Slot count relative to pair capacity. Each index keeps at least twice as
+ * many slots as pairs, so a full pair array still leaves empty probe slots.
  */
-#define HWIRE_TABLE_INDEX_FACTOR      4u
-#define HWIRE_TABLE_INDEX_BOTH_FACTOR (HWIRE_TABLE_INDEX_FACTOR * 2u)
+typedef enum {
+    HWIRE_TABLE_SLOTS_CAP_2N = 2,
+    HWIRE_TABLE_SLOTS_CAP_4N = 4,
+    HWIRE_TABLE_SLOTS_CAP_8N = 8
+} hwire_table_slots_capacity_t;
 
-/** Number of index elements required for exact-only or CI-only lookup. */
-#define HWIRE_TABLE_INDEX_CAPACITY(capacity)                                   \
-    ((size_t)(capacity) * HWIRE_TABLE_INDEX_FACTOR)
+/**
+ * Elements per pair for one index: the selected slot multiplier plus 2u
+ * for N duplicate-next references and N duplicate-tail references.
+ */
+#define HWIRE_TABLE_INDEX_FACTOR(slots_capacity) ((size_t)(slots_capacity) + 2u)
 
-/** Number of hwire_table_index_t elements required for exact and CI lookup. */
-#define HWIRE_TABLE_INDEX_BOTH_CAPACITY(capacity)                              \
-    ((size_t)(capacity) * HWIRE_TABLE_INDEX_BOTH_FACTOR)
+/** Two indexes each need their own slots, duplicate-next and duplicate-tail. */
+#define HWIRE_TABLE_INDEX_BOTH_FACTOR(slots_capacity)                          \
+    (HWIRE_TABLE_INDEX_FACTOR(slots_capacity) * 2u)
+
+/** Number of index elements for exact-only or CI-only lookup.
+ * Both arguments must be supported values; these macros do not validate them.
+ */
+#define HWIRE_TABLE_INDEX_CAPACITY(capacity, slots_capacity)                   \
+    ((size_t)(capacity) * HWIRE_TABLE_INDEX_FACTOR(slots_capacity))
+
+/** Number of index elements for both exact and CI lookup. */
+#define HWIRE_TABLE_INDEX_BOTH_CAPACITY(capacity, slots_capacity)              \
+    ((size_t)(capacity) * HWIRE_TABLE_INDEX_BOTH_FACTOR(slots_capacity))
 
 /** Bit set selecting key comparisons; combine the two flags with bitwise OR. */
 typedef uint16_t hwire_table_mode_t;
@@ -81,7 +95,7 @@ typedef struct hwire_table {
     hwire_kv_pair_t *entries;
     hwire_table_index_t *index;
     hwire_table_key_t key;
-    uint16_t mask;
+    uint32_t mask;
     uint16_t capacity;
     uint16_t len;
     hwire_table_mode_t mode;  /**< Validated indexing flags */
@@ -119,22 +133,25 @@ void hwire_table_key_init(hwire_table_key_t *key, uint64_t seed);
 /**
  * @brief Initialize or reset a table using caller-owned storage.
  * @param table Non-NULL table descriptor.
- * @param entries Non-NULL mutable array of at least capacity pairs.
- * @param index Non-NULL mutable array. Supply at least
- *              HWIRE_TABLE_INDEX_CAPACITY(capacity) elements for a single
- *              index or HWIRE_TABLE_INDEX_BOTH_CAPACITY(capacity) when both
- *              flags are enabled.
- * @param capacity Maximum number of pairs, including duplicates; a power of
- *                 two in [1, 32768].
  * @param key Non-NULL hash key, copied into the table.
  * @param mode HWIRE_TABLE_CASE_SENSITIVE, HWIRE_TABLE_CASE_INSENSITIVE, or
  *             their bitwise OR. Zero and unknown bits are invalid.
- * @return HWIRE_TABLE_OK, HWIRE_TABLE_EINVAL for NULL arguments or invalid
- *         mode, or HWIRE_TABLE_ECAPACITY for an unsupported capacity.
+ * @param entries Non-NULL mutable array of at least capacity pairs.
+ * @param capacity Maximum number of pairs, including duplicates; a power of
+ *                 two in [1, 32768].
+ * @param index Non-NULL mutable array. Supply at least
+ *              HWIRE_TABLE_INDEX_CAPACITY(capacity, slots_capacity) elements
+ *              for a single index or HWIRE_TABLE_INDEX_BOTH_CAPACITY(capacity,
+ *              slots_capacity) when both flags are enabled.
+ * @param slots_capacity HWIRE_TABLE_SLOTS_CAP_2N, HWIRE_TABLE_SLOTS_CAP_4N,
+ *                       or HWIRE_TABLE_SLOTS_CAP_8N.
+ *                       Each enabled index has slots_capacity * capacity slots.
+ * @return HWIRE_TABLE_OK on success; HWIRE_TABLE_EINVAL for invalid pointers,
+ *         mode or slots_capacity; HWIRE_TABLE_ECAPACITY for invalid capacity.
  *
  * No allocation occurs. Initialization zeroes the complete index array for
- * the selected mode and leaves the pair array unchanged. The build uses AES
- * hashing when the compiler target enables ARM NEON/AES or x86
+ * the selected mode and slot capacity, leaving the pair array unchanged. The
+ * build uses AES hashing when the compiler target enables ARM NEON/AES or x86
  * AES/SSE2/SSSE3, otherwise SipHash-1-3. Use target flags such as -mcpu=native
  * on ARM or -march=native (or -maes -mssse3) on x86. Define HWIRE_NO_AES or
  * HWIRE_NO_SIMD to select SipHash-1-3. There is no runtime CPU check. On
@@ -142,11 +159,11 @@ void hwire_table_key_init(hwire_table_key_t *key, uint64_t seed);
  * reset invalidates prior pair and iterator results. Unlink all following
  * segments before resetting a chain root; do not reset a linked segment.
  */
-hwire_table_code_t hwire_table_init(hwire_table_t *table,
-                                    hwire_kv_pair_t *entries,
-                                    hwire_table_index_t *index, size_t capacity,
-                                    const hwire_table_key_t *key,
-                                    hwire_table_mode_t mode);
+hwire_table_code_t
+hwire_table_init(hwire_table_t *table, const hwire_table_key_t *key,
+                 hwire_table_mode_t mode, hwire_kv_pair_t *entries,
+                 size_t capacity, hwire_table_index_t *index,
+                 hwire_table_slots_capacity_t slots_capacity);
 
 /**
  * @brief Append an exclusively owned, standalone segment to a full chain.
@@ -158,7 +175,9 @@ hwire_table_code_t hwire_table_init(hwire_table_t *table,
  * Single-index segments may use either comparison; dual-index segments may
  * link only to dual-index chains. Copies the root key and mode, clears the
  * appended index and resets its length. Pair bytes are left untouched.
- * No allocation or reindexing occurs. Rejection changes neither descriptor.
+ * Each segment retains its own pair capacity and slot count; linked segments
+ * may select different slot capacities. No allocation or reindexing occurs.
+ * Rejection changes neither descriptor.
  * The caller must not link storage already owned by another chain. Operate on
  * the chain root for push/link/unlink and do not reset linked descriptors.
  * Link invalidates existing iterators.
