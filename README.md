@@ -884,6 +884,8 @@ Build the table alongside the parser as described in
   can store a pair, including distinct keys. No space needs to be reserved for
   a load-factor threshold, and no rehashing or resizing occurs. Key and value
   lengths may vary.
+- **Caller-controlled growth** — link another segment when full; existing
+  pairs and indexes remain in place.
 - **Stable entries** — inserting pairs never moves existing entries or
   invalidates their addresses.
 - **Borrowed key/value storage** — copies pair descriptors and references the
@@ -939,7 +941,11 @@ All `capacity` entries can be filled, including with distinct keys.
 No entries need to be reserved to keep the hash index
 below a load-factor threshold. The table never rehashes, resizes, or allocates
 additional storage. After `capacity` pairs have been stored, another push returns
-`HWIRE_TABLE_EFULL`. Deletion is not supported.
+`HWIRE_TABLE_EFULL`. Link another caller-owned segment to extend the chain.
+Each segment retains its own capacity and index. Applications control allocation,
+pooling and the total pair limit. Deletion of individual pairs is not supported.
+Operate on the chain root for push, link and unlink; do not reinitialize linked
+segments. Link and unlink invalidate existing iterators.
 
 ## API
 
@@ -1002,15 +1008,49 @@ capacity macro when both flags are set. Zero or unknown mode bits return
 `HWIRE_TABLE_EINVAL`. Initialization clears the complete index array for the
 selected mode and leaves the pair array unchanged. Return
 `HWIRE_TABLE_OK`, `HWIRE_TABLE_EINVAL`, or `HWIRE_TABLE_ECAPACITY`. Invalid
-arguments leave the table and both arrays unchanged.
+arguments leave the table and both arrays unchanged. Unlink all following
+segments before resetting a chain root; do not reset linked segments.
+
+```c
+hwire_table_code_t hwire_table_link(hwire_table_t *table,
+                                    hwire_table_t *next_table);
+hwire_table_t *hwire_table_unlink(hwire_table_t *table);
+```
+
+Link an initialized, exclusively owned standalone segment to a chain whose
+final segment is full. Single-index segments are compatible with either
+single comparison mode; dual-index segments require dual-index storage.
+Link copies the root key and mode, clears the appended index and resets its
+length without modifying pair bytes. Return `HWIRE_TABLE_OK` or
+`HWIRE_TABLE_EINVAL`; rejection leaves both tables unchanged. All storage
+remains caller-owned, and no allocation or rehashing occurs.
+
+Unlink removes the segment immediately after the root, reconnects the suffix
+and returns the detached, readable standalone segment. Return NULL when there
+is no following segment or the root is NULL. Release or return detached storage
+to its pool after unlinking. Both operations invalidate existing iterators.
+
+```c
+/* extra is initialized with its own pair and index arrays. */
+if (hwire_table_push(&table, &pair) == HWIRE_TABLE_EFULL) {
+    if (hwire_table_link(&table, &extra) != HWIRE_TABLE_OK ||
+        hwire_table_push(&table, &pair) != HWIRE_TABLE_OK) {
+        /* handle the application pair limit or storage failure */
+    }
+}
+hwire_table_t *detached;
+while ((detached = hwire_table_unlink(&table)) != NULL) {
+    /* return detached and its arrays to the application pool */
+}
+```
 
 ```c
 hwire_table_code_t hwire_table_push(hwire_table_t *table,
                                   const hwire_kv_pair_t *kv);
 ```
 
-Append one pair to an initialized table. Nonempty slices require non-NULL
-pointers. Return `HWIRE_TABLE_OK`, `HWIRE_TABLE_EINVAL`, or
+Append one pair to the final segment of an initialized chain. Nonempty slices
+require non-NULL pointers. Return `HWIRE_TABLE_OK`, `HWIRE_TABLE_EINVAL`, or
 `HWIRE_TABLE_EFULL`. A failed push leaves the table unchanged.
 
 ```c
@@ -1039,7 +1079,10 @@ Follow exact or ASCII case-insensitive duplicates after the current cursor
 position in insertion order. Use a cursor from get, get_ci, iterate or next.
 Return NULL at the end, for a NULL/empty cursor, or when the requested index
 is disabled. On success, update the position; otherwise leave it unchanged.
-These functions follow duplicate indexes without recomputing the hash.
+Within a segment these functions follow duplicate indexes without hashing.
+Across segments they reuse the cached hash; iteration or a changed comparison
+can require one hash calculation. A CI step can change the exact key casing,
+so the APIs invalidate an exact hash cached for the preceding pair.
 
 Comparison is selected by the called function: get followed by next_ci is
 supported, and only later CI matches are visited. Cursor fields are maintained
@@ -1054,12 +1097,12 @@ Visit every pair in an initialized table in insertion order. Initialize the
 non-NULL cursor with `{0}` before the first call. Each result records the
 current pair. Return NULL at the end without changing the cursor. The same cursor may be used for next/next_ci; iteration
 then continues after its current pair. Pairs appended during iteration become
-visible on later calls. Reset invalidates prior cursor positions.
+visible on later calls. Link, unlink and reset invalidate prior cursor positions.
 
 | Result | Meaning |
 |---|---|
 | `HWIRE_TABLE_OK` (0) | Operation succeeded |
-| `HWIRE_TABLE_EINVAL` (-1) | Required pointer is NULL or a pair slice is malformed |
+| `HWIRE_TABLE_EINVAL` (-1) | Invalid argument, pair slice or link |
 | `HWIRE_TABLE_ECAPACITY` (-2) | Initialization capacity is unsupported |
 | `HWIRE_TABLE_EFULL` (-3) | Pair capacity is exhausted |
 
