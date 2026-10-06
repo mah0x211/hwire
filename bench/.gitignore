@@ -1,0 +1,4 @@
+/bin/
+/hashmaps/bin/
+__pycache__/
+!/data/headers/http_headers.txt
