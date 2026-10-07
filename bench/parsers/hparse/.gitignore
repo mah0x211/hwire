@@ -1,0 +1,4 @@
+/deps/
+/fetch.*/
+/bin/
+/.zig-cache/

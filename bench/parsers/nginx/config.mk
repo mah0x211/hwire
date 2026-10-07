@@ -7,3 +7,8 @@ nginx_LDLIBS := -Wl,-dead_strip
 else
 nginx_LDLIBS := -Wl,--gc-sections
 endif
+ifeq ($(UNAME_M),x86_64)
+nginx_VARIANTS := nosimd native
+else
+nginx_VARIANTS := nosimd native
+endif

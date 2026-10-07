@@ -10,8 +10,10 @@ SUFFIX = ""
 REQUIRED = ()
 
 
-def write_table(out, variant, directory=None):
+def write_table(out, variant, directory=None, implementations=None):
     names = list(registered(directory or ROOT, SUFFIX, REQUIRED))
+    if implementations is not None:
+        names = [name for name in names if name in implementations]
     lines = []
     for name in names:
         for direction in ("request", "response"):
@@ -37,6 +39,6 @@ if __name__ == "__main__":
     if sys.argv[1] == "list":
         print(" ".join(registered(ROOT, SUFFIX, REQUIRED)))
     elif sys.argv[1] == "write":
-        write_table(sys.argv[2], sys.argv[3])
+        write_table(sys.argv[2], sys.argv[3], implementations=sys.argv[4:] or None)
     else:
         sys.exit("usage: gen_registration.py list | write OUT VARIANT")
