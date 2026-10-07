@@ -1,0 +1,16 @@
+[package]
+name = "actix_web_adapter"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+path = "parser.rs"
+crate-type = ["staticlib"]
+
+[dependencies]
+httparse = "=1.10.1"
+
+[profile.release]
+opt-level = 2
+panic = "abort"
