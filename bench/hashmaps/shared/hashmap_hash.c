@@ -9,11 +9,11 @@ void hashmap_hash_seed(uint64_t seed)
 }
 uint64_t hashmap_hash_bytes(const char *key, size_t len)
 {
-    return hash_key(&hash_state, key, len, 0);
+    return compute_bytes_hash_cs(&hash_state.key, key, len);
 }
 uint64_t hashmap_hash_bytes_ci(const char *key, size_t len)
 {
-    return hash_key(&hash_state, key, len, 1);
+    return compute_bytes_hash_ci(&hash_state.key, key, len);
 }
 const char *hashmap_hash_backend(void)
 {
