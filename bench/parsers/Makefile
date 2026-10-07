@@ -1,6 +1,7 @@
 # Standalone parser benchmark.
 CC ?= cc
 CARGO ?= cargo
+ZIG ?= zig
 CFLAGS ?= -O2 -DNDEBUG -std=c11
 BIN := bin
 RESULTS := results
@@ -38,7 +39,7 @@ BINS := $(if $(IMPLEMENTATIONS),$(foreach v,$(VARIANTS),$(if $(call variant_impl
 .NOTPARALLEL:
 all: build
 setup:
-	@for p in $(IMPLEMENTATIONS); do if [ -f "$$p/fetch.sh" ]; then CARGO='$(CARGO)' sh "$$p/fetch.sh" || exit 1; fi; done
+	@for p in $(IMPLEMENTATIONS); do if [ -f "$$p/fetch.sh" ]; then CARGO='$(CARGO)' ZIG='$(ZIG)' sh "$$p/fetch.sh" || exit 1; fi; done
 build: $(BINS)
 run: build
 	@mkdir -p $(RESULTS)
@@ -63,13 +64,13 @@ clean:
 FORCE:
 $(BIN)/%/config.txt: FORCE
 	@mkdir -p $(BIN)/$*
-	@printf '%s\n' '$(CC)' '$(CARGO)' '$(CFLAGS)' '$(VARIANT_FLAGS_$*)' '$(SRCS)' '$(INC)' '$(LDLIBS)' '$(foreach p,$(IMPLEMENTATIONS),$($(p)_CFLAGS))' > $@.tmp
+	@printf '%s\n' '$(CC)' '$(CARGO)' '$(ZIG)' '$(CFLAGS)' '$(VARIANT_FLAGS_$*)' '$(SRCS)' '$(INC)' '$(LDLIBS)' '$(foreach p,$(IMPLEMENTATIONS),$($(p)_CFLAGS))' > $@.tmp
 	@if cmp -s $@.tmp $@; then rm $@.tmp; else mv $@.tmp $@; fi
 $(BIN)/%/parserlist.c: FORCE scripts/gen_parsers.py ../shared/scripts/registration.py
 	@mkdir -p $(BIN)/$*
 	@$(GEN) write $@ $* $(call variant_implementations,$*)
 $(BIN)/%/bench_parsers: $(BIN)/%/config.txt $(BIN)/%/parserlist.c Makefile bench_parsers.c ../shared/bench_stats.h ../shared/bench_timer.h ../shared/scripts/build_variant.sh $(BIN)/fixtures.c $(DEPS) $(CONFIGS) $(FETCH) $(BUILD) | setup
-	@for p in $(call variant_implementations,$*); do if [ -f "$$p/build.sh" ]; then CARGO='$(CARGO)' sh "$$p/build.sh" '$*' || exit 1; fi; done
+	@for p in $(call variant_implementations,$*); do if [ -f "$$p/build.sh" ]; then CARGO='$(CARGO)' ZIG='$(ZIG)' sh "$$p/build.sh" '$*' || exit 1; fi; done
 	@$(foreach p,$(IMPLEMENTATIONS),$(p)_CFLAGS='$($(p)_CFLAGS)') CC='$(CC)' CFLAGS='$(CFLAGS)' SRCS='$(call variant_sources,$*)' INC='$(call variant_includes,$*)' LDLIBS='$(subst %,$*,$(call variant_libraries,$*))' DRIVER='bench_parsers.c' POOL='0' sh ../shared/scripts/build_variant.sh '$*' '$(VARIANT_FLAGS_$*)'
 request response:
 	@$(MAKE) --no-print-directory run DIRECTION=$@

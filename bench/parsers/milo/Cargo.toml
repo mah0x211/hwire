@@ -1,0 +1,16 @@
+[package]
+name = "milo_adapter"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+path = "parser.rs"
+crate-type = ["staticlib"]
+
+[dependencies]
+milo-parser = { path = "deps/parser" }
+
+[profile.release]
+opt-level = 2
+panic = "abort"
