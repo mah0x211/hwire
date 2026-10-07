@@ -15,94 +15,71 @@ enum {
 };
 
 /** Return the selected number of hash slots in one index. */
-static inline size_t index_slot_count(const hwire_table_t *table)
+static inline size_t get_index_slot_count(const hwire_table_t *table)
 {
     return (size_t)table->mask + 1u;
 }
 
 /** Return the full single-index length, including duplicate chains. */
-static inline size_t index_region_count(const hwire_table_t *table)
+static inline size_t get_index_count(const hwire_table_t *table)
 {
-    return index_slot_count(table) +
+    return get_index_slot_count(table) +
            (size_t)table->capacity * INDEX_CHAIN_COUNT_FACTOR;
 }
 
-/** Return the initialized segment's total index element count. */
-static inline size_t index_count(const hwire_table_t *table)
+/** Return the total index length for all enabled comparison modes. */
+static inline size_t get_index_base_count(const hwire_table_t *table)
 {
-    size_t count = index_region_count(table);
+    size_t count = get_index_count(table);
     return table->mode ==
                    (HWIRE_TABLE_CASE_SENSITIVE | HWIRE_TABLE_CASE_INSENSITIVE) ?
                count * INDEX_BOTH_COUNT_FACTOR :
                count;
 }
 
-/** Return the mutable default hash-slot region at offset zero. */
-static inline hwire_table_index_t *index_slot_region(hwire_table_t *table)
+/** Return the default hash-slot region at offset zero. */
+static inline hwire_table_index_t *get_slot_index_cs(const hwire_table_t *table)
 {
     return table->index;
-}
-
-/** Return the read-only default hash-slot region at offset zero. */
-static inline const hwire_table_index_t *
-index_slot_region_const(const hwire_table_t *table)
-{
-    return table->index;
-}
-
-/** Return duplicate-next references immediately after the default slots. */
-static inline hwire_table_index_t *index_next_region(hwire_table_t *table)
-{
-    return table->index + index_slot_count(table);
-}
-
-/** Return read-only duplicate-next references after the default slots. */
-static inline const hwire_table_index_t *
-index_next_region_const(const hwire_table_t *table)
-{
-    return table->index + index_slot_count(table);
-}
-
-/** Return duplicate-tail references after the default duplicate-next region. */
-static inline hwire_table_index_t *index_tail_region(hwire_table_t *table)
-{
-    return index_next_region(table) +
-           (size_t)table->capacity * INDEX_NEXT_COUNT_FACTOR;
-}
-
-/** Return the second slot region for insertion when both modes are enabled. */
-static inline hwire_table_index_t *index_ci_slot_region(hwire_table_t *table)
-{
-    return table->index + index_region_count(table);
 }
 
 /** Return CI slots, sharing the default slots in CI-only mode. */
-static inline const hwire_table_index_t *
-index_ci_slot_region_const(const hwire_table_t *table)
+static inline hwire_table_index_t *get_slot_index_ci(const hwire_table_t *table)
 {
     return table->mode ==
                    (HWIRE_TABLE_CASE_SENSITIVE | HWIRE_TABLE_CASE_INSENSITIVE) ?
-               table->index + index_region_count(table) :
+               table->index + get_index_count(table) :
                table->index;
 }
 
-/** Return duplicate-next references after the second slot region. */
-static inline hwire_table_index_t *index_ci_next_region(hwire_table_t *table)
+/** Function pointer type for selecting slot indices. */
+typedef hwire_table_index_t *(*get_slot_index_fn)(const hwire_table_t *table);
+
+/** Return duplicate-next references immediately after the default slots. */
+static inline hwire_table_index_t *get_next_index_cs(const hwire_table_t *table)
 {
-    return index_ci_slot_region(table) + index_slot_count(table);
+    return table->index + get_index_slot_count(table);
 }
 
 /** Return CI duplicate-next references after the selected CI slots. */
-static inline const hwire_table_index_t *
-index_ci_next_region_const(const hwire_table_t *table)
+static inline hwire_table_index_t *get_next_index_ci(const hwire_table_t *table)
 {
-    return index_ci_slot_region_const(table) + index_slot_count(table);
+    return get_slot_index_ci(table) + get_index_slot_count(table);
 }
 
-/** Return duplicate-tail references after the second duplicate-next region. */
-static inline hwire_table_index_t *index_ci_tail_region(hwire_table_t *table)
+typedef hwire_table_index_t *(*get_next_index_fn)(const hwire_table_t *table);
+
+/** Return duplicate-tail references after the default duplicate-next region. */
+static inline hwire_table_index_t *get_tail_index_cs(const hwire_table_t *table)
 {
-    return index_ci_next_region(table) +
+    return get_next_index_cs(table) +
+           (size_t)table->capacity * INDEX_NEXT_COUNT_FACTOR;
+}
+
+/** Return CI duplicate-tail references after the CI duplicate-next region. */
+static inline hwire_table_index_t *get_tail_index_ci(const hwire_table_t *table)
+{
+    return get_next_index_ci(table) +
            (size_t)table->capacity * INDEX_NEXT_COUNT_FACTOR;
 }
 
@@ -133,13 +110,33 @@ static inline uint64_t rotate_left(uint64_t x, unsigned n)
     return (x << n) | (x >> (64u - n));
 }
 
+/** Apply one SipHash mixing round to four distinct state words. */
+static inline void siphash_round(uint64_t *v0, uint64_t *v1, uint64_t *v2,
+                                 uint64_t *v3)
+{
+    *v0 += *v1;
+    *v1 = rotate_left(*v1, 13);
+    *v1 ^= *v0;
+    *v0 = rotate_left(*v0, 32);
+    *v2 += *v3;
+    *v3 = rotate_left(*v3, 16);
+    *v3 ^= *v2;
+    *v0 += *v3;
+    *v3 = rotate_left(*v3, 21);
+    *v3 ^= *v0;
+    *v2 += *v1;
+    *v1 = rotate_left(*v1, 17);
+    *v1 ^= *v2;
+    *v2 = rotate_left(*v2, 32);
+}
+
 /**
- * Compute SipHash-1-3 over a borrowed slice. In CI mode, fold each byte while
- * loading it, without allocating a normalized copy. An empty slice may have
- * a NULL data pointer. The byte loads avoid alignment and aliasing assumptions.
+ * Compute SipHash-1-3 over a borrowed slice in CI mode, folding each byte while
+ * loading it. An empty slice may have a NULL data pointer. The byte loads avoid
+ * alignment and aliasing assumptions.
  */
-static uint64_t hash_siphash(const hwire_table_key_t *key, const char *data,
-                             size_t len, int ci)
+static uint64_t hash_siphash_ci(const hwire_table_key_t *key, const char *data,
+                                size_t len)
 {
     uint64_t v0 = UINT64_C(0x736f6d6570736575) ^ key->words[0];
     uint64_t v1 = UINT64_C(0x646f72616e646f6d) ^ key->words[1];
@@ -147,44 +144,63 @@ static uint64_t hash_siphash(const hwire_table_key_t *key, const char *data,
     uint64_t v3 = UINT64_C(0x7465646279746573) ^ key->words[1];
     size_t i    = 0;
 
-# define SIPROUND                                                              \
-     do {                                                                      \
-         v0 += v1;                                                             \
-         v1 = rotate_left(v1, 13);                                             \
-         v1 ^= v0;                                                             \
-         v0 = rotate_left(v0, 32);                                             \
-         v2 += v3;                                                             \
-         v3 = rotate_left(v3, 16);                                             \
-         v3 ^= v2;                                                             \
-         v0 += v3;                                                             \
-         v3 = rotate_left(v3, 21);                                             \
-         v3 ^= v0;                                                             \
-         v2 += v1;                                                             \
-         v1 = rotate_left(v1, 17);                                             \
-         v1 ^= v2;                                                             \
-         v2 = rotate_left(v2, 32);                                             \
-     } while (0)
+    while (len - i >= 8u) {
+        uint64_t m = 0;
+
+# if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+        memcpy(&m, data + i, sizeof(m));
+        m = fold_word(m);
+# else
+        for (unsigned j = 0; j < 8u; ++j) {
+            unsigned char c = (unsigned char)data[i + j];
+            c               = fold(c);
+            m |= (uint64_t)c << (8u * j);
+        }
+# endif
+        v3 ^= m;
+        siphash_round(&v0, &v1, &v2, &v3);
+        v0 ^= m;
+        i += 8u;
+    }
+
+    uint64_t b = (uint64_t)len << 56u;
+    for (unsigned j = 0; i < len; ++i, ++j) {
+        unsigned char c = fold((unsigned char)data[i]);
+        b |= (uint64_t)c << (8u * j);
+    }
+
+    v3 ^= b;
+    siphash_round(&v0, &v1, &v2, &v3);
+    v0 ^= b;
+    v2 ^= UINT64_C(0xff);
+    siphash_round(&v0, &v1, &v2, &v3);
+    siphash_round(&v0, &v1, &v2, &v3);
+    siphash_round(&v0, &v1, &v2, &v3);
+    return v0 ^ v1 ^ v2 ^ v3;
+}
+
+/**
+ * Compute SipHash-1-3 over a borrowed slice. In CS mode, load each byte
+ * without folding, without allocating a normalized copy. An empty slice may
+ * have a NULL data pointer. The byte loads avoid alignment and aliasing
+ * assumptions.
+ */
+static uint64_t hash_siphash_cs(const hwire_table_key_t *key, const char *data,
+                                size_t len)
+{
+    uint64_t v0 = UINT64_C(0x736f6d6570736575) ^ key->words[0];
+    uint64_t v1 = UINT64_C(0x646f72616e646f6d) ^ key->words[1];
+    uint64_t v2 = UINT64_C(0x6c7967656e657261) ^ key->words[0];
+    uint64_t v3 = UINT64_C(0x7465646279746573) ^ key->words[1];
+    size_t i    = 0;
 
     while (len - i >= 8u) {
         uint64_t m = 0;
-        if (ci) {
-# if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
-            memcpy(&m, data + i, sizeof(m));
-            m = fold_word(m);
-# else
-            for (unsigned j = 0; j < 8u; ++j) {
-                unsigned char c = (unsigned char)data[i + j];
-                c               = fold(c);
-                m |= (uint64_t)c << (8u * j);
-            }
-# endif
-        } else {
-            for (unsigned j = 0; j < 8u; ++j) {
-                m |= (uint64_t)(unsigned char)data[i + j] << (8u * j);
-            }
+        for (unsigned j = 0; j < 8u; ++j) {
+            m |= (uint64_t)(unsigned char)data[i + j] << (8u * j);
         }
         v3 ^= m;
-        SIPROUND;
+        siphash_round(&v0, &v1, &v2, &v3);
         v0 ^= m;
         i += 8u;
     }
@@ -192,35 +208,46 @@ static uint64_t hash_siphash(const hwire_table_key_t *key, const char *data,
     uint64_t b = (uint64_t)len << 56u;
     for (unsigned j = 0; i < len; ++i, ++j) {
         unsigned char c = (unsigned char)data[i];
-        if (ci) {
-            c = fold(c);
-        }
         b |= (uint64_t)c << (8u * j);
     }
 
     v3 ^= b;
-    SIPROUND;
+    siphash_round(&v0, &v1, &v2, &v3);
     v0 ^= b;
     v2 ^= UINT64_C(0xff);
-    SIPROUND;
-    SIPROUND;
-    SIPROUND;
+    siphash_round(&v0, &v1, &v2, &v3);
+    siphash_round(&v0, &v1, &v2, &v3);
+    siphash_round(&v0, &v1, &v2, &v3);
     return v0 ^ v1 ^ v2 ^ v3;
-
-# undef SIPROUND
 }
+
 #endif
 
-/** Hash with the backend selected by the compiler target feature macros. */
-static uint64_t hash_key(const hwire_table_t *table, const char *data,
-                         size_t len, int ci)
+/** Compute a case-sensitive hash using the build target backend. */
+static uint64_t compute_bytes_hash_cs(const hwire_table_key_t *key,
+                                      const char *data, size_t len)
 {
 #if defined(HWIRE_TABLE_HAVE_AES)
-    return hash_aes(&table->key, data, len, ci);
+    return hash_aes_cs(key, data, len);
 #else
-    return hash_siphash(&table->key, data, len, ci);
+    return hash_siphash_cs(key, data, len);
 #endif
 }
+
+/** Compute an ASCII case-insensitive hash using the build target backend. */
+static uint64_t compute_bytes_hash_ci(const hwire_table_key_t *key,
+                                      const char *data, size_t len)
+{
+#if defined(HWIRE_TABLE_HAVE_AES)
+    return hash_aes_ci(key, data, len);
+#else
+    return hash_siphash_ci(key, data, len);
+#endif
+}
+
+/** Function pointer type for computing a byte hash. */
+typedef uint64_t (*compute_bytes_hash_fn)(const hwire_table_key_t *key,
+                                          const char *data, size_t len);
 
 /** Advance and mix a deterministic seed into one 64-bit key word. */
 static inline uint64_t splitmix64(uint64_t *state)
@@ -309,7 +336,7 @@ hwire_table_code_t hwire_table_link(hwire_table_t *table,
         return HWIRE_TABLE_EINVAL;
     }
     memset(next_table->index, 0,
-           index_count(next_table) * sizeof(*next_table->index));
+           get_index_base_count(next_table) * sizeof(*next_table->index));
     next_table->key   = table->key;
     next_table->mode  = table->mode;
     next_table->len   = 0;
@@ -334,15 +361,19 @@ hwire_table_t *hwire_table_unlink(hwire_table_t *table)
     return detached;
 }
 
-/** Compare binary slices by length and bytes under the requested key rule.
- * CI comparison folds complete 8-byte words without depending on byte order.
- * memcpy permits unaligned slices; the tail is compared byte by byte. */
-static int equal_key(hwire_str_t a, const char *data, size_t len, int ci)
+/** Compare binary slices by length and exact bytes. */
+static inline int equal_key_cs(hwire_str_t a, const char *data, size_t len)
+{
+    return a.len == len && (len == 0 || memcmp(a.ptr, data, len) == 0);
+}
+
+/** Compare ASCII-CI slices by length and folded bytes. Complete 8-byte words
+ * are folded without depending on byte order. memcpy permits unaligned slices;
+ * the tail is compared byte by byte. */
+static inline int equal_key_ci(hwire_str_t a, const char *data, size_t len)
 {
     if (a.len != len) {
         return 0;
-    } else if (!ci) {
-        return len == 0 || memcmp(a.ptr, data, len) == 0;
     }
 
     size_t i = 0;
@@ -364,23 +395,27 @@ static int equal_key(hwire_str_t a, const char *data, size_t len, int ci)
     return 1;
 }
 
+/** Function pointer type for comparing keys. */
+typedef int (*equal_key_fn)(hwire_str_t key, const char *data, size_t len);
+
 /**
  * Probe one index from its hash bucket, wrapping at mask. Return the first
- * empty or equal slot and write its representative to *head. An empty slot
+ * empty or equal slot and write its representative to *head_out. An empty slot
  * always exists because each index has at least twice as many slots as pairs.
  */
-static uint32_t find_slot(const hwire_table_t *table, const char *key,
-                          size_t keylen, int ci, uint64_t hash,
-                          uint16_t *head_out)
+static inline uint32_t find_slot(const hwire_table_t *table, const char *key,
+                                 size_t keylen, uint64_t hash,
+                                 uint16_t *head_out,
+                                 get_slot_index_fn get_slot_index,
+                                 equal_key_fn equal_key)
 {
-    uint32_t pos = (uint32_t)hash & table->mask;
-    const hwire_table_index_t *slots =
-        ci ? index_ci_slot_region_const(table) : index_slot_region_const(table);
+    uint32_t pos                     = (uint32_t)hash & table->mask;
+    const hwire_table_index_t *slots = get_slot_index(table);
 
     for (;;) {
         uint16_t head = slots[pos];
         if (head != EMPTY &&
-            equal_key(table->entries[head - 1u].key, key, keylen, ci)) {
+            equal_key(table->entries[head - 1u].key, key, keylen)) {
             *head_out = head;
             return pos;
         }
@@ -391,6 +426,29 @@ static uint32_t find_slot(const hwire_table_t *table, const char *key,
         pos = (pos + 1u) & table->mask;
     }
 }
+
+/** Probe the exact index using byte comparison. */
+static inline uint32_t find_slot_cs(const hwire_table_t *table, const char *key,
+                                    size_t keylen, uint64_t hash,
+                                    uint16_t *head_out)
+{
+    return find_slot(table, key, keylen, hash, head_out, get_slot_index_cs,
+                     equal_key_cs);
+}
+
+/** Probe the ASCII-CI index using folded key comparison. */
+static inline uint32_t find_slot_ci(const hwire_table_t *table, const char *key,
+                                    size_t keylen, uint64_t hash,
+                                    uint16_t *head_out)
+{
+    return find_slot(table, key, keylen, hash, head_out, get_slot_index_ci,
+                     equal_key_ci);
+}
+
+/** Function pointer type for finding slots. */
+typedef uint32_t (*find_slot_fn)(const hwire_table_t *table, const char *key,
+                                 size_t keylen, uint64_t hash,
+                                 uint16_t *head_out);
 
 /**
  * Locate the selected representatives before publishing a pair. Update each
@@ -410,31 +468,31 @@ hwire_table_code_t hwire_table_push(hwire_table_t *table,
     }
 
     /* kv is allowed to refer to an existing entry. */
-    hwire_kv_pair_t pair = *kv;
-    uint16_t head;
-    uint16_t ci_head = EMPTY;
-    int ci           = (table->mode & HWIRE_TABLE_CASE_SENSITIVE) == 0;
-    uint32_t pos =
-        find_slot(table, pair.key.ptr, pair.key.len, ci,
-                  hash_key(table, pair.key.ptr, pair.key.len, ci), &head);
-    uint32_t ci_pos            = 0;
+    hwire_kv_pair_t pair       = *kv;
+    hwire_table_index_t *slots = get_slot_index_cs(table);
+    hwire_table_index_t *next  = get_next_index_cs(table);
+    hwire_table_index_t *tail  = get_tail_index_cs(table);
     uint16_t index             = table->len;
     uint16_t ref               = (uint16_t)(index + 1u);
-    hwire_table_index_t *slots = index_slot_region(table);
-    hwire_table_index_t *next  = index_next_region(table);
-    hwire_table_index_t *tail  = index_tail_region(table);
-
-    if (table->mode ==
-        (HWIRE_TABLE_CASE_SENSITIVE | HWIRE_TABLE_CASE_INSENSITIVE)) {
-        ci_pos =
-            find_slot(table, pair.key.ptr, pair.key.len, 1,
-                      hash_key(table, pair.key.ptr, pair.key.len, 1), &ci_head);
-    }
+    uint64_t hash              = 0;
+    uint32_t pos               = 0;
+    uint16_t head              = 0;
 
     /* Unused next references remain zero from init/link. Only group
      * representatives need a tail reference. */
     table->entries[index] = pair;
 
+    /* Select hashing and probing for the primary index. */
+    if (table->mode == HWIRE_TABLE_CASE_INSENSITIVE) {
+        hash = compute_bytes_hash_ci(&table->key, pair.key.ptr, pair.key.len);
+        pos  = find_slot_ci(table, pair.key.ptr, pair.key.len, hash, &head);
+    } else {
+        hash = compute_bytes_hash_cs(&table->key, pair.key.ptr, pair.key.len);
+        pos  = find_slot_cs(table, pair.key.ptr, pair.key.len, hash, &head);
+    }
+
+    // If the head is empty, this is the first entry in the slot; otherwise,
+    // link it to the existing chain.
     if (head == EMPTY) {
         slots[pos]  = ref;
         tail[index] = ref;
@@ -444,11 +502,18 @@ hwire_table_code_t hwire_table_push(hwire_table_t *table,
         tail[head_index]            = ref;
     }
 
+    // If both case-sensitive and case-insensitive modes are enabled, update the
+    // CI index as well.
     if (table->mode ==
         (HWIRE_TABLE_CASE_SENSITIVE | HWIRE_TABLE_CASE_INSENSITIVE)) {
-        hwire_table_index_t *ci_slots = index_ci_slot_region(table);
-        hwire_table_index_t *ci_next  = index_ci_next_region(table);
-        hwire_table_index_t *ci_tail  = index_ci_tail_region(table);
+        hwire_table_index_t *ci_slots = get_slot_index_ci(table);
+        hwire_table_index_t *ci_next  = get_next_index_ci(table);
+        hwire_table_index_t *ci_tail  = get_tail_index_ci(table);
+        uint64_t ci_hash =
+            compute_bytes_hash_ci(&table->key, pair.key.ptr, pair.key.len);
+        uint16_t ci_head = EMPTY;
+        uint32_t ci_pos =
+            find_slot_ci(table, pair.key.ptr, pair.key.len, ci_hash, &ci_head);
 
         if (ci_head == EMPTY) {
             ci_slots[ci_pos] = ref;
@@ -464,94 +529,159 @@ hwire_table_code_t hwire_table_push(hwire_table_t *table,
     return HWIRE_TABLE_OK;
 }
 
-/** Resolve a key group and record its position in an optional cursor. */
-static inline const hwire_kv_pair_t *get_key(const hwire_table_t *table,
-                                             const char *key, size_t keylen,
-                                             int ci, hwire_table_iter_t *iter)
+/** Update the iterator for a case-sensitive entry. */
+static inline void update_iter_cs(hwire_table_iter_t *iter,
+                                  const hwire_table_t *table, uint16_t index,
+                                  uint64_t hash)
 {
-    hwire_table_mode_t mode =
-        ci ? HWIRE_TABLE_CASE_INSENSITIVE : HWIRE_TABLE_CASE_SENSITIVE;
-    if (table && table->len && (keylen == 0 || key) &&
-        (table->mode & mode) != 0) {
-        uint64_t hash = hash_key(table, key, keylen, ci);
-        for (; table; table = table->next) {
-            uint16_t head;
-            (void)find_slot(table, key, keylen, ci, hash, &head);
-            if (head != EMPTY) {
-                uint16_t index = (uint16_t)(head - 1u);
-                if (iter) {
-                    *iter = (hwire_table_iter_t){
-                        .table  = table,
-                        .index  = index,
-                        .cached = mode,
-                        .hash   = hash,
-                    };
-                }
-                return &table->entries[index];
+    iter->table     = table;
+    iter->index     = index;
+    iter->hashes[0] = hash;
+    iter->hashes[1] = 0;
+}
+
+/** Update the iterator for a case-insensitive entry. */
+static inline void update_iter_ci(hwire_table_iter_t *iter,
+                                  const hwire_table_t *table, uint16_t index,
+                                  uint64_t hash)
+{
+    iter->table     = table;
+    iter->index     = index;
+    iter->hashes[0] = 0;
+    iter->hashes[1] = hash;
+}
+
+/** Function pointer type for updating the iterator. */
+typedef void (*update_iter_fn)(hwire_table_iter_t *iter,
+                               const hwire_table_t *table, uint16_t index,
+                               uint64_t hash);
+
+/** Probe each segment with one hash and update the cursor on a match. */
+static inline const hwire_kv_pair_t *
+select_by_index(const hwire_table_t *table, const char *key, size_t keylen,
+                uint64_t hash, find_slot_fn find_slot, hwire_table_iter_t *iter,
+                update_iter_fn update_iter)
+{
+    for (; table; table = table->next) {
+        uint16_t head;
+
+        (void)find_slot(table, key, keylen, hash, &head);
+        if (head != EMPTY) {
+            uint16_t index = (uint16_t)(head - 1u);
+            if (iter) {
+                update_iter(iter, table, index, hash);
             }
+            return &table->entries[index];
         }
-    }
-    if (iter) {
-        *iter = (hwire_table_iter_t){.table = NULL};
     }
     return NULL;
 }
 
-/** Select exact comparison and optionally record the matching position. */
+/** Hash and search a key when its comparison mode is enabled. */
+static inline const hwire_kv_pair_t *
+get_key(const hwire_table_t *table, const char *key, size_t keylen,
+        hwire_table_mode_t mode, compute_bytes_hash_fn compute_bytes_hash,
+        find_slot_fn find_slot, hwire_table_iter_t *iter,
+        update_iter_fn update_iter)
+{
+    if (table->len && table->mode & mode) {
+        uint64_t hash = compute_bytes_hash(&table->key, key, keylen);
+        return select_by_index(table, key, keylen, hash, find_slot, iter,
+                               update_iter);
+    }
+    return NULL;
+}
+
+/** Prepare and select an exact key with the CS lookup functions. */
+static inline const hwire_kv_pair_t *get_key_cs(const hwire_table_t *table,
+                                                const char *key, size_t keylen,
+                                                hwire_table_iter_t *iter)
+{
+    return get_key(table, key, keylen, HWIRE_TABLE_CASE_SENSITIVE,
+                   compute_bytes_hash_cs, find_slot_cs, iter, update_iter_cs);
+}
+
+/** Prepare and select an ASCII-CI key with the CI lookup functions. */
+static inline const hwire_kv_pair_t *get_key_ci(const hwire_table_t *table,
+                                                const char *key, size_t keylen,
+                                                hwire_table_iter_t *iter)
+{
+    return get_key(table, key, keylen, HWIRE_TABLE_CASE_INSENSITIVE,
+                   compute_bytes_hash_ci, find_slot_ci, iter, update_iter_ci);
+}
+
+/** Find the first exact key match. */
 const hwire_kv_pair_t *hwire_table_get(const hwire_table_t *table,
                                        const char *key, size_t keylen,
                                        hwire_table_iter_t *iter)
 {
-    return get_key(table, key, keylen, 0, iter);
+    return get_key_cs(table, key, keylen, iter);
 }
 
-/** Select ASCII-CI comparison and optionally record the matching position. */
+/** Find the first ASCII-CI key match. */
 const hwire_kv_pair_t *hwire_table_get_ci(const hwire_table_t *table,
                                           const char *key, size_t keylen,
                                           hwire_table_iter_t *iter)
 {
-    return get_key(table, key, keylen, 1, iter);
+    return get_key_ci(table, key, keylen, iter);
+}
+
+/** Advance an exact duplicate while preserving the CI hash cache. */
+static inline void update_next_iter_cs(hwire_table_iter_t *iter,
+                                       const hwire_table_t *table,
+                                       uint16_t index, uint64_t hash)
+{
+    *iter = (hwire_table_iter_t){
+        .table  = table,
+        .index  = index,
+        .hashes = {[0] = hash, [1] = iter->hashes[1]},
+    };
+}
+
+/** Advance a CI duplicate and invalidate the case-sensitive hash cache. */
+static inline void update_next_iter_ci(hwire_table_iter_t *iter,
+                                       const hwire_table_t *table,
+                                       uint16_t index, uint64_t hash)
+{
+    *iter = (hwire_table_iter_t){
+        .table  = table,
+        .index  = index,
+        .hashes = {[0] = 0, [1] = hash},
+    };
 }
 
 /** Follow the duplicate index selected by the API, independently of the
  * lookup that initialized the cursor. */
-static const hwire_kv_pair_t *next_key(hwire_table_iter_t *iter, int ci)
+static inline const hwire_kv_pair_t *find_next_duplicate(
+    hwire_table_iter_t *iter, uint64_t hash, hwire_table_mode_t mode,
+    compute_bytes_hash_fn compute_bytes_hash, get_next_index_fn get_next_index,
+    find_slot_fn find_slot, update_iter_fn update_iter)
 {
-    hwire_table_mode_t mode =
-        ci ? HWIRE_TABLE_CASE_INSENSITIVE : HWIRE_TABLE_CASE_SENSITIVE;
-    if (iter && iter->table && (iter->table->mode & mode) != 0) {
+    if (iter->table && iter->table->mode & mode) {
         const hwire_table_t *table = iter->table;
-        const hwire_table_index_t *next =
-            ci ? index_ci_next_region_const(table) :
-                 index_next_region_const(table);
-        uint16_t ref = next[iter->index];
+        uint16_t ref               = get_next_index(iter->table)[iter->index];
+
         if (ref != EMPTY) {
-            *iter = (hwire_table_iter_t){
-                .table  = table,
-                .index  = (uint16_t)(ref - 1u),
-                .cached = ci && iter->cached == HWIRE_TABLE_CASE_SENSITIVE ?
-                              0 :
-                              iter->cached,
-                .hash   = iter->hash,
-            };
-            return &table->entries[iter->index];
+            uint16_t index = (uint16_t)(ref - 1u);
+            update_iter(iter, table, index, hash);
+            return &table->entries[index];
         }
+
         if (table->next) {
             hwire_str_t key = table->entries[iter->index].key;
-            uint64_t hash   = iter->cached == mode ?
-                                  iter->hash :
-                                  hash_key(table, key.ptr, key.len, ci);
+
+            if (!hash) {
+                // Compute the hash if it hasn't been computed yet.
+                hash = compute_bytes_hash(&table->key, key.ptr, key.len);
+            }
+
             for (table = table->next; table; table = table->next) {
                 uint16_t head;
-                (void)find_slot(table, key.ptr, key.len, ci, hash, &head);
+                (void)find_slot(table, key.ptr, key.len, hash, &head);
                 if (head != EMPTY) {
-                    *iter = (hwire_table_iter_t){
-                        .table  = table,
-                        .index  = (uint16_t)(head - 1u),
-                        .cached = mode,
-                        .hash   = hash,
-                    };
-                    return &table->entries[iter->index];
+                    uint16_t index = (uint16_t)(head - 1u);
+                    update_iter(iter, table, index, hash);
+                    return &table->entries[index];
                 }
             }
         }
@@ -562,13 +692,19 @@ static const hwire_kv_pair_t *next_key(hwire_table_iter_t *iter, int ci)
 /** Advance to the next exact duplicate at the cursor position. */
 const hwire_kv_pair_t *hwire_table_next(hwire_table_iter_t *iter)
 {
-    return next_key(iter, 0);
+    return find_next_duplicate(iter, iter->hashes[0],
+                               HWIRE_TABLE_CASE_SENSITIVE,
+                               compute_bytes_hash_cs, get_next_index_cs,
+                               find_slot_cs, update_next_iter_cs);
 }
 
 /** Advance to the next ASCII-CI duplicate at the cursor position. */
 const hwire_kv_pair_t *hwire_table_next_ci(hwire_table_iter_t *iter)
 {
-    return next_key(iter, 1);
+    return find_next_duplicate(iter, iter->hashes[1],
+                               HWIRE_TABLE_CASE_INSENSITIVE,
+                               compute_bytes_hash_ci, get_next_index_ci,
+                               find_slot_ci, update_next_iter_ci);
 }
 
 /** Advance after the cursor's current pair; full iteration does not hash keys.

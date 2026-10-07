@@ -108,8 +108,8 @@ typedef struct hwire_table {
 typedef struct {
     const hwire_table_t *table;
     uint16_t index;
-    hwire_table_mode_t cached; /**< Comparison used for hash; zero if absent */
-    uint64_t hash; /**< Cached hash for crossing segments, selected by APIs */
+    uint64_t
+        hashes[2]; /**< [0] exact, [1] ASCII-CI; zero triggers recomputation */
 } hwire_table_iter_t;
 
 /** Results of operations that can reject an input or exhaust pair capacity. */
@@ -150,14 +150,14 @@ void hwire_table_key_init(hwire_table_key_t *key, uint64_t seed);
  *         mode or slots_capacity; HWIRE_TABLE_ECAPACITY for invalid capacity.
  *
  * No allocation occurs. Initialization zeroes the complete index array for
- * the selected mode and slot capacity, leaving the pair array unchanged. The
- * build uses AES hashing when the compiler target enables ARM NEON/AES or x86
- * AES/SSE2/SSSE3, otherwise SipHash-1-3. Use target flags such as -mcpu=native
- * on ARM or -march=native (or -maes -mssse3) on x86. Define HWIRE_NO_AES or
- * HWIRE_NO_SIMD to select SipHash-1-3. There is no runtime CPU check. On
- * invalid arguments the table, entries, and index are unchanged. A successful
- * reset invalidates prior pair and iterator results. Unlink all following
- * segments before resetting a chain root; do not reset a linked segment.
+ * the selected mode and slot capacity, leaving the pair array unchanged. The build uses AES hashing when the compiler target
+ * enables ARM NEON/AES or x86 AES/SSE2/SSSE3, otherwise SipHash-1-3. Use target
+ * flags such as -mcpu=native on ARM or -march=native (or -maes -mssse3) on x86.
+ * Define HWIRE_NO_AES or HWIRE_NO_SIMD to select SipHash-1-3. There is no
+ * runtime CPU check. On invalid arguments the table, entries, and index are
+ * unchanged. A successful reset invalidates prior pair and iterator results.
+ * Unlink all following segments before resetting a chain root; do not reset a
+ * linked segment.
  */
 hwire_table_code_t
 hwire_table_init(hwire_table_t *table, const hwire_table_key_t *key,
@@ -212,15 +212,15 @@ hwire_table_code_t hwire_table_push(hwire_table_t *table,
 
 /**
  * @brief Find the first pair whose key matches exactly, byte for byte.
- * @param table Initialized table.
- * @param key Query bytes; may be NULL only when keylen is zero.
+ * @param table Non-NULL initialized table.
+ * @param key Non-NULL query bytes; use an empty string when keylen is zero.
  * @param keylen Number of query bytes; embedded NUL bytes are significant.
- * @param iter Optional position destination; cleared on failure.
+ * @param iter Optional position destination; unchanged on failure.
  *             Pass NULL for first-match-only lookup.
  * @return First matching pair in push order, or NULL if absent or exact
  *         indexing was disabled during initialization.
  *
- * The table must be initialized; key must be non-NULL if keylen is nonzero.
+ * The table must be initialized; table and key must be non-NULL.
  * Absence is an ordinary lookup result, not an error code. Hashes once and
  * searches following segments in insertion order.
  */
@@ -230,16 +230,16 @@ const hwire_kv_pair_t *hwire_table_get(const hwire_table_t *table,
 
 /**
  * @brief Find the first pair after folding only ASCII A-Z to a-z.
- * @param table Initialized table.
- * @param key Query bytes; may be NULL only when keylen is zero.
+ * @param table Non-NULL initialized table.
+ * @param key Non-NULL query bytes; use an empty string when keylen is zero.
  * @param keylen Number of query bytes; embedded NUL bytes are significant.
- * @param iter Optional position destination; cleared on failure.
+ * @param iter Optional position destination; unchanged on failure.
  *             Pass NULL for first-match-only lookup.
  * @return First matching pair in push order, or NULL if absent or CI indexing
  *         was disabled during initialization.
  *
  * Non-ASCII bytes are compared unchanged; this is not Unicode case folding.
- * The table must be initialized; key must be non-NULL if keylen is nonzero.
+ * The table must be initialized; table and key must be non-NULL.
  */
 const hwire_kv_pair_t *hwire_table_get_ci(const hwire_table_t *table,
                                           const char *key, size_t keylen,
@@ -247,9 +247,11 @@ const hwire_kv_pair_t *hwire_table_get_ci(const hwire_table_t *table,
 
 /**
  * @brief Return the next pair with the same exact key.
- * @param iter Current position from get, get_ci, iterate or next; may be NULL.
- * @return Next exact duplicate in push order, or NULL at the end or when exact
- *         indexing is disabled. Updates iter on success; otherwise unchanged.
+ * @param iter Non-NULL cursor from get, get_ci, iterate or next, or a
+ *             zero-initialized cursor.
+ * @return Next exact duplicate in push order, or NULL for an empty cursor, at
+ * the end, or when exact indexing is disabled. Updates iter on success;
+ * otherwise unchanged.
  *
  * Uses the local duplicate index; crossing segments reuses a cached hash or
  * computes it once if absent or the comparison changed. Comparison is selected
@@ -260,9 +262,10 @@ const hwire_kv_pair_t *hwire_table_next(hwire_table_iter_t *iter);
 
 /**
  * @brief Return the next pair with the same ASCII-CI key.
- * @param iter Current position, or NULL to return NULL.
- * @return Next CI duplicate in push order, or NULL at the end or when CI
- *         indexing is disabled. Updates iter on success; otherwise unchanged.
+ * @param iter Non-NULL current cursor, or a zero-initialized cursor.
+ * @return Next CI duplicate in push order, or NULL for an empty cursor, at the
+ * end, or when CI indexing is disabled. Updates iter on success; otherwise
+ * unchanged.
  *
  * Uses the local duplicate index and a cached hash across segments. Only pairs
  * after the current position are considered; earlier CI matches are not

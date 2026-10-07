@@ -1098,10 +1098,10 @@ const hwire_kv_pair_t *hwire_table_get_ci(const hwire_table_t *table,
 
 Find the first matching pair in insertion order using exact or ASCII
 case-insensitive comparison. Return NULL when no key matches or the requested
-index was not enabled. `table` must be initialized; `key`
-may be NULL only when `keylen` is zero. Pass NULL for `iter` when only the
+index was not enabled. `table` must be initialized; `table` and `key` must
+be non-NULL. Use an empty string for a zero-length query. Pass NULL for `iter` when only the
 first pair is needed. Otherwise lookup records the owning table and
-current entry index; failed lookup clears the cursor. A missing key is an
+current entry index; failed lookup leaves the cursor unchanged. A missing key is an
 ordinary lookup result.
 
 ```c
@@ -1111,11 +1111,12 @@ const hwire_kv_pair_t *hwire_table_next_ci(hwire_table_iter_t *iter);
 
 Follow exact or ASCII case-insensitive duplicates after the current cursor
 position in insertion order. Use a cursor from get, get_ci, iterate or next.
-Return NULL at the end, for a NULL/empty cursor, or when the requested index
-is disabled. On success, update the position; otherwise leave it unchanged.
+The cursor pointer must be non-NULL. Return NULL at the end, for a cursor
+whose table is NULL, or when the requested index is disabled. On success, update the position; otherwise leave it unchanged.
 Within a segment these functions follow duplicate indexes without hashing.
-Across segments they reuse the cached hash; iteration or a changed comparison
-can require one hash calculation. A CI step can change the exact key casing,
+Across segments they reuse separate exact and CI hashes. A zero cache value
+triggers recomputation; a hash whose actual value is zero remains valid for
+lookup but is recalculated when next needed. A CI step can change the exact key casing,
 so the APIs invalidate an exact hash cached for the preceding pair.
 
 Comparison is selected by the called function: get followed by next_ci is

@@ -34,9 +34,6 @@ static const hwire_kv_pair_t *next_from(const hwire_table_t *target,
                                         const hwire_kv_pair_t *current, int ci)
 {
     hwire_table_iter_t iter = {.table = NULL};
-    if (!current) {
-        return ci ? hwire_table_next_ci(NULL) : hwire_table_next(NULL);
-    }
     const hwire_kv_pair_t *entry;
     do {
         entry = hwire_table_iterate(target, &iter);
@@ -236,14 +233,10 @@ static void test_chains(void)
     assert(next_from(&table, ea, 1) == eb);
     assert(next_from(&table, eb, 1) == ec);
     assert(next_from(&table, ec, 1) == NULL);
-    assert(next_from(&table, NULL, 0) == NULL);
-    assert(next_from(&table, NULL, 1) == NULL);
     assert(hwire_table_get_ci(&table, "BAR", 3, NULL) == ed);
     assert(ed->value.ptr == NULL && ed->value.len == 0);
     assert(hwire_table_get(&table, "absent", 6, NULL) == NULL);
     assert(hwire_table_get_ci(&table, "absent", 6, NULL) == NULL);
-    assert(hwire_table_get(NULL, "foo", 3, NULL) == NULL);
-    assert(hwire_table_get_ci(NULL, "foo", 3, NULL) == NULL);
     hwire_table_iter_t it = {.table = NULL};
     assert(hwire_table_iterate(&table, &it) == ea);
     assert(hwire_table_iterate(&table, &it) == eb);
@@ -268,7 +261,7 @@ static void test_binary_and_errors(void)
     const char high_lower[]      = {(char)0xc0, 'a'};
     hwire_kv_pair_t kv           = pair(NULL, 0, "", 0);
     const hwire_kv_pair_t *empty = push(&table, &kv);
-    assert(empty && hwire_table_get(&table, NULL, 0, NULL) == empty);
+    assert(empty && hwire_table_get(&table, "", 0, NULL) == empty);
     assert(empty->value.ptr != NULL);
     kv                           = pair(binary, sizeof binary, "v", 1);
     const hwire_kv_pair_t *first = push(&table, &kv);
@@ -286,8 +279,6 @@ static void test_binary_and_errors(void)
     kv = pair(NULL, 1, NULL, 0);
     assert(hwire_table_push(&table, &kv) == HWIRE_TABLE_EINVAL);
     assert(table.len == 4);
-    assert(hwire_table_get(&table, NULL, 1, NULL) == NULL);
-    assert(hwire_table_get_ci(&table, NULL, 1, NULL) == NULL);
 }
 
 static void test_full_unique(hwire_table_mode_t mode)
@@ -504,7 +495,7 @@ static void test_ci_only(void)
         pair("foo", 3, "C", 1),
         pair(long_key, sizeof(long_key) - 1u, "D", 1),
         pair(lower_long, sizeof(lower_long) - 1u, "E", 1),
-        pair(NULL, 0, NULL, 0),
+        pair("", 0, NULL, 0),
         pair(binary, sizeof binary, NULL, 0),
         pair(lower, sizeof lower, NULL, 0)};
     for (size_t i = 0; i < sizeof indexes / sizeof indexes[0]; i++) {
@@ -532,13 +523,11 @@ static void test_ci_only(void)
            &storage[3]);
     assert(next_from(&t, &storage[3], 1) == &storage[4]);
     assert(next_from(&t, &storage[4], 1) == NULL);
-    assert(hwire_table_get_ci(&t, NULL, 0, NULL) == &storage[5]);
+    assert(hwire_table_get_ci(&t, "", 0, NULL) == &storage[5]);
     assert(hwire_table_get_ci(&t, lower, sizeof lower, NULL) == &storage[6]);
     assert(next_from(&t, &storage[6], 1) == &storage[7]);
     assert(next_from(&t, &storage[7], 1) == NULL);
     assert(hwire_table_get_ci(&t, "absent", 6, NULL) == NULL);
-    assert(next_from(&t, NULL, 0) == NULL);
-    assert(next_from(&t, NULL, 1) == NULL);
     assert(hwire_table_push(&t, &input[0]) == HWIRE_TABLE_EFULL);
     hwire_table_iter_t it = {.table = NULL};
     for (size_t i = 0; i < N; i++) {
@@ -594,8 +583,14 @@ static void test_cursor(void)
     assert(hwire_table_next_ci(&iter) == &entries[1]);
     assert(hwire_table_get_ci(&table, "FOO", 3, &iter) == &entries[0]);
     assert(hwire_table_next(&iter) == &entries[2]);
-    assert(hwire_table_get(&table, "absent", 6, &iter) == NULL);
-    assert(iter.table == NULL && iter.index == 0);
+    {
+        const hwire_table_iter_t before = iter;
+        assert(hwire_table_get(&table, "absent", 6, &iter) == NULL);
+        assert(iter.table == before.table && iter.index == before.index &&
+               iter.hashes[0] == before.hashes[0] &&
+               iter.hashes[1] == before.hashes[1]);
+    }
+    iter = (hwire_table_iter_t){.table = NULL};
     assert(hwire_table_next(&iter) == NULL &&
            hwire_table_next_ci(&iter) == NULL);
     assert(hwire_table_iterate(&table, &iter) == &entries[0]);
@@ -605,14 +600,13 @@ static void test_cursor(void)
     assert(hwire_table_iterate(&table, &iter) == &entries[1]);
     while (hwire_table_iterate(&table, &iter)) {}
     assert(iter.index == 3 && iter.table == &table);
-    assert(hwire_table_get(NULL, "foo", 3, &iter) == NULL &&
-           iter.table == NULL);
-    assert(hwire_table_get(&table, NULL, 1, &iter) == NULL &&
-           iter.table == NULL);
-    assert(hwire_table_get_ci(&table, NULL, 1, &iter) == NULL &&
-           iter.table == NULL);
-    assert(hwire_table_get_ci(&table, "missing", 7, &iter) == NULL &&
-           iter.table == NULL);
+    {
+        const hwire_table_iter_t before = iter;
+        assert(hwire_table_get_ci(&table, "missing", 7, &iter) == NULL);
+        assert(iter.table == before.table && iter.index == before.index &&
+               iter.hashes[0] == before.hashes[0] &&
+               iter.hashes[1] == before.hashes[1]);
+    }
     hwire_table_key_t key = table.key;
     assert(hwire_table_init(&table, &key, HWIRE_TABLE_CASE_SENSITIVE, entries,
                             CAP, index_storage,
@@ -621,8 +615,13 @@ static void test_cursor(void)
     assert(hwire_table_get(&table, "foo", 3, &iter) == &entries[0]);
     assert(hwire_table_next_ci(&iter) == NULL);
     assert(iter.index == 0 && iter.table == &table);
-    assert(hwire_table_get_ci(&table, "foo", 3, &iter) == NULL &&
-           iter.table == NULL);
+    {
+        const hwire_table_iter_t before = iter;
+        assert(hwire_table_get_ci(&table, "foo", 3, &iter) == NULL);
+        assert(iter.table == before.table && iter.index == before.index &&
+               iter.hashes[0] == before.hashes[0] &&
+               iter.hashes[1] == before.hashes[1]);
+    }
     key = table.key;
     assert(hwire_table_init(&table, &key, HWIRE_TABLE_CASE_INSENSITIVE, entries,
                             CAP, index_storage,
@@ -630,8 +629,13 @@ static void test_cursor(void)
     assert(push(&table, &a) == &entries[0]);
     assert(hwire_table_get_ci(&table, "FOO", 3, &iter) == &entries[0]);
     assert(hwire_table_next(&iter) == NULL && iter.index == 0);
-    assert(hwire_table_get(&table, "foo", 3, &iter) == NULL &&
-           iter.table == NULL);
+    {
+        const hwire_table_iter_t before = iter;
+        assert(hwire_table_get(&table, "foo", 3, &iter) == NULL);
+        assert(iter.table == before.table && iter.index == before.index &&
+               iter.hashes[0] == before.hashes[0] &&
+               iter.hashes[1] == before.hashes[1]);
+    }
 }
 
 int main(void)
