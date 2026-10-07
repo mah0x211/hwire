@@ -18,7 +18,7 @@ from report_common import environment, render, message_section
 RESULTS_DIR = Path(__file__).resolve().parents[1] / "results"
 PLATFORM_FILE = RESULTS_DIR / "platform.txt"
 
-CANONICAL_VARIANTS = ["nosimd", "sse2", "neon", "sse42"]
+CANONICAL_VARIANTS = ["nosimd", "sse2", "neon", "sse42", "native"]
 
 def load_results(directory: Path) -> dict[str, dict[str, dict]]:
     """row name -> fixture -> {bytes, samples, iterations, mean, stddev}."""
@@ -75,12 +75,12 @@ def main(include_environment=True) -> None:
         environment(PLATFORM_FILE)
 
     print("\n\n## Parse\n")
-    print("Start line and headers only; each adapter uses stack state. SIMD labels\n"
+    print("Start line and headers only; native initialization or reset is timed. SIMD labels\n"
           "identify compiler targets, rather than guaranteeing SIMD use by every library.\n"
-          "Unlabelled rows use the nosimd build configuration.\n"
+          "Scalar rows disable explicit parser SIMD and compiler loop vectorization.\n\n"
           "† Target RCIW was not reached. Relative compares the fastest build for each fixture.\n")
-    suffixes = {"nosimd": "", "sse2": " (SSE2)", "sse42": " (SSE4.2)",
-                "neon": " (NEON)", "default": ""}
+    suffixes = {"nosimd": " (scalar)", "sse2": " (SSE2)", "sse42": " (SSE4.2)",
+                "neon": " (NEON)", "native": " (native)", "default": ""}
     fixtures = sorted({fixture for row in data.values() for fixture in row})
     for fixture in fixtures:
         message_section(fixture)
