@@ -2,7 +2,7 @@
 CC ?= cc
 CXX ?= c++
 AR ?= ar
-CFLAGS ?= -O2 -DNDEBUG -std=c99
+CFLAGS ?= -O2 -DNDEBUG -std=c11
 CXXFLAGS ?= -O2 -DNDEBUG -std=c++17
 BIN := bin
 RESULTS := results/storage
@@ -39,7 +39,7 @@ run growth: build
 	@mkdir -p $(RESULTS)
 	@sh ../platform.sh $(RESULTS)/platform.txt '$(CC)' '$(CFLAGS)'
 	@printf 'cxx: %s\ncxxflags: %s\n' '$(CXX)' '$(CXXFLAGS)' >> $(RESULTS)/platform.txt
-	@python3 -c 'import json; from pathlib import Path; Path("$(RESULTS)/active.json").write_text(json.dumps("$(REGISTRATIONS)".split()))'
+	@python3 -c 'import json; from pathlib import Path; Path("$(RESULTS)/active.json").write_text(json.dumps([name+"-"+variant for name in "$(REGISTRATIONS)".split() for variant in "$(VARIANTS)".split()]))'
 	@for b in $(BINS); do ./$$b --describe || exit 1; done >> $(RESULTS)/platform.txt
 	@for b in $(BINS); do ./$$b $(if $(filter growth,$@),--growth,) || exit 1; done
 	@$(MAKE) --no-print-directory report

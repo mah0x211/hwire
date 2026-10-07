@@ -22,31 +22,34 @@ Zero-allocation `HTTP/1.1` parser written in `C99` or later.
 
 ## Benchmark
 
-A self-contained benchmark suite lives in [`bench/`](bench/): one plain-C
-driver measures hwire (always compiled from the current sources) and any
-third-party parser dropped in under `bench/parsers/`, over realistic
-2026-traffic fixtures (modern browser navigation, logged-in cookie-heavy
-requests, API calls, CDN assets, ...). It builds per SIMD variant
-(`nosimd`/`sse2`/`sse42`/`avx2` on x86-64, `nosimd`/`neon` on ARM64) and
-reports time per message and throughput.
+Three independent benchmark suites live in [bench/](bench/):
+HTTP parsing, hashmap operations, and production request/header processing.
+Each implementation owns its dependency-fetch and build configuration.
 
 ```sh
 cd bench
-make               # run every variant and print the comparison
-make request       # or make response: one direction only
+make             # all three suites
+make parsers     # parser only
+make hashmaps    # map operations and memory
+make production  # native request/header storage and lookup
 ```
 
-Headline numbers from the reference hosts (full tables and platform
-details in [`bench/README.md`](bench/README.md#sample-results)):
+Detailed configurations and results are in [Parsers](bench/parsers/README.md),
+[Hashmaps](bench/hashmaps/README.md) and [Production](bench/production/README.md).
 
-| host (variant) | request: browser page load (669 B) | request: logged-in browser (1213 B) | response: HTML page (842 B) | response: JSON API (1122 B) |
-|---|---:|---:|---:|---:|
-| Apple M1 Max (`neon`) | 172 ns, 3.9 GB/s | 175 ns, 7.0 GB/s | 188 ns, 4.5 GB/s | 288 ns, 3.9 GB/s |
-| Ryzen 7 PRO 4750GE (`sse42`, 3.09 GHz) | 176 ns, 3.8 GB/s | 193 ns, 6.3 GB/s | 193 ns, 4.4 GB/s | 275 ns, 4.1 GB/s |
+### Parser-only benchmark
 
-On these workloads NEON is 1.2-1.7x the scalar build on ARM64, and
-`-msse4.2` is the fastest x86-64 configuration.
+The hwire results below measure start-line and header parsing with stack state.
+Sampling targets a 2% relative confidence interval width, with 20–100 samples
+and approximately 1 ms per sample. Cells show **ns/message (M messages/s)**;
+† marks an unmet RCIW target.
 
+| Fixture | Bytes | Scalar | SSE2 | SSE4.2 |
+| --- | --- | --- | --- | --- |
+| Browser GET request | 900 | 411.2 (2.43) | 250.3 (3.99) | 218.6 (4.57) |
+| S3 API request | 941 | 427.6 (2.34) | 252.1 (3.97) | 228.3 (4.38) |
+| Browser response | 950 | 406.5 (2.46) | 247.3 (4.04) | 229.0 (4.37) |
+| No Content response | 105 | 58.5 (17.08) † | 44.4 (22.51) | 48.7 (20.51) |
 
 ## RFC Compliance
 
@@ -104,7 +107,7 @@ Copy `src/hwire.h` and `src/hwire.c` into your project and compile `hwire.c` tog
 cc -std=c99 -Isrc -o myapp myapp.c src/hwire.c  # C11 or later also works
 ```
 
-`SIMD` code paths are selected automatically at compile time based on the target architecture. To force a specific instruction set, pass the appropriate compiler flag (e.g., `-msse4.2` for `SSE4.2` on `x86-64`); scalar fallback is used when no supported `SIMD` macro is defined. Building with `-mavx2` (or `-march=native` on AVX2-capable hardware) is supported and uses the `SSE4.2` paths, which measure fastest for typical header traffic.
+`SIMD` code paths are selected automatically at compile time based on the target architecture. To force a specific instruction set, pass the appropriate compiler flag (e.g., `-msse4.2` for `SSE4.2` on `x86-64`); scalar fallback is used when no supported `SIMD` macro is defined. Use `-march=native` to enable the build machine's supported instruction sets.
 
 Define `HWIRE_NO_SIMD` (e.g. `-DHWIRE_NO_SIMD`) to force the portable scalar implementation on any target, regardless of the detected architecture. `make test-nosimd` builds and runs the test suite in this configuration.
 
@@ -135,7 +138,7 @@ cc -std=c99 -O2 -mcpu=native -Isrc -o myapp myapp.c src/hwire.c src/hwire_table.
 
 On x86-64, use `-march=native` or `-maes -mssse3` instead. If the required
 features are not enabled, the table uses SipHash-1-3. Define `HWIRE_NO_AES`
-(e.g. `-DHWIRE_NO_AES`) to force SipHash-1-3, or `HWIRE_NO_SIMD` to disable
+(e.g. `-DHWIRE_NO_AES`) to force SipHash-1-3, or `-DHWIRE_NO_SIMD` to disable
 both parser SIMD and table AES. No runtime CPU detection is performed.
 
 ### Tests

@@ -1,8 +1,28 @@
 # Benchmarking Hashmaps
 
-Compare `hwire_table`, CC, `absl::flat_hash_map`, and khashl as storage for
-HTTP header and query key/value slices. Case-sensitive and ASCII
+Compare hashmap storage for HTTP header and query key/value slices.
+Case-sensitive and ASCII
 case-insensitive maps are measured separately. HTTP parsing is excluded.
+
+
+## Workloads
+
+| Scenario | Keys | Initial reserve | Storage acquisition |
+|---|---:|---:|---|
+| Reserved | 32 / 64 / 128 | Same as key count | Before insert/lookup timing; included in build |
+| Growth, allocated | 256 | 32 | Standard library allocation |
+
+The driver selects keys from the pre-generated
+[header corpus](../data/headers/headers_512.h). It removes ASCII-CI duplicates,
+then shuffles with seed 42 and takes prefixes without replacement. Every map,
+mode and sample uses the same sets. Key/value slices borrow immutable corpus
+storage. Hit queries use separate buffers; CI queries swap ASCII casing.
+Miss keys use the corpus's first-byte replacement. This controls key sizes
+without claiming to reproduce the frequency of headers in browser traffic.
+
+Adapter code contains storage operations only, with no
+timers, samples or result validation.
+
 
 ## Metrics
 
@@ -22,71 +42,10 @@ Cleanup runs after timing. Build includes initial allocation, initialization
 and all insertions. Insert excludes initial setup and includes allocations
 triggered by expansion. Lookup setup and input preparation are outside timing.
 
-For `Q` lookups and hit fraction `p`, compare total map work as
-`build + Q * (p * hit + (1-p) * miss)`. If construction is slower but lookup is
-faster, the break-even count is the extra build time divided by the per-lookup
-saving, rounded up. Means give an estimate; small differences and unmet RCIW
-targets limit its precision.
-
 Memory excludes borrowed key/value contents and system allocator metadata.
 
-## Configuration
 
-All maps use the same seeded hwire hash backend. Native x86 builds enable
-AES via `-march=native`; `make VARIANTS=siphash` selects SipHash-1-3 with
-`-DHWIRE_NO_AES`. khashl consumes the low 32 bits according to its native
-32-bit hash interface. External maps call a shared hash bridge; hwire may
-inline its hash. This difference is included in timings.
-
-CI comparisons in all adapters fold and compare eight bytes at a time,
-with bytewise handling of the remainder. CC retains its comparison ordering
-when keys differ.
-
-Release builds use `-O2 -DNDEBUG`. The platform file records the compiler,
-flags and hash backend. Published measurements use the x86 reference system.
-
-## Workloads
-
-| Scenario | Keys | Initial reserve | Storage acquisition |
-|---|---:|---:|---|
-| Reserved | 32 / 64 / 128 | Same as key count | Before insert/lookup timing; included in build |
-| Growth, allocated | 256 | 32 | Standard library allocation |
-
-The driver selects keys from the pre-generated
-[header corpus](../data/headers/headers_512.h). It removes ASCII-CI duplicates,
-then shuffles with seed 42 and takes prefixes without replacement. Every map,
-mode and sample uses the same sets. Key/value slices borrow immutable corpus
-storage. Hit queries use separate buffers; CI queries swap ASCII casing.
-Miss keys use the corpus's first-byte replacement. This controls key sizes
-without claiming to reproduce the frequency of headers in browser traffic.
-
-hwire is measured with 2N, 4N and 8N slots per segment. All three use the
-same implementation and segment capacities; only index slot capacity differs.
-At full pair capacity their slot occupancies are 50%, 25% and 12.5%. Linked
-segments report the aggregate load: total stored keys / total hash slots.
-Adapters compute load from the populated containers; the driver does not
-substitute the input key count. Growth segments are 32+32+64+128: initial
-storage plus three extensions. CC, Abseil and khashl reserve enough space for
-32 keys, then grow naturally during insertion. Extension counts are reported
-from native capacity transitions. Equal extension counts do not imply equal
-allocation call counts, resize points, memory use, or rehash work.
-
-hwire can fill every entry in its configured pair arrays while retaining spare
-hash slots for probing. All workloads here use 100% of its entry capacity,
-including every segment of the 32+32+64+128 growth chain. Entry-capacity usage
-and slot load are separate: full entry arrays correspond to 50%, 25% and
-12.5% slot load for 2N, 4N and 8N respectively.
-
-CC, Abseil and khashl store entries within their hash slots. The tables compare
-slot load and allocated bytes; entry-capacity usage is described here as a
-property of hwire's separate pair arrays.
-
-CC and khashl use a key descriptor plus a copied KV value; Abseil stores the
-same KV value with its key. hwire stores each KV once in its pair array.
-These native representation costs are included in the memory measurements.
-
-Adapter code contains storage operations only, with no
-timers, samples or result validation.
+### Sampling
 
 Sampling starts with 20 samples and checks every 10 up to 100. Target RCIW
 is 2% (full interval width / mean), using Student-t intervals with Bonferroni
@@ -97,34 +56,8 @@ The mean cost of an empty timer pair is calibrated before measurement and
 subtracted from each measured interval. Build/insert time a complete population; hit/miss time repeated complete
 traversals, amortizing timer calls. No fixed lookup-count scenario is added.
 
-## Commands
 
-| Command | Action |
-|---|---|
-| `make` / `make run` | Build and measure all four scenarios |
-| `make setup` | Fetch the pinned dependencies of registered adapters |
-| `make build` | Fetch dependencies and build the timing binaries |
-| `make growth` | Measure only the expansion scenario |
-| `make report` | Render saved CSVs as Markdown tables |
-| `python3 scripts/report_hashmaps.py --write-readme` | Replace the Benchmark section with saved results |
-| `make adapters` | Build adapter archives for the parser suite |
-| `make check` | Build and check only the statistical helper |
-| `make list` | List registered maps |
-| `make clean` | Remove build artifacts, retain results |
-
-The first setup requires network access, `curl` and `tar`. Subsequent setup
-runs reuse the fetched revisions. Builds also require Make, Python 3, a C99
-compiler and a C++17 compiler. Dependency acquisition completes before timing.
-
-Results are saved locally in `results/storage/<map>-<variant>.csv` and excluded
-from version control. The generated tables are published in this README.
-`--quick` runs a short development measurement, not publication sampling.
-`--map ID` selects one registered adapter. `--metadata` outputs actual load factors
-without timing or replacing saved results. Directory prefixes `_` disable
-adapters and their configurations, including dependencies, without changing
-the driver.
-
-## Registration
+## Adding a Benchmark Target
 
 Add `<name>/hashmap.c` or `<name>/hashmap.cpp`, using a directory name that
 matches `[A-Za-z][A-Za-z0-9_]*`. Registration and `maplist.c`
@@ -171,8 +104,7 @@ registered adapter directories are tracked as build dependencies.
 ### Adapter contract
 
 - Use the library's standard allocator and `hashmap_hash.h` for the common
-  hash. Initialize the shared hash seed to 42 in external-map constructors;
-  hwire constructors initialize their own table key with the same seed.
+  hash. Initialize hash keys with seed 42 in constructors.
 - Copy the `hwire_kv_pair_t` descriptor into the map. Its key/value bytes are
   borrowed from immutable input that remains alive until context destruction.
 - Case-sensitive contexts compare keys by length and exact bytes. CI contexts
@@ -207,7 +139,7 @@ the next population; adapters must not reuse a previously populated map.
  * Return a stable display name for CSV rows and progress output.
  * Called outside timed intervals; the returned string must remain valid for
  * the entire benchmark run. Include the configuration when names would
- * otherwise be ambiguous, for example "hwire_table (4N)". Use a name without
+ * otherwise be ambiguous, for example "Map (configuration)". Use a name without
  * commas or line breaks because it is written as a CSV field.
  *
  * @return A borrowed, non-NULL, NUL-terminated display name.
@@ -240,8 +172,8 @@ void *name_hashmap_new_ci(size_t capacity);
 /**
  * Create an empty case-sensitive map for the allocated-growth workload.
  * Reserve 32 keys initially; final_capacity is the final dataset size, not
- * the initial reservation. Pushes use native automatic growth; hwire links
- * additional segments of 32, 64 and 128 entries. Do not reserve the full
+ * the initial reservation. Pushes use the implementation's growth mechanism.
+ * Do not reserve the full
  * dataset or preallocate expansion blocks in this constructor.
  * Initial allocation/initialization is inside Build timing and outside Insert
  * and Hit/Miss timing. Allocation and initialization triggered by pushes are
@@ -344,7 +276,7 @@ double name_hashmap_loadfactor(const void *context);
 /**
  * Report capacity extensions after the initial reservation.
  * Called only during untimed metadata preparation. Count native capacity
- * transitions or appended hwire segments. Doubling implementations may derive
+ * transitions or appended storage segments. Doubling implementations may derive
  * the count from initial and final slot capacities. Initial reservation is
  * excluded; an extension can involve multiple allocation calls.
  *
@@ -360,36 +292,183 @@ An adapter may also export `name_hashmap_new_exact_<config>`,
 `name_hashmap_new_ci_<config>`, their `new_growth_` counterparts and
 `name_hashmap_name_<config>`. The generator discovers these constructor
 suffixes and registers additional configurations sharing the base adapter's
-lookup, insertion and cleanup functions. hwire uses `4n` and `8n`; the base
-configuration is 2N. No implementation names are embedded in registration.
+lookup, insertion and cleanup functions. Configuration suffixes and display
+names are supplied by adapters; registration embeds no implementation names.
 
 # Benchmark
 
-## Implementations
+<!-- benchmark-environment -->
+## Environment
 
-| Map | Source |
+```text
+date                 : 2026-10-07T09:59:53+09:00
+uname                : Linux 6.8.0-110-generic x86_64
+os                   : Ubuntu 24.04.3 LTS
+cpu                  : AMD Ryzen 7 PRO 4750GE with Radeon Graphics
+clock                : 3.09 GHz
+cores                : 1
+memory               : 887 MiB
+cache l1-Data        : 64K
+cache l1-Instruction : 64K
+cache l2-Unified     : 512K
+cache l3-Unified     : 16384K
+virtualization       : kvm
+hash                 : AES
+```
+<!-- /benchmark-environment -->
+
+## Requirements
+
+- GNU Make: Build and run the suite.
+- Python 3.10+: Register adapters, generate inputs and render reports.
+- C11 compiler and linker: Compile the driver and C adapters.
+- C++17 compiler and `ar`: Build C++ adapters and static archives.
+- `curl`, `tar` and network access: Fetch pinned dependencies during initial setup.
+
+Dependencies are fetched before timing. Repeated setup reuses downloaded
+revisions; each target owns its `fetch.sh` and `config.mk`.
+
+
+## Commands
+
+| Command | Action |
 |---|---|
-| hwire_table | [hwire/hashmap.c](hwire/hashmap.c), current library |
-| CC | [cc/hashmap.cpp](cc/hashmap.cpp), CC v1.4.3 (fixed revision in `cc/fetch.sh`) |
-| absl::flat_hash_map | [abseil/hashmap.cpp](abseil/hashmap.cpp), Abseil 20260817.0 |
-| khashl | [khashl/hashmap.c](khashl/hashmap.c), revision pinned in [UPSTREAM.md](khashl/UPSTREAM.md) |
+| `make` / `make run` | Build and measure all four scenarios |
+| `make setup` | Fetch the pinned dependencies of registered adapters |
+| `make build` | Fetch dependencies and build the timing binaries |
+| `make growth` | Measure only the expansion scenario |
+| `make report` | Render saved CSVs as Markdown tables |
+| `python3 scripts/report_hashmaps.py --write-readme` | Replace the Benchmark section with saved results |
+| `make adapters` | Build adapter static libraries |
+| `make check` | Build and check only the statistical helper |
+| `make list` | List registered maps |
+| `make clean` | Remove build artifacts, retain results |
 
-## Measurements
+Results are saved locally in `results/storage/<map>-<variant>.csv` and excluded
+from version control. The generated tables are published in this README.
+`--quick` runs a short development measurement, not publication sampling.
+`--map ID` selects one registered adapter. `--metadata` outputs actual load factors
+without timing or replacing saved results. Directory prefixes `_` disable
+adapters and their configurations, including dependencies, without changing
+the driver.
 
-### Environment and build
 
-| Setting | Value |
-|---|---|
-| Measurement date | 2026-10-06 |
-| CPU | AMD Ryzen 7 PRO 4750GE |
-| OS | Ubuntu 24.04.3 LTS |
-| Virtualization | KVM, one virtual CPU |
-| Compilers | GCC / G++ 13.3 |
-| C flags | `-O2 -DNDEBUG -std=c99 -march=native` |
-| C++ flags | `-O2 -DNDEBUG -std=c++17 -march=native` |
-| Hash backend | Native AES |
+### Configuration
 
-### Sampling and precision
+Native x86 builds use `-march=native`. `make VARIANTS=siphash` selects
+the fallback hash build. Hashing and comparison details
+for the supplied adapters are documented under Benchmark.
+
+Release builds use `-O2 -DNDEBUG`. The platform file records the compiler,
+flags and hash backend. Published measurements use the x86 reference system.
+
+
+## Benchmark Targets
+
+Compiler and flag entries below record the published measurements.
+
+Compare fixed-capacity linked tables with three expandable maps, using C/C++
+adapters for borrowed HTTP header and query key/value slices. Each target is
+measured with case-sensitive and ASCII case-insensitive keys.
+
+All targets use the same seeded hash backend: native AES, or SipHash-1-3 with
+`make VARIANTS=siphash`. ASCII-CI comparisons fold and compare eight bytes at a
+time, with bytewise handling of the remainder. Adapters report load from native
+containers. Equal extension counts do not imply equal allocation counts, resize
+points, memory use or rehash work.
+
+### hwire_table
+
+Caller-supplied pair/index arrays support fixed capacities and linked expansion,
+while retaining insertion order and duplicate values.
+
+<details>
+<summary>Adapter and build details</summary>
+
+- Adapter: [hashmap.c](hwire/hashmap.c)
+- Library: Current sources in `../../src/`
+- Compiler: <!-- compiler:compiler -->`cc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0`<!-- /compiler -->
+- CFLAGS: <!-- flags:cflags -->`-O2 -DNDEBUG -std=c11`<!-- /flags -->
+  - `native`: `-march=native` on x86-64; `-mcpu=native` on ARM.
+  - `siphash`: Native flags plus `-DHWIRE_NO_AES`; selects SipHash-1-3 for the shared hash backend.
+- Build: `C`; native CPU target; AES hash; 2N / 4N / 8N slot configurations
+
+Only index slot capacity differs between configurations. Every pair array is
+filled completely; slot loads are 50%, 25% and 12.5% respectively. Growth uses
+32+32+64+128 entries: the initial segment plus three extensions. Linked tables
+report aggregate slot load. Each KV is stored once in the pair array, and the
+hash may be inlined.
+
+</details>
+
+
+### CC
+
+An expandable map with custom hashing/comparison for borrowed string keys.
+
+<details>
+<summary>Adapter and build details</summary>
+
+- Adapter: [hashmap.cpp](cc/hashmap.cpp)
+- Library: CC v1.4.3, revision pinned in [fetch.sh](cc/fetch.sh)
+- Compiler: <!-- compiler:cxx -->`g++`<!-- /compiler -->
+- CFLAGS: <!-- flags:cxxflags -->`-O2 -DNDEBUG -std=c++17`<!-- /flags --> (CXXFLAGS)
+  - `native`: `-march=native` on x86-64; `-mcpu=native` on ARM.
+  - `siphash`: Native flags plus `-DHWIRE_NO_AES`; selects SipHash-1-3 for the shared hash backend.
+- Build: `C++17` adapter; native CPU target; shared AES hash
+
+Reserve 32 keys for growth, then use native automatic expansion. The map stores
+a key descriptor and copied KV value. Custom CI comparison retains CC's ordering
+when keys differ. Hashing calls the shared bridge.
+
+</details>
+
+
+### absl::flat_hash_map
+
+An expandable C++ flat hash map with custom hashing and key equality.
+
+<details>
+<summary>Adapter and build details</summary>
+
+- Adapter: [hashmap.cpp](abseil/hashmap.cpp)
+- Library: Abseil 20260817.0, revision pinned in [fetch.sh](abseil/fetch.sh)
+- Compiler: <!-- compiler:cxx -->`g++`<!-- /compiler -->
+- CFLAGS: <!-- flags:cxxflags -->`-O2 -DNDEBUG -std=c++17`<!-- /flags --> (CXXFLAGS)
+  - `native`: `-march=native` on x86-64; `-mcpu=native` on ARM.
+  - `siphash`: Native flags plus `-DHWIRE_NO_AES`; selects SipHash-1-3 for the shared hash backend.
+- Build: `C++17`; native CPU target; shared AES hash
+
+Reserve 32 keys for growth, then use native automatic expansion. The map stores
+the copied KV value with its key. Hashing calls the shared bridge.
+
+</details>
+
+
+### khashl
+
+An expandable C hash map with custom hashing and equality for borrowed keys.
+
+<details>
+<summary>Adapter and build details</summary>
+
+- Adapter: [hashmap.c](khashl/hashmap.c)
+- Library: Revision pinned in [UPSTREAM.md](khashl/UPSTREAM.md) and [fetch.sh](khashl/fetch.sh)
+- Compiler: <!-- compiler:compiler -->`cc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0`<!-- /compiler -->
+- CFLAGS: <!-- flags:cflags -->`-O2 -DNDEBUG -std=c11`<!-- /flags -->
+  - `native`: `-march=native` on x86-64; `-mcpu=native` on ARM.
+  - `siphash`: Native flags plus `-DHWIRE_NO_AES`; selects SipHash-1-3 for the shared hash backend.
+- Build: `C`; native CPU target; shared AES hash (low 32 bits)
+
+Reserve 32 keys for growth, then use native automatic expansion. The map stores
+a key descriptor and copied KV value. Its native hash interface consumes the
+low 32 bits of the shared hash bridge result. Native representation costs are
+included in memory measurements for every target.
+
+</details>
+
+
+## Sampling and precision
 
 | Setting / result | Value |
 |---|---|
@@ -413,10 +492,10 @@ Exact byte comparisons. Store 32, 64 or 128 unique keys with storage reserved fo
 
 Cleanup runs outside all timed intervals.
 
-Insert excludes initial setup and includes any expansion triggered by insertion. Hit and miss measure the fully populated maps.
-
 
 ### Memory
+
+Final live container/storage bytes; borrowed key/value contents and allocator metadata are excluded.
 
 **32 keys**
 
@@ -454,151 +533,163 @@ Insert excludes initial setup and includes any expansion triggered by insertion.
 
 ### Build
 
+Initial acquisition and initialization plus all insertions; any expansion is included.
+
 **32 keys**
 
 | Map                 | Mean ± SD (ns/table) | Relative | Mops/s | Samples | RCIW  |
 | ------------------- | -------------------- | -------- | ------ | ------- | ----- |
-| khashl              | 368.36 ±3.57         | 1.00×    | 2.71   | 20      | 1.35% |
-| hwire_table (8N)    | 397.08 ±3.42         | 1.08×    | 2.52   | 20      | 1.21% |
-| hwire_table (4N)    | 399.62 ±3.40         | 1.08×    | 2.50   | 20      | 1.19% |
-| hwire_table (2N)    | 409.19 ±2.99         | 1.11×    | 2.44   | 20      | 1.02% |
-| CC                  | 412.59 ±2.28         | 1.12×    | 2.42   | 20      | 0.77% |
-| absl::flat_hash_map | 600.38 ±3.45         | 1.63×    | 1.67   | 20      | 0.80% |
+| khashl              | 351.15 ±3.15         | 1.00×    | 2.85   | 20      | 1.25% |
+| hwire_table (8N)    | 397.81 ±3.85         | 1.13×    | 2.51   | 20      | 1.35% |
+| hwire_table (4N)    | 400.40 ±4.47         | 1.14×    | 2.50   | 20      | 1.56% |
+| hwire_table (2N)    | 409.19 ±3.96         | 1.17×    | 2.44   | 20      | 1.35% |
+| CC                  | 417.46 ±2.99         | 1.19×    | 2.40   | 20      | 1.00% |
+| absl::flat_hash_map | 591.10 ±4.31         | 1.68×    | 1.69   | 20      | 1.02% |
 
 **64 keys**
 
 | Map                 | Mean ± SD (ns/table) | Relative | Mops/s | Samples | RCIW  |
 | ------------------- | -------------------- | -------- | ------ | ------- | ----- |
-| khashl              | 669.91 ±4.79         | 1.00×    | 1.49   | 20      | 1.00% |
-| hwire_table (4N)    | 807.91 ±4.47         | 1.21×    | 1.24   | 20      | 0.77% |
-| hwire_table (8N)    | 814.44 ±3.74         | 1.22×    | 1.23   | 20      | 0.64% |
-| hwire_table (2N)    | 814.90 ±10.50        | 1.22×    | 1.23   | 20      | 1.80% |
-| CC                  | 835.52 ±4.34         | 1.25×    | 1.20   | 20      | 0.73% |
-| absl::flat_hash_map | 1192.88 ±6.19        | 1.78×    | 0.84   | 20      | 0.73% |
+| khashl              | 649.66 ±2.20         | 1.00×    | 1.54   | 20      | 0.47% |
+| hwire_table (4N)    | 806.13 ±10.72        | 1.24×    | 1.24   | 30      | 1.45% |
+| hwire_table (8N)    | 812.57 ±3.30         | 1.25×    | 1.23   | 20      | 0.57% |
+| hwire_table (2N)    | 824.55 ±6.96         | 1.27×    | 1.21   | 20      | 1.18% |
+| CC                  | 828.93 ±3.17         | 1.28×    | 1.21   | 20      | 0.53% |
+| absl::flat_hash_map | 1189.70 ±10.40       | 1.83×    | 0.84   | 20      | 1.22% |
 
 **128 keys**
 
 | Map                 | Mean ± SD (ns/table) | Relative | Mops/s | Samples | RCIW  |
 | ------------------- | -------------------- | -------- | ------ | ------- | ----- |
-| khashl              | 1293.90 ±4.38        | 1.00×    | 0.77   | 20      | 0.47% |
-| CC                  | 1598.19 ±22.20       | 1.24×    | 0.63   | 30      | 1.52% |
-| hwire_table (4N)    | 1616.14 ±5.49        | 1.25×    | 0.62   | 20      | 0.48% |
-| hwire_table (2N)    | 1625.63 ±8.09        | 1.26×    | 0.62   | 20      | 0.70% |
-| hwire_table (8N)    | 1633.45 ±5.21        | 1.26×    | 0.61   | 20      | 0.45% |
-| absl::flat_hash_map | 2440.47 ±9.09        | 1.89×    | 0.41   | 20      | 0.52% |
+| khashl              | 1278.32 ±10.10       | 1.00×    | 0.78   | 20      | 1.10% |
+| CC                  | 1588.28 ±4.95        | 1.24×    | 0.63   | 20      | 0.44% |
+| hwire_table (4N)    | 1599.16 ±5.77        | 1.25×    | 0.63   | 20      | 0.50% |
+| hwire_table (8N)    | 1622.36 ±7.69        | 1.27×    | 0.62   | 20      | 0.66% |
+| hwire_table (2N)    | 1623.38 ±38.89       | 1.27×    | 0.62   | 60      | 1.78% |
+| absl::flat_hash_map | 2441.12 ±59.09       | 1.91×    | 0.41   | 60      | 1.80% |
 
 
 ### Insert
 
+Insertions only; initial setup is excluded and insertion-triggered expansion is included.
+
 **32 keys**
 
 | Map                 | Mean ± SD (ns/key) | Relative | Mops/s | Samples | RCIW  |
 | ------------------- | ------------------ | -------- | ------ | ------- | ----- |
-| khashl              | 9.44 ±0.15         | 1.00×    | 105.88 | 30      | 1.70% |
-| hwire_table (8N)    | 11.56 ±0.06        | 1.22×    | 86.51  | 20      | 0.77% |
-| hwire_table (4N)    | 11.75 ±0.05        | 1.24×    | 85.07  | 20      | 0.63% |
-| hwire_table (2N)    | 11.94 ±0.06        | 1.26×    | 83.77  | 20      | 0.69% |
-| CC                  | 12.09 ±0.11        | 1.28×    | 82.73  | 20      | 1.31% |
-| absl::flat_hash_map | 17.52 ±0.36        | 1.86×    | 57.08  | 40      | 1.89% |
+| khashl              | 8.75 ±0.06         | 1.00×    | 114.29 | 20      | 0.92% |
+| hwire_table (8N)    | 11.58 ±0.17        | 1.32×    | 86.36  | 30      | 1.60% |
+| hwire_table (4N)    | 11.72 ±0.10        | 1.34×    | 85.32  | 20      | 1.18% |
+| hwire_table (2N)    | 11.92 ±0.10        | 1.36×    | 83.89  | 20      | 1.16% |
+| CC                  | 12.20 ±0.23        | 1.39×    | 81.97  | 40      | 1.76% |
+| absl::flat_hash_map | 17.14 ±0.09        | 1.96×    | 58.34  | 20      | 0.71% |
 
 **64 keys**
 
 | Map                 | Mean ± SD (ns/key) | Relative | Mops/s | Samples | RCIW  |
 | ------------------- | ------------------ | -------- | ------ | ------- | ----- |
-| khashl              | 9.37 ±0.05         | 1.00×    | 106.69 | 20      | 0.82% |
-| hwire_table (8N)    | 12.16 ±0.09        | 1.30×    | 82.21  | 20      | 1.02% |
-| hwire_table (4N)    | 12.16 ±0.05        | 1.30×    | 82.20  | 20      | 0.52% |
-| hwire_table (2N)    | 12.32 ±0.05        | 1.31×    | 81.19  | 20      | 0.57% |
-| CC                  | 12.56 ±0.06        | 1.34×    | 79.63  | 20      | 0.66% |
-| absl::flat_hash_map | 17.93 ±0.09        | 1.91×    | 55.77  | 20      | 0.71% |
+| khashl              | 9.04 ±0.05         | 1.00×    | 110.62 | 20      | 0.70% |
+| hwire_table (4N)    | 11.99 ±0.10        | 1.33×    | 83.40  | 20      | 1.17% |
+| hwire_table (8N)    | 12.15 ±0.07        | 1.34×    | 82.30  | 20      | 0.81% |
+| hwire_table (2N)    | 12.38 ±0.08        | 1.37×    | 80.78  | 20      | 0.92% |
+| CC                  | 12.43 ±0.08        | 1.38×    | 80.45  | 20      | 0.88% |
+| absl::flat_hash_map | 17.82 ±0.11        | 1.97×    | 56.12  | 20      | 0.87% |
 
 **128 keys**
 
-| Map                 | Mean ± SD (ns/key) | Relative | Mops/s | Samples | RCIW          |
-| ------------------- | ------------------ | -------- | ------ | ------- | ------------- |
-| khashl              | 10.12 ±1.13        | 1.00×    | 98.79  | 100     | 6.35% (unmet) |
-| CC                  | 12.23 ±0.06        | 1.21×    | 81.75  | 20      | 0.63%         |
-| hwire_table (2N)    | 12.39 ±0.07        | 1.22×    | 80.71  | 20      | 0.82%         |
-| hwire_table (4N)    | 12.42 ±0.07        | 1.23×    | 80.52  | 20      | 0.76%         |
-| hwire_table (8N)    | 12.50 ±0.05        | 1.23×    | 80.00  | 20      | 0.54%         |
-| absl::flat_hash_map | 18.74 ±0.06        | 1.85×    | 53.37  | 20      | 0.44%         |
+| Map                 | Mean ± SD (ns/key) | Relative | Mops/s | Samples | RCIW  |
+| ------------------- | ------------------ | -------- | ------ | ------- | ----- |
+| khashl              | 9.45 ±0.18         | 1.00×    | 105.82 | 40      | 1.75% |
+| CC                  | 12.17 ±0.13        | 1.29×    | 82.17  | 20      | 1.50% |
+| hwire_table (4N)    | 12.20 ±0.07        | 1.29×    | 81.97  | 20      | 0.77% |
+| hwire_table (2N)    | 12.28 ±0.08        | 1.30×    | 81.43  | 20      | 0.86% |
+| hwire_table (8N)    | 12.29 ±0.05        | 1.30×    | 81.37  | 20      | 0.61% |
+| absl::flat_hash_map | 18.53 ±0.06        | 1.96×    | 53.97  | 20      | 0.44% |
 
 
 ### Hit
 
+Successful searches in the fully populated map, with equal frequency for each selected key.
+
 **32 keys**
 
 | Map                 | Mean ± SD (ns/lookup) | Relative | Mops/s | Samples | RCIW  |
 | ------------------- | --------------------- | -------- | ------ | ------- | ----- |
-| khashl              | 10.04 ±0.06           | 1.00×    | 99.59  | 20      | 0.90% |
-| CC                  | 10.32 ±0.03           | 1.03×    | 96.91  | 20      | 0.47% |
-| hwire_table (8N)    | 11.44 ±0.16           | 1.14×    | 87.44  | 30      | 1.50% |
-| hwire_table (4N)    | 11.55 ±0.08           | 1.15×    | 86.58  | 20      | 1.00% |
-| absl::flat_hash_map | 13.58 ±0.07           | 1.35×    | 73.64  | 20      | 0.71% |
-| hwire_table (2N)    | 16.36 ±0.22           | 1.63×    | 61.11  | 20      | 1.85% |
+| khashl              | 9.96 ±0.21            | 1.00×    | 100.40 | 50      | 1.76% |
+| CC                  | 10.24 ±0.08           | 1.03×    | 97.66  | 20      | 1.10% |
+| hwire_table (8N)    | 11.34 ±0.09           | 1.14×    | 88.18  | 20      | 1.05% |
+| hwire_table (4N)    | 11.56 ±0.20           | 1.16×    | 86.51  | 40      | 1.61% |
+| absl::flat_hash_map | 13.62 ±0.11           | 1.37×    | 73.42  | 20      | 1.11% |
+| hwire_table (2N)    | 16.31 ±0.38           | 1.64×    | 61.31  | 60      | 1.72% |
 
 **64 keys**
 
-| Map                 | Mean ± SD (ns/lookup) | Relative | Mops/s | Samples | RCIW  |
-| ------------------- | --------------------- | -------- | ------ | ------- | ----- |
-| CC                  | 11.29 ±0.14           | 1.00×    | 88.56  | 20      | 1.71% |
-| hwire_table (4N)    | 12.24 ±0.11           | 1.08×    | 81.71  | 20      | 1.25% |
-| hwire_table (8N)    | 12.39 ±0.06           | 1.10×    | 80.72  | 20      | 0.67% |
-| hwire_table (2N)    | 12.60 ±0.07           | 1.12×    | 79.38  | 20      | 0.75% |
-| khashl              | 14.15 ±0.03           | 1.25×    | 70.66  | 20      | 0.34% |
-| absl::flat_hash_map | 14.49 ±0.10           | 1.28×    | 69.02  | 20      | 0.99% |
+| Map                 | Mean ± SD (ns/lookup) | Relative | Mops/s | Samples | RCIW          |
+| ------------------- | --------------------- | -------- | ------ | ------- | ------------- |
+| khashl              | 10.78 ±0.29           | 1.00×    | 92.76  | 60      | 1.97%         |
+| CC                  | 11.24 ±0.23           | 1.04×    | 88.97  | 50      | 1.71%         |
+| hwire_table (4N)    | 11.86 ±0.08           | 1.10×    | 84.32  | 20      | 0.94%         |
+| hwire_table (8N)    | 12.04 ±0.32           | 1.12×    | 83.06  | 60      | 2.00%         |
+| hwire_table (2N)    | 12.82 ±1.56           | 1.19×    | 78.00  | 100     | 6.90% (unmet) |
+| absl::flat_hash_map | 14.63 ±0.11           | 1.36×    | 68.35  | 20      | 1.02%         |
 
 **128 keys**
 
 | Map                 | Mean ± SD (ns/lookup) | Relative | Mops/s | Samples | RCIW          |
 | ------------------- | --------------------- | -------- | ------ | ------- | ------------- |
-| CC                  | 11.76 ±0.03           | 1.00×    | 85.07  | 20      | 0.37%         |
-| khashl              | 12.48 ±0.17           | 1.06×    | 80.14  | 20      | 1.94%         |
-| hwire_table (8N)    | 12.73 ±0.05           | 1.08×    | 78.54  | 20      | 0.58%         |
-| hwire_table (2N)    | 13.29 ±1.27           | 1.13×    | 75.22  | 100     | 5.41% (unmet) |
-| absl::flat_hash_map | 15.51 ±0.08           | 1.32×    | 64.46  | 20      | 0.72%         |
-| hwire_table (4N)    | 16.57 ±0.05           | 1.41×    | 60.36  | 20      | 0.46%         |
+| CC                  | 11.75 ±0.04           | 1.00×    | 85.11  | 20      | 0.42%         |
+| khashl              | 12.30 ±0.04           | 1.05×    | 81.30  | 20      | 0.49%         |
+| hwire_table (8N)    | 12.41 ±0.06           | 1.06×    | 80.58  | 20      | 0.62%         |
+| hwire_table (2N)    | 12.54 ±0.37           | 1.07×    | 79.74  | 90      | 1.79%         |
+| hwire_table (4N)    | 12.85 ±0.87           | 1.09×    | 77.82  | 100     | 3.83% (unmet) |
+| absl::flat_hash_map | 15.71 ±0.08           | 1.34×    | 63.65  | 20      | 0.74%         |
 
 
 ### Miss
 
+Unsuccessful searches in the fully populated map using the prepared miss keys.
+
 **32 keys**
 
-| Map                 | Mean ± SD (ns/lookup) | Relative | Mops/s | Samples | RCIW          |
-| ------------------- | --------------------- | -------- | ------ | ------- | ------------- |
-| CC                  | 7.81 ±0.03            | 1.00×    | 128.10 | 20      | 0.57%         |
-| khashl              | 8.55 ±0.09            | 1.10×    | 116.91 | 20      | 1.42%         |
-| absl::flat_hash_map | 8.69 ±0.02            | 1.11×    | 115.04 | 20      | 0.36%         |
-| hwire_table (8N)    | 9.43 ±0.05            | 1.21×    | 106.05 | 20      | 0.79%         |
-| hwire_table (4N)    | 9.74 ±0.04            | 1.25×    | 102.63 | 20      | 0.58%         |
-| hwire_table (2N)    | 10.52 ±0.40           | 1.35×    | 95.04  | 100     | 2.17% (unmet) |
+| Map                 | Mean ± SD (ns/lookup) | Relative | Mops/s | Samples | RCIW  |
+| ------------------- | --------------------- | -------- | ------ | ------- | ----- |
+| CC                  | 7.42 ±0.02            | 1.00×    | 134.77 | 20      | 0.42% |
+| hwire_table (8N)    | 8.32 ±0.25            | 1.12×    | 120.19 | 90      | 1.81% |
+| khashl              | 8.42 ±0.03            | 1.13×    | 118.76 | 20      | 0.57% |
+| hwire_table (4N)    | 8.56 ±0.04            | 1.15×    | 116.82 | 20      | 0.70% |
+| absl::flat_hash_map | 8.70 ±0.03            | 1.17×    | 114.94 | 20      | 0.54% |
+| hwire_table (2N)    | 9.86 ±0.11            | 1.33×    | 101.42 | 20      | 1.53% |
 
 **64 keys**
 
 | Map                 | Mean ± SD (ns/lookup) | Relative | Mops/s | Samples | RCIW          |
 | ------------------- | --------------------- | -------- | ------ | ------- | ------------- |
-| CC                  | 7.40 ±0.04            | 1.00×    | 135.22 | 20      | 0.75%         |
-| khashl              | 8.55 ±0.04            | 1.16×    | 116.94 | 20      | 0.61%         |
-| absl::flat_hash_map | 9.58 ±0.13            | 1.30×    | 104.42 | 20      | 1.95%         |
-| hwire_table (4N)    | 9.95 ±0.37            | 1.34×    | 100.54 | 100     | 2.09% (unmet) |
-| hwire_table (8N)    | 10.07 ±0.05           | 1.36×    | 99.26  | 20      | 0.63%         |
-| hwire_table (2N)    | 10.87 ±0.08           | 1.47×    | 91.97  | 20      | 1.09%         |
+| CC                  | 7.36 ±0.13            | 1.00×    | 135.87 | 40      | 1.64%         |
+| khashl              | 8.85 ±0.11            | 1.20×    | 112.99 | 20      | 1.69%         |
+| hwire_table (8N)    | 9.16 ±0.05            | 1.24×    | 109.17 | 20      | 0.74%         |
+| hwire_table (4N)    | 9.20 ±0.45            | 1.25×    | 108.70 | 100     | 2.77% (unmet) |
+| absl::flat_hash_map | 9.68 ±0.13            | 1.32×    | 103.31 | 20      | 1.93%         |
+| hwire_table (2N)    | 9.68 ±0.04            | 1.32×    | 103.31 | 20      | 0.56%         |
 
 **128 keys**
 
 | Map                 | Mean ± SD (ns/lookup) | Relative | Mops/s | Samples | RCIW  |
 | ------------------- | --------------------- | -------- | ------ | ------- | ----- |
-| CC                  | 7.38 ±0.06            | 1.00×    | 135.54 | 20      | 1.23% |
-| absl::flat_hash_map | 9.91 ±0.07            | 1.34×    | 100.91 | 20      | 1.03% |
-| hwire_table (4N)    | 10.60 ±0.15           | 1.44×    | 94.32  | 20      | 1.99% |
-| hwire_table (8N)    | 10.67 ±0.03           | 1.45×    | 93.71  | 20      | 0.43% |
-| hwire_table (2N)    | 10.88 ±0.38           | 1.48×    | 91.88  | 100     | 1.99% |
-| khashl              | 11.63 ±0.03           | 1.58×    | 86.01  | 20      | 0.34% |
+| CC                  | 7.52 ±0.05            | 1.00×    | 132.98 | 20      | 0.95% |
+| khashl              | 9.19 ±0.10            | 1.22×    | 108.81 | 20      | 1.47% |
+| hwire_table (4N)    | 9.31 ±0.07            | 1.24×    | 107.41 | 20      | 1.10% |
+| hwire_table (8N)    | 9.46 ±0.21            | 1.26×    | 105.71 | 50      | 1.83% |
+| absl::flat_hash_map | 9.96 ±0.11            | 1.32×    | 100.40 | 20      | 1.59% |
+| hwire_table (2N)    | 9.98 ±0.03            | 1.33×    | 100.20 | 20      | 0.39% |
 
 
-### Build + Lookup Total Cost
+### First Lookup Cost and Break-even
 
-Estimated from measured means as Build + Q × lookup time, rather than a timed first lookup immediately after construction. Each table uses the fastest Build + 1 lookup as its baseline. The crossover column is the minimum total lookup count Q that makes a map faster than that baseline; No crossover means it cannot overtake under this model. † marks an input with unmet Target RCIW; small timing differences make crossover estimates uncertain.
+Estimate the total time to build and populate a map and perform its first key lookup. Each table shows that total, the per-lookup cost, and how many lookups are needed for faster searches to recover a higher construction cost.
+
+Totals use the displayed means: `Build + Q × lookup mean`. Hit and Miss are shown separately; for hit fraction p, the combined estimate is `Build + Q × (p × hit + (1 − p) × miss)`. Lookup costs are measured on a fully populated warm map; the first-lookup total is estimated, not timed immediately after construction.
+
+Each table uses the fastest Build + 1 lookup as its baseline. The crossover is the first integer Q that beats that baseline; No crossover means it cannot overtake under this model. † marks an input with unmet Target RCIW; small timing differences make crossover estimates uncertain.
 
 
 #### Build + Hit
@@ -607,34 +698,34 @@ Estimated from measured means as Build + Q × lookup time, rather than a timed f
 
 | Map                 | Build + 1 Hit (µs) | Relative | Hit Mean ± SD (ns/lookup) | Lookups to beat baseline |
 | ------------------- | ------------------ | -------- | ------------------------- | ------------------------ |
-| khashl              | 0.378              | 1.00×    | 10.04 ±0.06               | Baseline                 |
-| hwire_table (8N)    | 0.409              | 1.08×    | 11.44 ±0.16               | No crossover             |
-| hwire_table (4N)    | 0.411              | 1.09×    | 11.55 ±0.08               | No crossover             |
-| CC                  | 0.423              | 1.12×    | 10.32 ±0.03               | No crossover             |
-| hwire_table (2N)    | 0.426              | 1.12×    | 16.36 ±0.22               | No crossover             |
-| absl::flat_hash_map | 0.614              | 1.62×    | 13.58 ±0.07               | No crossover             |
+| khashl              | 0.361              | 1.00×    | 9.96 ±0.21                | Baseline                 |
+| hwire_table (8N)    | 0.409              | 1.13×    | 11.34 ±0.09               | No crossover             |
+| hwire_table (4N)    | 0.412              | 1.14×    | 11.56 ±0.20               | No crossover             |
+| hwire_table (2N)    | 0.425              | 1.18×    | 16.31 ±0.38               | No crossover             |
+| CC                  | 0.428              | 1.18×    | 10.24 ±0.08               | No crossover             |
+| absl::flat_hash_map | 0.605              | 1.67×    | 13.62 ±0.11               | No crossover             |
 
 **64 keys**
 
 | Map                 | Build + 1 Hit (µs) | Relative | Hit Mean ± SD (ns/lookup) | Lookups to beat baseline |
 | ------------------- | ------------------ | -------- | ------------------------- | ------------------------ |
-| khashl              | 0.684              | 1.00×    | 14.15 ±0.03               | Baseline                 |
-| hwire_table (4N)    | 0.820              | 1.20×    | 12.24 ±0.11               | 73                       |
-| hwire_table (8N)    | 0.827              | 1.21×    | 12.39 ±0.06               | 82                       |
-| hwire_table (2N)    | 0.828              | 1.21×    | 12.60 ±0.07               | 94                       |
-| CC                  | 0.847              | 1.24×    | 11.29 ±0.14               | 58                       |
-| absl::flat_hash_map | 1.207              | 1.76×    | 14.49 ±0.10               | No crossover             |
+| khashl              | 0.660              | 1.00×    | 10.78 ±0.29               | Baseline                 |
+| hwire_table (4N)    | 0.818              | 1.24×    | 11.86 ±0.08               | No crossover             |
+| hwire_table (8N)    | 0.825              | 1.25×    | 12.04 ±0.32               | No crossover             |
+| hwire_table (2N) †  | 0.837              | 1.27×    | 12.82 ±1.56               | No crossover             |
+| CC                  | 0.840              | 1.27×    | 11.24 ±0.23               | No crossover             |
+| absl::flat_hash_map | 1.204              | 1.82×    | 14.63 ±0.11               | No crossover             |
 
 **128 keys**
 
 | Map                 | Build + 1 Hit (µs) | Relative | Hit Mean ± SD (ns/lookup) | Lookups to beat baseline |
 | ------------------- | ------------------ | -------- | ------------------------- | ------------------------ |
-| khashl              | 1.306              | 1.00×    | 12.48 ±0.17               | Baseline                 |
-| CC                  | 1.610              | 1.23×    | 11.76 ±0.03               | 421                      |
-| hwire_table (4N)    | 1.633              | 1.25×    | 16.57 ±0.05               | No crossover             |
-| hwire_table (2N) †  | 1.639              | 1.25×    | 13.29 ±1.27               | No crossover             |
-| hwire_table (8N)    | 1.646              | 1.26×    | 12.73 ±0.05               | No crossover             |
-| absl::flat_hash_map | 2.456              | 1.88×    | 15.51 ±0.08               | No crossover             |
+| khashl              | 1.291              | 1.00×    | 12.30 ±0.04               | Baseline                 |
+| CC                  | 1.600              | 1.24×    | 11.75 ±0.04               | 564                      |
+| hwire_table (4N) †  | 1.612              | 1.25×    | 12.85 ±0.87               | No crossover             |
+| hwire_table (8N)    | 1.635              | 1.27×    | 12.41 ±0.06               | No crossover             |
+| hwire_table (2N)    | 1.636              | 1.27×    | 12.54 ±0.37               | No crossover             |
+| absl::flat_hash_map | 2.457              | 1.90×    | 15.71 ±0.08               | No crossover             |
 
 
 #### Build + Miss
@@ -643,34 +734,34 @@ Estimated from measured means as Build + Q × lookup time, rather than a timed f
 
 | Map                 | Build + 1 Miss (µs) | Relative | Miss Mean ± SD (ns/lookup) | Lookups to beat baseline |
 | ------------------- | ------------------- | -------- | -------------------------- | ------------------------ |
-| khashl              | 0.377               | 1.00×    | 8.55 ±0.09                 | Baseline                 |
-| hwire_table (8N)    | 0.407               | 1.08×    | 9.43 ±0.05                 | No crossover             |
-| hwire_table (4N)    | 0.409               | 1.09×    | 9.74 ±0.04                 | No crossover             |
-| hwire_table (2N) †  | 0.420               | 1.11×    | 10.52 ±0.40                | No crossover             |
-| CC                  | 0.420               | 1.12×    | 7.81 ±0.03                 | 60                       |
-| absl::flat_hash_map | 0.609               | 1.62×    | 8.69 ±0.02                 | No crossover             |
+| khashl              | 0.360               | 1.00×    | 8.42 ±0.03                 | Baseline                 |
+| hwire_table (8N)    | 0.406               | 1.13×    | 8.32 ±0.25                 | 467                      |
+| hwire_table (4N)    | 0.409               | 1.14×    | 8.56 ±0.04                 | No crossover             |
+| hwire_table (2N)    | 0.419               | 1.17×    | 9.86 ±0.11                 | No crossover             |
+| CC                  | 0.425               | 1.18×    | 7.42 ±0.02                 | 67                       |
+| absl::flat_hash_map | 0.600               | 1.67×    | 8.70 ±0.03                 | No crossover             |
 
 **64 keys**
 
 | Map                 | Build + 1 Miss (µs) | Relative | Miss Mean ± SD (ns/lookup) | Lookups to beat baseline |
 | ------------------- | ------------------- | -------- | -------------------------- | ------------------------ |
-| khashl              | 0.678               | 1.00×    | 8.55 ±0.04                 | Baseline                 |
-| hwire_table (4N) †  | 0.818               | 1.21×    | 9.95 ±0.37                 | No crossover             |
-| hwire_table (8N)    | 0.825               | 1.22×    | 10.07 ±0.05                | No crossover             |
-| hwire_table (2N)    | 0.826               | 1.22×    | 10.87 ±0.08                | No crossover             |
-| CC                  | 0.843               | 1.24×    | 7.40 ±0.04                 | 144                      |
-| absl::flat_hash_map | 1.202               | 1.77×    | 9.58 ±0.13                 | No crossover             |
+| khashl              | 0.659               | 1.00×    | 8.85 ±0.11                 | Baseline                 |
+| hwire_table (4N) †  | 0.815               | 1.24×    | 9.20 ±0.45                 | No crossover             |
+| hwire_table (8N)    | 0.822               | 1.25×    | 9.16 ±0.05                 | No crossover             |
+| hwire_table (2N)    | 0.834               | 1.27×    | 9.68 ±0.04                 | No crossover             |
+| CC                  | 0.836               | 1.27×    | 7.36 ±0.13                 | 121                      |
+| absl::flat_hash_map | 1.199               | 1.82×    | 9.68 ±0.13                 | No crossover             |
 
 **128 keys**
 
 | Map                 | Build + 1 Miss (µs) | Relative | Miss Mean ± SD (ns/lookup) | Lookups to beat baseline |
 | ------------------- | ------------------- | -------- | -------------------------- | ------------------------ |
-| khashl              | 1.306               | 1.00×    | 11.63 ±0.03                | Baseline                 |
-| CC                  | 1.606               | 1.23×    | 7.38 ±0.06                 | 72                       |
-| hwire_table (4N)    | 1.627               | 1.25×    | 10.60 ±0.15                | 315                      |
-| hwire_table (2N)    | 1.637               | 1.25×    | 10.88 ±0.38                | 447                      |
-| hwire_table (8N)    | 1.644               | 1.26×    | 10.67 ±0.03                | 356                      |
-| absl::flat_hash_map | 2.450               | 1.88×    | 9.91 ±0.07                 | 669                      |
+| khashl              | 1.288               | 1.00×    | 9.19 ±0.10                 | Baseline                 |
+| CC                  | 1.596               | 1.24×    | 7.52 ±0.05                 | 186                      |
+| hwire_table (4N)    | 1.608               | 1.25×    | 9.31 ±0.07                 | No crossover             |
+| hwire_table (8N)    | 1.632               | 1.27×    | 9.46 ±0.21                 | No crossover             |
+| hwire_table (2N)    | 1.633               | 1.27×    | 9.98 ±0.03                 | No crossover             |
+| absl::flat_hash_map | 2.451               | 1.90×    | 9.96 ±0.11                 | No crossover             |
 
 
 ## Case-Insensitive Reserved Capacity
@@ -679,10 +770,10 @@ ASCII case-insensitive comparisons. Store 32, 64 or 128 unique keys with storage
 
 Cleanup runs outside all timed intervals.
 
-Insert excludes initial setup and includes any expansion triggered by insertion. Hit and miss measure the fully populated maps.
-
 
 ### Memory
+
+Final live container/storage bytes; borrowed key/value contents and allocator metadata are excluded.
 
 **32 keys**
 
@@ -720,151 +811,163 @@ Insert excludes initial setup and includes any expansion triggered by insertion.
 
 ### Build
 
+Initial acquisition and initialization plus all insertions; any expansion is included.
+
 **32 keys**
 
 | Map                 | Mean ± SD (ns/table) | Relative | Mops/s | Samples | RCIW  |
 | ------------------- | -------------------- | -------- | ------ | ------- | ----- |
-| khashl              | 414.39 ±2.44         | 1.00×    | 2.41   | 20      | 0.82% |
-| hwire_table (8N)    | 435.28 ±3.07         | 1.05×    | 2.30   | 20      | 0.99% |
-| hwire_table (4N)    | 436.62 ±2.66         | 1.05×    | 2.29   | 20      | 0.85% |
-| hwire_table (2N)    | 455.86 ±2.36         | 1.10×    | 2.19   | 20      | 0.72% |
-| CC                  | 489.98 ±2.88         | 1.18×    | 2.04   | 20      | 0.82% |
-| absl::flat_hash_map | 650.54 ±4.62         | 1.57×    | 1.54   | 20      | 0.99% |
+| khashl              | 403.77 ±1.56         | 1.00×    | 2.48   | 20      | 0.54% |
+| hwire_table (8N)    | 434.14 ±1.96         | 1.08×    | 2.30   | 20      | 0.63% |
+| hwire_table (4N)    | 437.24 ±2.41         | 1.08×    | 2.29   | 20      | 0.77% |
+| hwire_table (2N)    | 450.10 ±2.23         | 1.11×    | 2.22   | 20      | 0.69% |
+| CC                  | 477.56 ±1.68         | 1.18×    | 2.09   | 20      | 0.49% |
+| absl::flat_hash_map | 644.97 ±2.52         | 1.60×    | 1.55   | 20      | 0.55% |
 
 **64 keys**
 
 | Map                 | Mean ± SD (ns/table) | Relative | Mops/s | Samples | RCIW  |
 | ------------------- | -------------------- | -------- | ------ | ------- | ----- |
-| khashl              | 757.57 ±5.15         | 1.00×    | 1.32   | 20      | 0.95% |
-| hwire_table (2N)    | 875.30 ±3.64         | 1.16×    | 1.14   | 20      | 0.58% |
-| hwire_table (8N)    | 885.95 ±4.47         | 1.17×    | 1.13   | 20      | 0.70% |
-| hwire_table (4N)    | 886.98 ±3.63         | 1.17×    | 1.13   | 20      | 0.57% |
-| CC                  | 913.14 ±4.26         | 1.21×    | 1.10   | 20      | 0.65% |
-| absl::flat_hash_map | 1294.48 ±4.83        | 1.71×    | 0.77   | 20      | 0.52% |
+| khashl              | 741.66 ±2.95         | 1.00×    | 1.35   | 20      | 0.56% |
+| hwire_table (4N)    | 875.68 ±4.56         | 1.18×    | 1.14   | 20      | 0.73% |
+| hwire_table (2N)    | 880.25 ±14.96        | 1.19×    | 1.14   | 30      | 1.86% |
+| hwire_table (8N)    | 885.21 ±4.71         | 1.19×    | 1.13   | 20      | 0.74% |
+| CC                  | 897.34 ±12.58        | 1.21×    | 1.11   | 20      | 1.96% |
+| absl::flat_hash_map | 1291.88 ±6.77        | 1.74×    | 0.77   | 20      | 0.73% |
 
 **128 keys**
 
-| Map                 | Mean ± SD (ns/table) | Relative | Mops/s | Samples | RCIW  |
-| ------------------- | -------------------- | -------- | ------ | ------- | ----- |
-| khashl              | 1472.01 ±12.44       | 1.00×    | 0.68   | 20      | 1.18% |
-| CC                  | 1716.14 ±10.21       | 1.17×    | 0.58   | 20      | 0.83% |
-| hwire_table (2N)    | 1783.54 ±4.05        | 1.21×    | 0.56   | 20      | 0.32% |
-| hwire_table (8N)    | 1786.24 ±8.15        | 1.21×    | 0.56   | 20      | 0.64% |
-| hwire_table (4N)    | 1797.64 ±7.27        | 1.22×    | 0.56   | 20      | 0.57% |
-| absl::flat_hash_map | 2625.31 ±7.49        | 1.78×    | 0.38   | 20      | 0.40% |
+| Map                 | Mean ± SD (ns/table) | Relative | Mops/s | Samples | RCIW          |
+| ------------------- | -------------------- | -------- | ------ | ------- | ------------- |
+| khashl              | 1447.90 ±5.78        | 1.00×    | 0.69   | 20      | 0.56%         |
+| CC                  | 1718.79 ±90.66       | 1.19×    | 0.58   | 100     | 2.99% (unmet) |
+| hwire_table (8N)    | 1764.77 ±6.10        | 1.22×    | 0.57   | 20      | 0.48%         |
+| hwire_table (2N)    | 1776.32 ±14.14       | 1.23×    | 0.56   | 20      | 1.11%         |
+| hwire_table (4N)    | 1776.77 ±8.13        | 1.23×    | 0.56   | 20      | 0.64%         |
+| absl::flat_hash_map | 2621.18 ±7.75        | 1.81×    | 0.38   | 20      | 0.41%         |
 
 
 ### Insert
 
+Insertions only; initial setup is excluded and insertion-triggered expansion is included.
+
 **32 keys**
 
 | Map                 | Mean ± SD (ns/key) | Relative | Mops/s | Samples | RCIW  |
 | ------------------- | ------------------ | -------- | ------ | ------- | ----- |
-| khashl              | 10.78 ±0.07        | 1.00×    | 92.77  | 20      | 0.88% |
-| hwire_table (8N)    | 12.90 ±0.17        | 1.20×    | 77.50  | 20      | 1.86% |
-| hwire_table (4N)    | 12.94 ±0.08        | 1.20×    | 77.27  | 20      | 0.88% |
-| hwire_table (2N)    | 13.59 ±0.09        | 1.26×    | 73.60  | 20      | 0.96% |
-| CC                  | 14.30 ±0.10        | 1.33×    | 69.92  | 20      | 1.01% |
-| absl::flat_hash_map | 18.86 ±0.10        | 1.75×    | 53.03  | 20      | 0.73% |
+| khashl              | 10.40 ±0.05        | 1.00×    | 96.15  | 20      | 0.70% |
+| hwire_table (8N)    | 12.79 ±0.06        | 1.23×    | 78.19  | 20      | 0.64% |
+| hwire_table (4N)    | 12.96 ±0.17        | 1.25×    | 77.16  | 20      | 1.84% |
+| hwire_table (2N)    | 13.30 ±0.06        | 1.28×    | 75.19  | 20      | 0.67% |
+| CC                  | 14.37 ±0.33        | 1.38×    | 69.59  | 50      | 1.86% |
+| absl::flat_hash_map | 18.74 ±0.09        | 1.80×    | 53.36  | 20      | 0.70% |
 
 **64 keys**
 
 | Map                 | Mean ± SD (ns/key) | Relative | Mops/s | Samples | RCIW  |
 | ------------------- | ------------------ | -------- | ------ | ------- | ----- |
-| khashl              | 10.81 ±0.06        | 1.00×    | 92.47  | 20      | 0.80% |
-| hwire_table (2N)    | 13.30 ±0.08        | 1.23×    | 75.20  | 20      | 0.81% |
-| hwire_table (8N)    | 13.39 ±0.05        | 1.24×    | 74.67  | 20      | 0.50% |
-| hwire_table (4N)    | 13.48 ±0.08        | 1.25×    | 74.17  | 20      | 0.80% |
-| CC                  | 13.72 ±0.08        | 1.27×    | 72.89  | 20      | 0.82% |
-| absl::flat_hash_map | 19.54 ±0.11        | 1.81×    | 51.19  | 20      | 0.80% |
+| khashl              | 10.49 ±0.04        | 1.00×    | 95.33  | 20      | 0.54% |
+| hwire_table (8N)    | 13.26 ±0.05        | 1.26×    | 75.41  | 20      | 0.55% |
+| hwire_table (4N)    | 13.31 ±0.17        | 1.27×    | 75.13  | 20      | 1.74% |
+| hwire_table (2N)    | 13.35 ±0.06        | 1.27×    | 74.91  | 20      | 0.60% |
+| CC                  | 13.57 ±0.08        | 1.29×    | 73.69  | 20      | 0.81% |
+| absl::flat_hash_map | 19.47 ±0.15        | 1.86×    | 51.36  | 20      | 1.05% |
 
 **128 keys**
 
 | Map                 | Mean ± SD (ns/key) | Relative | Mops/s | Samples | RCIW  |
 | ------------------- | ------------------ | -------- | ------ | ------- | ----- |
-| khashl              | 10.86 ±0.05        | 1.00×    | 92.08  | 20      | 0.65% |
-| CC                  | 13.08 ±0.10        | 1.20×    | 76.44  | 20      | 1.07% |
-| hwire_table (8N)    | 13.69 ±0.06        | 1.26×    | 73.05  | 20      | 0.63% |
-| hwire_table (2N)    | 13.71 ±0.04        | 1.26×    | 72.95  | 20      | 0.45% |
-| hwire_table (4N)    | 13.82 ±0.06        | 1.27×    | 72.36  | 20      | 0.59% |
-| absl::flat_hash_map | 20.15 ±0.28        | 1.86×    | 49.63  | 30      | 1.53% |
+| khashl              | 10.77 ±0.04        | 1.00×    | 92.85  | 20      | 0.50% |
+| CC                  | 13.03 ±0.05        | 1.21×    | 76.75  | 20      | 0.56% |
+| hwire_table (8N)    | 13.49 ±0.05        | 1.25×    | 74.13  | 20      | 0.54% |
+| hwire_table (4N)    | 13.63 ±0.05        | 1.27×    | 73.37  | 20      | 0.51% |
+| hwire_table (2N)    | 13.73 ±0.27        | 1.27×    | 72.83  | 50      | 1.60% |
+| absl::flat_hash_map | 20.09 ±0.07        | 1.87×    | 49.78  | 20      | 0.52% |
 
 
 ### Hit
 
+Successful searches in the fully populated map, with equal frequency for each selected key.
+
 **32 keys**
 
 | Map                 | Mean ± SD (ns/lookup) | Relative | Mops/s | Samples | RCIW  |
 | ------------------- | --------------------- | -------- | ------ | ------- | ----- |
-| khashl              | 18.14 ±0.47           | 1.00×    | 55.13  | 70      | 1.79% |
-| CC                  | 18.59 ±0.20           | 1.02×    | 53.80  | 20      | 1.54% |
-| hwire_table (8N)    | 18.69 ±0.19           | 1.03×    | 53.52  | 20      | 1.46% |
-| hwire_table (4N)    | 18.72 ±0.13           | 1.03×    | 53.43  | 20      | 1.00% |
-| hwire_table (2N)    | 19.02 ±0.18           | 1.05×    | 52.57  | 20      | 1.29% |
-| absl::flat_hash_map | 21.75 ±0.19           | 1.20×    | 45.99  | 20      | 1.20% |
+| khashl              | 17.79 ±0.10           | 1.00×    | 56.21  | 20      | 0.77% |
+| CC                  | 18.18 ±0.07           | 1.02×    | 55.01  | 20      | 0.51% |
+| hwire_table (8N)    | 18.38 ±0.15           | 1.03×    | 54.41  | 20      | 1.12% |
+| hwire_table (4N)    | 18.47 ±0.12           | 1.04×    | 54.14  | 20      | 0.93% |
+| hwire_table (2N)    | 18.82 ±0.07           | 1.06×    | 53.13  | 20      | 0.49% |
+| absl::flat_hash_map | 21.25 ±0.07           | 1.19×    | 47.06  | 20      | 0.47% |
 
 **64 keys**
 
 | Map                 | Mean ± SD (ns/lookup) | Relative | Mops/s | Samples | RCIW  |
 | ------------------- | --------------------- | -------- | ------ | ------- | ----- |
-| khashl              | 17.96 ±0.37           | 1.00×    | 55.69  | 40      | 1.92% |
-| CC                  | 18.02 ±0.10           | 1.00×    | 55.50  | 20      | 0.76% |
-| hwire_table (4N)    | 18.29 ±0.09           | 1.02×    | 54.67  | 20      | 0.71% |
-| hwire_table (8N)    | 18.30 ±0.08           | 1.02×    | 54.64  | 20      | 0.60% |
-| hwire_table (2N)    | 18.44 ±0.17           | 1.03×    | 54.22  | 20      | 1.32% |
-| absl::flat_hash_map | 21.49 ±0.18           | 1.20×    | 46.54  | 20      | 1.16% |
+| khashl              | 17.71 ±0.10           | 1.00×    | 56.47  | 20      | 0.76% |
+| CC                  | 17.85 ±0.19           | 1.01×    | 56.02  | 20      | 1.49% |
+| hwire_table (8N)    | 18.13 ±0.09           | 1.02×    | 55.16  | 20      | 0.66% |
+| hwire_table (4N)    | 18.28 ±0.12           | 1.03×    | 54.70  | 20      | 0.92% |
+| hwire_table (2N)    | 18.42 ±0.07           | 1.04×    | 54.29  | 20      | 0.55% |
+| absl::flat_hash_map | 21.17 ±0.10           | 1.20×    | 47.24  | 20      | 0.69% |
 
 **128 keys**
 
 | Map                 | Mean ± SD (ns/lookup) | Relative | Mops/s | Samples | RCIW  |
 | ------------------- | --------------------- | -------- | ------ | ------- | ----- |
-| hwire_table (4N)    | 19.36 ±0.07           | 1.00×    | 51.64  | 20      | 0.53% |
-| hwire_table (2N)    | 19.37 ±0.26           | 1.00×    | 51.62  | 30      | 1.47% |
-| hwire_table (8N)    | 19.58 ±0.12           | 1.01×    | 51.08  | 20      | 0.87% |
-| khashl              | 19.77 ±0.09           | 1.02×    | 50.58  | 20      | 0.61% |
-| CC                  | 19.79 ±0.04           | 1.02×    | 50.52  | 20      | 0.29% |
-| absl::flat_hash_map | 22.81 ±0.29           | 1.18×    | 43.84  | 20      | 1.80% |
+| CC                  | 18.95 ±0.20           | 1.00×    | 52.77  | 20      | 1.46% |
+| khashl              | 19.02 ±0.12           | 1.00×    | 52.58  | 20      | 0.89% |
+| hwire_table (4N)    | 19.43 ±0.04           | 1.03×    | 51.47  | 20      | 0.32% |
+| hwire_table (8N)    | 19.55 ±0.08           | 1.03×    | 51.15  | 20      | 0.54% |
+| hwire_table (2N)    | 19.63 ±0.09           | 1.04×    | 50.94  | 20      | 0.61% |
+| absl::flat_hash_map | 22.54 ±0.67           | 1.19×    | 44.37  | 90      | 1.79% |
 
 
 ### Miss
 
+Unsuccessful searches in the fully populated map using the prepared miss keys.
+
 **32 keys**
 
 | Map                 | Mean ± SD (ns/lookup) | Relative | Mops/s | Samples | RCIW  |
 | ------------------- | --------------------- | -------- | ------ | ------- | ----- |
-| CC                  | 7.86 ±0.10            | 1.00×    | 127.29 | 30      | 1.46% |
-| khashl              | 8.29 ±0.03            | 1.06×    | 120.57 | 20      | 0.52% |
-| hwire_table (8N)    | 9.66 ±0.12            | 1.23×    | 103.49 | 20      | 1.78% |
-| hwire_table (4N)    | 9.84 ±0.02            | 1.25×    | 101.63 | 20      | 0.33% |
-| absl::flat_hash_map | 10.55 ±0.14           | 1.34×    | 94.81  | 20      | 1.82% |
-| hwire_table (2N)    | 12.71 ±0.04           | 1.62×    | 78.66  | 20      | 0.48% |
+| CC                  | 7.75 ±0.04            | 1.00×    | 129.03 | 20      | 0.64% |
+| khashl              | 8.35 ±0.03            | 1.08×    | 119.76 | 20      | 0.53% |
+| hwire_table (8N)    | 9.30 ±0.10            | 1.20×    | 107.53 | 20      | 1.47% |
+| hwire_table (4N)    | 9.43 ±0.06            | 1.22×    | 106.04 | 20      | 0.89% |
+| absl::flat_hash_map | 10.43 ±0.18           | 1.35×    | 95.88  | 30      | 1.91% |
+| hwire_table (2N)    | 12.67 ±0.05           | 1.63×    | 78.93  | 20      | 0.53% |
 
 **64 keys**
 
 | Map                 | Mean ± SD (ns/lookup) | Relative | Mops/s | Samples | RCIW  |
 | ------------------- | --------------------- | -------- | ------ | ------- | ----- |
-| CC                  | 7.67 ±0.07            | 1.00×    | 130.46 | 20      | 1.27% |
-| hwire_table (4N)    | 9.94 ±0.21            | 1.30×    | 100.57 | 50      | 1.76% |
-| hwire_table (8N)    | 9.98 ±0.07            | 1.30×    | 100.23 | 20      | 1.04% |
-| khashl              | 10.01 ±0.10           | 1.31×    | 99.95  | 20      | 1.39% |
-| absl::flat_hash_map | 10.68 ±0.10           | 1.39×    | 93.61  | 20      | 1.28% |
-| hwire_table (2N)    | 11.29 ±0.11           | 1.47×    | 88.54  | 20      | 1.34% |
+| CC                  | 7.59 ±0.02            | 1.00×    | 131.75 | 20      | 0.30% |
+| hwire_table (4N)    | 9.40 ±0.08            | 1.24×    | 106.38 | 20      | 1.22% |
+| hwire_table (8N)    | 9.47 ±0.13            | 1.25×    | 105.60 | 20      | 1.85% |
+| khashl              | 9.87 ±0.19            | 1.30×    | 101.32 | 50      | 1.62% |
+| absl::flat_hash_map | 10.64 ±0.15           | 1.40×    | 93.98  | 20      | 2.00% |
+| hwire_table (2N)    | 11.18 ±0.21           | 1.47×    | 89.45  | 40      | 1.71% |
 
 **128 keys**
 
 | Map                 | Mean ± SD (ns/lookup) | Relative | Mops/s | Samples | RCIW  |
 | ------------------- | --------------------- | -------- | ------ | ------- | ----- |
-| CC                  | 7.88 ±0.05            | 1.00×    | 126.97 | 20      | 0.83% |
-| khashl              | 9.37 ±0.14            | 1.19×    | 106.71 | 30      | 1.59% |
-| hwire_table (4N)    | 9.75 ±0.26            | 1.24×    | 102.53 | 60      | 1.96% |
-| hwire_table (8N)    | 9.99 ±0.05            | 1.27×    | 100.08 | 20      | 0.65% |
-| hwire_table (2N)    | 10.61 ±0.11           | 1.35×    | 94.28  | 20      | 1.48% |
-| absl::flat_hash_map | 10.82 ±0.09           | 1.37×    | 92.41  | 20      | 1.18% |
+| CC                  | 7.77 ±0.05            | 1.00×    | 128.70 | 20      | 0.85% |
+| khashl              | 9.31 ±0.05            | 1.20×    | 107.41 | 20      | 0.81% |
+| hwire_table (4N)    | 9.77 ±0.32            | 1.26×    | 102.35 | 100     | 1.84% |
+| hwire_table (8N)    | 9.78 ±0.09            | 1.26×    | 102.25 | 20      | 1.31% |
+| hwire_table (2N)    | 10.57 ±0.05           | 1.36×    | 94.61  | 20      | 0.66% |
+| absl::flat_hash_map | 10.81 ±0.07           | 1.39×    | 92.51  | 20      | 0.94% |
 
 
-### Build + Lookup Total Cost
+### First Lookup Cost and Break-even
 
-Estimated from measured means as Build + Q × lookup time, rather than a timed first lookup immediately after construction. Each table uses the fastest Build + 1 lookup as its baseline. The crossover column is the minimum total lookup count Q that makes a map faster than that baseline; No crossover means it cannot overtake under this model. † marks an input with unmet Target RCIW; small timing differences make crossover estimates uncertain.
+Estimate the total time to build and populate a map and perform its first key lookup. Each table shows that total, the per-lookup cost, and how many lookups are needed for faster searches to recover a higher construction cost.
+
+Totals use the displayed means: `Build + Q × lookup mean`. Hit and Miss are shown separately; for hit fraction p, the combined estimate is `Build + Q × (p × hit + (1 − p) × miss)`. Lookup costs are measured on a fully populated warm map; the first-lookup total is estimated, not timed immediately after construction.
+
+Each table uses the fastest Build + 1 lookup as its baseline. The crossover is the first integer Q that beats that baseline; No crossover means it cannot overtake under this model. † marks an input with unmet Target RCIW; small timing differences make crossover estimates uncertain.
 
 
 #### Build + Hit
@@ -873,34 +976,34 @@ Estimated from measured means as Build + Q × lookup time, rather than a timed f
 
 | Map                 | Build + 1 Hit (µs) | Relative | Hit Mean ± SD (ns/lookup) | Lookups to beat baseline |
 | ------------------- | ------------------ | -------- | ------------------------- | ------------------------ |
-| khashl              | 0.433              | 1.00×    | 18.14 ±0.47               | Baseline                 |
-| hwire_table (8N)    | 0.454              | 1.05×    | 18.69 ±0.19               | No crossover             |
-| hwire_table (4N)    | 0.455              | 1.05×    | 18.72 ±0.13               | No crossover             |
-| hwire_table (2N)    | 0.475              | 1.10×    | 19.02 ±0.18               | No crossover             |
-| CC                  | 0.509              | 1.18×    | 18.59 ±0.20               | No crossover             |
-| absl::flat_hash_map | 0.672              | 1.55×    | 21.75 ±0.19               | No crossover             |
+| khashl              | 0.422              | 1.00×    | 17.79 ±0.10               | Baseline                 |
+| hwire_table (8N)    | 0.453              | 1.07×    | 18.38 ±0.15               | No crossover             |
+| hwire_table (4N)    | 0.456              | 1.08×    | 18.47 ±0.12               | No crossover             |
+| hwire_table (2N)    | 0.469              | 1.11×    | 18.82 ±0.07               | No crossover             |
+| CC                  | 0.496              | 1.18×    | 18.18 ±0.07               | No crossover             |
+| absl::flat_hash_map | 0.666              | 1.58×    | 21.25 ±0.07               | No crossover             |
 
 **64 keys**
 
 | Map                 | Build + 1 Hit (µs) | Relative | Hit Mean ± SD (ns/lookup) | Lookups to beat baseline |
 | ------------------- | ------------------ | -------- | ------------------------- | ------------------------ |
-| khashl              | 0.776              | 1.00×    | 17.96 ±0.37               | Baseline                 |
-| hwire_table (2N)    | 0.894              | 1.15×    | 18.44 ±0.17               | No crossover             |
-| hwire_table (8N)    | 0.904              | 1.17×    | 18.30 ±0.08               | No crossover             |
-| hwire_table (4N)    | 0.905              | 1.17×    | 18.29 ±0.09               | No crossover             |
-| CC                  | 0.931              | 1.20×    | 18.02 ±0.10               | No crossover             |
-| absl::flat_hash_map | 1.316              | 1.70×    | 21.49 ±0.18               | No crossover             |
+| khashl              | 0.759              | 1.00×    | 17.71 ±0.10               | Baseline                 |
+| hwire_table (4N)    | 0.894              | 1.18×    | 18.28 ±0.12               | No crossover             |
+| hwire_table (2N)    | 0.899              | 1.18×    | 18.42 ±0.07               | No crossover             |
+| hwire_table (8N)    | 0.903              | 1.19×    | 18.13 ±0.09               | No crossover             |
+| CC                  | 0.915              | 1.21×    | 17.85 ±0.19               | No crossover             |
+| absl::flat_hash_map | 1.313              | 1.73×    | 21.17 ±0.10               | No crossover             |
 
 **128 keys**
 
 | Map                 | Build + 1 Hit (µs) | Relative | Hit Mean ± SD (ns/lookup) | Lookups to beat baseline |
 | ------------------- | ------------------ | -------- | ------------------------- | ------------------------ |
-| khashl              | 1.492              | 1.00×    | 19.77 ±0.09               | Baseline                 |
-| CC                  | 1.736              | 1.16×    | 19.79 ±0.04               | No crossover             |
-| hwire_table (2N)    | 1.803              | 1.21×    | 19.37 ±0.26               | 782                      |
-| hwire_table (8N)    | 1.806              | 1.21×    | 19.58 ±0.12               | 1,615                    |
-| hwire_table (4N)    | 1.817              | 1.22×    | 19.36 ±0.07               | 798                      |
-| absl::flat_hash_map | 2.648              | 1.78×    | 22.81 ±0.29               | No crossover             |
+| khashl              | 1.467              | 1.00×    | 19.02 ±0.12               | Baseline                 |
+| CC †                | 1.738              | 1.18×    | 18.95 ±0.20               | 3,870                    |
+| hwire_table (8N)    | 1.784              | 1.22×    | 19.55 ±0.08               | No crossover             |
+| hwire_table (2N)    | 1.796              | 1.22×    | 19.63 ±0.09               | No crossover             |
+| hwire_table (4N)    | 1.796              | 1.22×    | 19.43 ±0.04               | No crossover             |
+| absl::flat_hash_map | 2.644              | 1.80×    | 22.54 ±0.67               | No crossover             |
 
 
 #### Build + Miss
@@ -909,34 +1012,34 @@ Estimated from measured means as Build + Q × lookup time, rather than a timed f
 
 | Map                 | Build + 1 Miss (µs) | Relative | Miss Mean ± SD (ns/lookup) | Lookups to beat baseline |
 | ------------------- | ------------------- | -------- | -------------------------- | ------------------------ |
-| khashl              | 0.423               | 1.00×    | 8.29 ±0.03                 | Baseline                 |
-| hwire_table (8N)    | 0.445               | 1.05×    | 9.66 ±0.12                 | No crossover             |
-| hwire_table (4N)    | 0.446               | 1.06×    | 9.84 ±0.02                 | No crossover             |
-| hwire_table (2N)    | 0.469               | 1.11×    | 12.71 ±0.04                | No crossover             |
-| CC                  | 0.498               | 1.18×    | 7.86 ±0.10                 | 173                      |
-| absl::flat_hash_map | 0.661               | 1.56×    | 10.55 ±0.14                | No crossover             |
+| khashl              | 0.412               | 1.00×    | 8.35 ±0.03                 | Baseline                 |
+| hwire_table (8N)    | 0.443               | 1.08×    | 9.30 ±0.10                 | No crossover             |
+| hwire_table (4N)    | 0.447               | 1.08×    | 9.43 ±0.06                 | No crossover             |
+| hwire_table (2N)    | 0.463               | 1.12×    | 12.67 ±0.05                | No crossover             |
+| CC                  | 0.485               | 1.18×    | 7.75 ±0.04                 | 123                      |
+| absl::flat_hash_map | 0.655               | 1.59×    | 10.43 ±0.18                | No crossover             |
 
 **64 keys**
 
 | Map                 | Build + 1 Miss (µs) | Relative | Miss Mean ± SD (ns/lookup) | Lookups to beat baseline |
 | ------------------- | ------------------- | -------- | -------------------------- | ------------------------ |
-| khashl              | 0.768               | 1.00×    | 10.01 ±0.10                | Baseline                 |
-| hwire_table (2N)    | 0.887               | 1.16×    | 11.29 ±0.11                | No crossover             |
-| hwire_table (8N)    | 0.896               | 1.17×    | 9.98 ±0.07                 | 4,608                    |
-| hwire_table (4N)    | 0.897               | 1.17×    | 9.94 ±0.21                 | 2,102                    |
-| CC                  | 0.921               | 1.20×    | 7.67 ±0.07                 | 67                       |
-| absl::flat_hash_map | 1.305               | 1.70×    | 10.68 ±0.10                | No crossover             |
+| khashl              | 0.752               | 1.00×    | 9.87 ±0.19                 | Baseline                 |
+| hwire_table (4N)    | 0.885               | 1.18×    | 9.40 ±0.08                 | 286                      |
+| hwire_table (2N)    | 0.891               | 1.19×    | 11.18 ±0.21                | No crossover             |
+| hwire_table (8N)    | 0.895               | 1.19×    | 9.47 ±0.13                 | 359                      |
+| CC                  | 0.905               | 1.20×    | 7.59 ±0.02                 | 69                       |
+| absl::flat_hash_map | 1.303               | 1.73×    | 10.64 ±0.15                | No crossover             |
 
 **128 keys**
 
 | Map                 | Build + 1 Miss (µs) | Relative | Miss Mean ± SD (ns/lookup) | Lookups to beat baseline |
 | ------------------- | ------------------- | -------- | -------------------------- | ------------------------ |
-| khashl              | 1.481               | 1.00×    | 9.37 ±0.14                 | Baseline                 |
-| CC                  | 1.724               | 1.16×    | 7.88 ±0.05                 | 164                      |
-| hwire_table (2N)    | 1.794               | 1.21×    | 10.61 ±0.11                | No crossover             |
-| hwire_table (8N)    | 1.796               | 1.21×    | 9.99 ±0.05                 | No crossover             |
-| hwire_table (4N)    | 1.807               | 1.22×    | 9.75 ±0.26                 | No crossover             |
-| absl::flat_hash_map | 2.636               | 1.78×    | 10.82 ±0.09                | No crossover             |
+| khashl              | 1.457               | 1.00×    | 9.31 ±0.05                 | Baseline                 |
+| CC †                | 1.727               | 1.18×    | 7.77 ±0.05                 | 176                      |
+| hwire_table (8N)    | 1.775               | 1.22×    | 9.78 ±0.09                 | No crossover             |
+| hwire_table (4N)    | 1.787               | 1.23×    | 9.77 ±0.32                 | No crossover             |
+| hwire_table (2N)    | 1.787               | 1.23×    | 10.57 ±0.05                | No crossover             |
+| absl::flat_hash_map | 2.632               | 1.81×    | 10.81 ±0.07                | No crossover             |
 
 
 ## Case-Sensitive Allocated Growth
@@ -945,10 +1048,10 @@ Exact byte comparisons. Grow from an initial reservation of 32 keys to 256 uniqu
 
 Cleanup runs outside all timed intervals.
 
-Insert excludes initial setup and includes any expansion triggered by insertion. Hit and miss measure the fully populated maps.
-
 
 ### Memory
+
+Final live container/storage bytes; borrowed key/value contents and allocator metadata are excluded.
 
 **256 keys**
 
@@ -964,63 +1067,75 @@ Insert excludes initial setup and includes any expansion triggered by insertion.
 
 ### Build
 
+Initial acquisition and initialization plus all insertions; any expansion is included.
+
 **256 keys**
 
 | Map                 | Mean ± SD (ns/table) | Relative | Mops/s | Samples | RCIW  |
 | ------------------- | -------------------- | -------- | ------ | ------- | ----- |
-| hwire_table (8N)    | 3589.02 ±12.21       | 1.00×    | 0.28   | 20      | 0.48% |
-| hwire_table (4N)    | 3611.67 ±9.26        | 1.01×    | 0.28   | 20      | 0.36% |
-| hwire_table (2N)    | 3632.29 ±10.99       | 1.01×    | 0.28   | 20      | 0.42% |
-| khashl              | 7377.95 ±34.28       | 2.06×    | 0.14   | 20      | 0.65% |
-| CC                  | 9403.04 ±40.05       | 2.62×    | 0.11   | 20      | 0.60% |
-| absl::flat_hash_map | 9660.72 ±22.33       | 2.69×    | 0.10   | 20      | 0.32% |
+| hwire_table (8N)    | 3574.41 ±26.20       | 1.00×    | 0.28   | 20      | 1.02% |
+| hwire_table (4N)    | 3577.88 ±27.40       | 1.00×    | 0.28   | 20      | 1.07% |
+| hwire_table (2N)    | 3593.12 ±16.73       | 1.01×    | 0.28   | 20      | 0.65% |
+| khashl              | 7151.93 ±36.57       | 2.00×    | 0.14   | 20      | 0.71% |
+| CC                  | 9280.34 ±45.22       | 2.60×    | 0.11   | 20      | 0.68% |
+| absl::flat_hash_map | 9722.75 ±97.62       | 2.72×    | 0.10   | 20      | 1.40% |
 
 
 ### Insert
 
+Insertions only; initial setup is excluded and insertion-triggered expansion is included.
+
 **256 keys**
 
-| Map                 | Mean ± SD (ns/key) | Relative | Mops/s | Samples | RCIW  |
-| ------------------- | ------------------ | -------- | ------ | ------- | ----- |
-| hwire_table (4N)    | 13.97 ±0.05        | 1.00×    | 71.58  | 20      | 0.50% |
-| hwire_table (8N)    | 13.99 ±0.19        | 1.00×    | 71.50  | 20      | 1.86% |
-| hwire_table (2N)    | 14.05 ±0.04        | 1.01×    | 71.20  | 20      | 0.36% |
-| khashl              | 27.91 ±0.32        | 2.00×    | 35.83  | 20      | 1.62% |
-| CC                  | 36.64 ±0.58        | 2.62×    | 27.29  | 30      | 1.72% |
-| absl::flat_hash_map | 37.47 ±0.09        | 2.68×    | 26.69  | 20      | 0.33% |
+| Map                 | Mean ± SD (ns/key) | Relative | Mops/s | Samples | RCIW          |
+| ------------------- | ------------------ | -------- | ------ | ------- | ------------- |
+| hwire_table (2N)    | 13.82 ±0.11        | 1.00×    | 72.36  | 20      | 1.10%         |
+| hwire_table (8N)    | 13.87 ±0.04        | 1.00×    | 72.10  | 20      | 0.40%         |
+| hwire_table (4N)    | 13.88 ±0.06        | 1.00×    | 72.05  | 20      | 0.58%         |
+| khashl              | 27.13 ±1.04        | 1.96×    | 36.86  | 100     | 2.17% (unmet) |
+| CC                  | 36.10 ±0.65        | 2.61×    | 27.70  | 40      | 1.68%         |
+| absl::flat_hash_map | 37.67 ±0.09        | 2.73×    | 26.55  | 20      | 0.34%         |
 
 
 ### Hit
 
-**256 keys**
-
-| Map                 | Mean ± SD (ns/lookup) | Relative | Mops/s | Samples | RCIW  |
-| ------------------- | --------------------- | -------- | ------ | ------- | ----- |
-| CC                  | 12.92 ±0.05           | 1.00×    | 77.42  | 20      | 0.50% |
-| khashl              | 13.19 ±0.04           | 1.02×    | 75.82  | 20      | 0.42% |
-| absl::flat_hash_map | 16.88 ±0.06           | 1.31×    | 59.22  | 20      | 0.54% |
-| hwire_table (8N)    | 26.24 ±0.59           | 2.03×    | 38.11  | 60      | 1.66% |
-| hwire_table (4N)    | 28.39 ±0.07           | 2.20×    | 35.22  | 20      | 0.34% |
-| hwire_table (2N)    | 30.56 ±0.25           | 2.37×    | 32.72  | 20      | 1.14% |
-
-
-### Miss
+Successful searches in the fully populated map, with equal frequency for each selected key.
 
 **256 keys**
 
 | Map                 | Mean ± SD (ns/lookup) | Relative | Mops/s | Samples | RCIW          |
 | ------------------- | --------------------- | -------- | ------ | ------- | ------------- |
-| CC                  | 8.03 ±0.07            | 1.00×    | 124.50 | 20      | 1.14%         |
-| khashl              | 8.61 ±0.14            | 1.07×    | 116.14 | 30      | 1.81%         |
-| absl::flat_hash_map | 11.43 ±0.06           | 1.42×    | 87.49  | 20      | 0.77%         |
-| hwire_table (8N)    | 21.82 ±0.16           | 2.72×    | 45.83  | 20      | 1.02%         |
-| hwire_table (4N)    | 22.27 ±0.28           | 2.77×    | 44.89  | 20      | 1.78%         |
-| hwire_table (2N)    | 27.26 ±1.01           | 3.39×    | 36.68  | 100     | 2.11% (unmet) |
+| khashl              | 13.26 ±0.09           | 1.00×    | 75.41  | 20      | 0.98%         |
+| CC                  | 13.34 ±0.11           | 1.01×    | 74.96  | 20      | 1.18%         |
+| absl::flat_hash_map | 16.93 ±0.06           | 1.28×    | 59.07  | 20      | 0.53%         |
+| hwire_table (8N)    | 26.04 ±0.14           | 1.96×    | 38.40  | 20      | 0.76%         |
+| hwire_table (4N)    | 28.66 ±1.07           | 2.16×    | 34.89  | 100     | 2.11% (unmet) |
+| hwire_table (2N)    | 30.79 ±0.33           | 2.32×    | 32.48  | 20      | 1.52%         |
 
 
-### Build + Lookup Total Cost
+### Miss
 
-Estimated from measured means as Build + Q × lookup time, rather than a timed first lookup immediately after construction. Each table uses the fastest Build + 1 lookup as its baseline. The crossover column is the minimum total lookup count Q that makes a map faster than that baseline; No crossover means it cannot overtake under this model. † marks an input with unmet Target RCIW; small timing differences make crossover estimates uncertain.
+Unsuccessful searches in the fully populated map using the prepared miss keys.
+
+**256 keys**
+
+| Map                 | Mean ± SD (ns/lookup) | Relative | Mops/s | Samples | RCIW  |
+| ------------------- | --------------------- | -------- | ------ | ------- | ----- |
+| CC                  | 8.14 ±0.03            | 1.00×    | 122.85 | 20      | 0.55% |
+| khashl              | 8.73 ±0.06            | 1.07×    | 114.55 | 20      | 0.97% |
+| absl::flat_hash_map | 11.83 ±0.07           | 1.45×    | 84.53  | 20      | 0.83% |
+| hwire_table (8N)    | 21.13 ±0.08           | 2.60×    | 47.33  | 20      | 0.52% |
+| hwire_table (4N)    | 21.58 ±0.09           | 2.65×    | 46.34  | 20      | 0.57% |
+| hwire_table (2N)    | 27.91 ±0.17           | 3.43×    | 35.83  | 20      | 0.85% |
+
+
+### First Lookup Cost and Break-even
+
+Estimate the total time to build and populate a map and perform its first key lookup. Each table shows that total, the per-lookup cost, and how many lookups are needed for faster searches to recover a higher construction cost.
+
+Totals use the displayed means: `Build + Q × lookup mean`. Hit and Miss are shown separately; for hit fraction p, the combined estimate is `Build + Q × (p × hit + (1 − p) × miss)`. Lookup costs are measured on a fully populated warm map; the first-lookup total is estimated, not timed immediately after construction.
+
+Each table uses the fastest Build + 1 lookup as its baseline. The crossover is the first integer Q that beats that baseline; No crossover means it cannot overtake under this model. † marks an input with unmet Target RCIW; small timing differences make crossover estimates uncertain.
 
 
 #### Build + Hit
@@ -1029,12 +1144,12 @@ Estimated from measured means as Build + Q × lookup time, rather than a timed f
 
 | Map                 | Build + 1 Hit (µs) | Relative | Hit Mean ± SD (ns/lookup) | Lookups to beat baseline |
 | ------------------- | ------------------ | -------- | ------------------------- | ------------------------ |
-| hwire_table (8N)    | 3.615              | 1.00×    | 26.24 ±0.59               | Baseline                 |
-| hwire_table (4N)    | 3.640              | 1.01×    | 28.39 ±0.07               | No crossover             |
-| hwire_table (2N)    | 3.663              | 1.01×    | 30.56 ±0.25               | No crossover             |
-| khashl              | 7.391              | 2.04×    | 13.19 ±0.04               | 291                      |
-| CC                  | 9.416              | 2.60×    | 12.92 ±0.05               | 437                      |
-| absl::flat_hash_map | 9.678              | 2.68×    | 16.88 ±0.06               | 650                      |
+| hwire_table (8N)    | 3.600              | 1.00×    | 26.04 ±0.14               | Baseline                 |
+| hwire_table (4N) †  | 3.607              | 1.00×    | 28.66 ±1.07               | No crossover             |
+| hwire_table (2N)    | 3.624              | 1.01×    | 30.79 ±0.33               | No crossover             |
+| khashl              | 7.165              | 1.99×    | 13.26 ±0.09               | 280                      |
+| CC                  | 9.294              | 2.58×    | 13.34 ±0.11               | 450                      |
+| absl::flat_hash_map | 9.740              | 2.71×    | 16.93 ±0.06               | 675                      |
 
 
 #### Build + Miss
@@ -1043,12 +1158,12 @@ Estimated from measured means as Build + Q × lookup time, rather than a timed f
 
 | Map                 | Build + 1 Miss (µs) | Relative | Miss Mean ± SD (ns/lookup) | Lookups to beat baseline |
 | ------------------- | ------------------- | -------- | -------------------------- | ------------------------ |
-| hwire_table (8N)    | 3.611               | 1.00×    | 21.82 ±0.16                | Baseline                 |
-| hwire_table (4N)    | 3.634               | 1.01×    | 22.27 ±0.28                | No crossover             |
-| hwire_table (2N) †  | 3.660               | 1.01×    | 27.26 ±1.01                | No crossover             |
-| khashl              | 7.387               | 2.05×    | 8.61 ±0.14                 | 287                      |
-| CC                  | 9.411               | 2.61×    | 8.03 ±0.07                 | 422                      |
-| absl::flat_hash_map | 9.672               | 2.68×    | 11.43 ±0.06                | 585                      |
+| hwire_table (8N)    | 3.596               | 1.00×    | 21.13 ±0.08                | Baseline                 |
+| hwire_table (4N)    | 3.599               | 1.00×    | 21.58 ±0.09                | No crossover             |
+| hwire_table (2N)    | 3.621               | 1.01×    | 27.91 ±0.17                | No crossover             |
+| khashl              | 7.161               | 1.99×    | 8.73 ±0.06                 | 289                      |
+| CC                  | 9.288               | 2.58×    | 8.14 ±0.03                 | 440                      |
+| absl::flat_hash_map | 9.735               | 2.71×    | 11.83 ±0.07                | 662                      |
 
 
 ## Case-Insensitive Allocated Growth
@@ -1057,10 +1172,10 @@ ASCII case-insensitive comparisons. Grow from an initial reservation of 32 keys 
 
 Cleanup runs outside all timed intervals.
 
-Insert excludes initial setup and includes any expansion triggered by insertion. Hit and miss measure the fully populated maps.
-
 
 ### Memory
+
+Final live container/storage bytes; borrowed key/value contents and allocator metadata are excluded.
 
 **256 keys**
 
@@ -1076,63 +1191,75 @@ Insert excludes initial setup and includes any expansion triggered by insertion.
 
 ### Build
 
+Initial acquisition and initialization plus all insertions; any expansion is included.
+
 **256 keys**
 
 | Map                 | Mean ± SD (ns/table) | Relative | Mops/s | Samples | RCIW  |
 | ------------------- | -------------------- | -------- | ------ | ------- | ----- |
-| hwire_table (4N)    | 3810.06 ±44.45       | 1.00×    | 0.26   | 20      | 1.63% |
-| hwire_table (2N)    | 3853.71 ±67.13       | 1.01×    | 0.26   | 30      | 1.91% |
-| hwire_table (8N)    | 3854.70 ±11.81       | 1.01×    | 0.26   | 20      | 0.43% |
-| khashl              | 8167.87 ±111.49      | 2.14×    | 0.12   | 30      | 1.49% |
-| CC                  | 9536.86 ±61.44       | 2.50×    | 0.10   | 20      | 0.90% |
-| absl::flat_hash_map | 9663.26 ±19.26       | 2.54×    | 0.10   | 20      | 0.28% |
+| hwire_table (4N)    | 3784.77 ±30.12       | 1.00×    | 0.26   | 20      | 1.11% |
+| hwire_table (2N)    | 3822.27 ±14.18       | 1.01×    | 0.26   | 20      | 0.52% |
+| hwire_table (8N)    | 3840.36 ±68.38       | 1.01×    | 0.26   | 30      | 1.95% |
+| khashl              | 8139.15 ±57.16       | 2.15×    | 0.12   | 20      | 0.98% |
+| CC                  | 9293.50 ±46.97       | 2.46×    | 0.11   | 20      | 0.71% |
+| absl::flat_hash_map | 9728.60 ±20.16       | 2.57×    | 0.10   | 20      | 0.29% |
 
 
 ### Insert
+
+Insertions only; initial setup is excluded and insertion-triggered expansion is included.
 
 **256 keys**
 
 | Map                 | Mean ± SD (ns/key) | Relative | Mops/s | Samples | RCIW  |
 | ------------------- | ------------------ | -------- | ------ | ------- | ----- |
-| hwire_table (4N)    | 14.80 ±0.04        | 1.00×    | 67.55  | 20      | 0.41% |
-| hwire_table (2N)    | 14.83 ±0.04        | 1.00×    | 67.45  | 20      | 0.37% |
-| hwire_table (8N)    | 14.93 ±0.04        | 1.01×    | 66.98  | 20      | 0.41% |
-| khashl              | 31.42 ±0.14        | 2.12×    | 31.83  | 20      | 0.63% |
-| CC                  | 36.60 ±0.14        | 2.47×    | 27.32  | 20      | 0.52% |
-| absl::flat_hash_map | 37.60 ±0.11        | 2.54×    | 26.59  | 20      | 0.39% |
+| hwire_table (4N)    | 14.69 ±0.05        | 1.00×    | 68.07  | 20      | 0.51% |
+| hwire_table (2N)    | 14.77 ±0.04        | 1.01×    | 67.70  | 20      | 0.38% |
+| hwire_table (8N)    | 14.80 ±0.05        | 1.01×    | 67.57  | 20      | 0.45% |
+| khashl              | 31.29 ±0.63        | 2.13×    | 31.96  | 50      | 1.66% |
+| CC                  | 35.91 ±0.15        | 2.44×    | 27.85  | 20      | 0.58% |
+| absl::flat_hash_map | 37.85 ±0.11        | 2.58×    | 26.42  | 20      | 0.42% |
 
 
 ### Hit
 
+Successful searches in the fully populated map, with equal frequency for each selected key.
+
 **256 keys**
 
 | Map                 | Mean ± SD (ns/lookup) | Relative | Mops/s | Samples | RCIW  |
 | ------------------- | --------------------- | -------- | ------ | ------- | ----- |
-| CC                  | 20.77 ±0.05           | 1.00×    | 48.14  | 20      | 0.32% |
-| khashl              | 20.85 ±0.08           | 1.00×    | 47.96  | 20      | 0.57% |
-| absl::flat_hash_map | 23.83 ±0.30           | 1.15×    | 41.97  | 30      | 1.40% |
-| hwire_table (8N)    | 25.44 ±0.72           | 1.22×    | 39.30  | 70      | 1.95% |
-| hwire_table (4N)    | 26.15 ±0.16           | 1.26×    | 38.24  | 20      | 0.83% |
-| hwire_table (2N)    | 29.83 ±0.55           | 1.44×    | 33.53  | 40      | 1.71% |
+| CC                  | 20.70 ±0.06           | 1.00×    | 48.31  | 20      | 0.39% |
+| khashl              | 21.05 ±0.09           | 1.02×    | 47.51  | 20      | 0.57% |
+| absl::flat_hash_map | 23.69 ±0.22           | 1.14×    | 42.21  | 20      | 1.29% |
+| hwire_table (8N)    | 25.27 ±0.22           | 1.22×    | 39.57  | 20      | 1.20% |
+| hwire_table (4N)    | 25.68 ±0.49           | 1.24×    | 38.94  | 40      | 1.77% |
+| hwire_table (2N)    | 29.72 ±0.92           | 1.44×    | 33.65  | 90      | 1.86% |
 
 
 ### Miss
 
+Unsuccessful searches in the fully populated map using the prepared miss keys.
+
 **256 keys**
 
 | Map                 | Mean ± SD (ns/lookup) | Relative | Mops/s | Samples | RCIW  |
 | ------------------- | --------------------- | -------- | ------ | ------- | ----- |
-| CC                  | 8.03 ±0.08            | 1.00×    | 124.61 | 20      | 1.42% |
-| khashl              | 10.43 ±0.07           | 1.30×    | 95.85  | 20      | 0.88% |
-| absl::flat_hash_map | 11.28 ±0.05           | 1.41×    | 88.67  | 20      | 0.65% |
-| hwire_table (4N)    | 20.66 ±0.11           | 2.57×    | 48.40  | 20      | 0.72% |
-| hwire_table (8N)    | 20.98 ±0.29           | 2.61×    | 47.67  | 30      | 1.51% |
-| hwire_table (2N)    | 30.27 ±0.31           | 3.77×    | 33.04  | 20      | 1.44% |
+| CC                  | 7.96 ±0.02            | 1.00×    | 125.63 | 20      | 0.40% |
+| khashl              | 10.36 ±0.25           | 1.30×    | 96.53  | 60      | 1.83% |
+| absl::flat_hash_map | 11.12 ±0.26           | 1.40×    | 89.93  | 50      | 1.88% |
+| hwire_table (8N)    | 20.57 ±0.58           | 2.58×    | 48.61  | 80      | 1.80% |
+| hwire_table (4N)    | 21.42 ±0.13           | 2.69×    | 46.69  | 20      | 0.83% |
+| hwire_table (2N)    | 28.25 ±0.77           | 3.55×    | 35.40  | 70      | 1.87% |
 
 
-### Build + Lookup Total Cost
+### First Lookup Cost and Break-even
 
-Estimated from measured means as Build + Q × lookup time, rather than a timed first lookup immediately after construction. Each table uses the fastest Build + 1 lookup as its baseline. The crossover column is the minimum total lookup count Q that makes a map faster than that baseline; No crossover means it cannot overtake under this model. † marks an input with unmet Target RCIW; small timing differences make crossover estimates uncertain.
+Estimate the total time to build and populate a map and perform its first key lookup. Each table shows that total, the per-lookup cost, and how many lookups are needed for faster searches to recover a higher construction cost.
+
+Totals use the displayed means: `Build + Q × lookup mean`. Hit and Miss are shown separately; for hit fraction p, the combined estimate is `Build + Q × (p × hit + (1 − p) × miss)`. Lookup costs are measured on a fully populated warm map; the first-lookup total is estimated, not timed immediately after construction.
+
+Each table uses the fastest Build + 1 lookup as its baseline. The crossover is the first integer Q that beats that baseline; No crossover means it cannot overtake under this model. † marks an input with unmet Target RCIW; small timing differences make crossover estimates uncertain.
 
 
 #### Build + Hit
@@ -1141,12 +1268,12 @@ Estimated from measured means as Build + Q × lookup time, rather than a timed f
 
 | Map                 | Build + 1 Hit (µs) | Relative | Hit Mean ± SD (ns/lookup) | Lookups to beat baseline |
 | ------------------- | ------------------ | -------- | ------------------------- | ------------------------ |
-| hwire_table (4N)    | 3.836              | 1.00×    | 26.15 ±0.16               | Baseline                 |
-| hwire_table (8N)    | 3.880              | 1.01×    | 25.44 ±0.72               | 64                       |
-| hwire_table (2N)    | 3.884              | 1.01×    | 29.83 ±0.55               | No crossover             |
-| khashl              | 8.189              | 2.13×    | 20.85 ±0.08               | 823                      |
-| CC                  | 9.558              | 2.49×    | 20.77 ±0.05               | 1,066                    |
-| absl::flat_hash_map | 9.687              | 2.53×    | 23.83 ±0.30               | 2,523                    |
+| hwire_table (4N)    | 3.810              | 1.00×    | 25.68 ±0.49               | Baseline                 |
+| hwire_table (2N)    | 3.852              | 1.01×    | 29.72 ±0.92               | No crossover             |
+| hwire_table (8N)    | 3.866              | 1.01×    | 25.27 ±0.22               | 136                      |
+| khashl              | 8.160              | 2.14×    | 21.05 ±0.09               | 941                      |
+| CC                  | 9.314              | 2.44×    | 20.70 ±0.06               | 1,107                    |
+| absl::flat_hash_map | 9.752              | 2.56×    | 23.69 ±0.22               | 2,987                    |
 
 
 #### Build + Miss
@@ -1155,9 +1282,9 @@ Estimated from measured means as Build + Q × lookup time, rather than a timed f
 
 | Map                 | Build + 1 Miss (µs) | Relative | Miss Mean ± SD (ns/lookup) | Lookups to beat baseline |
 | ------------------- | ------------------- | -------- | -------------------------- | ------------------------ |
-| hwire_table (4N)    | 3.831               | 1.00×    | 20.66 ±0.11                | Baseline                 |
-| hwire_table (8N)    | 3.876               | 1.01×    | 20.98 ±0.29                | No crossover             |
-| hwire_table (2N)    | 3.884               | 1.01×    | 30.27 ±0.31                | No crossover             |
-| khashl              | 8.178               | 2.13×    | 10.43 ±0.07                | 427                      |
-| CC                  | 9.545               | 2.49×    | 8.03 ±0.08                 | 454                      |
-| absl::flat_hash_map | 9.675               | 2.53×    | 11.28 ±0.05                | 624                      |
+| hwire_table (4N)    | 3.806               | 1.00×    | 21.42 ±0.13                | Baseline                 |
+| hwire_table (2N)    | 3.851               | 1.01×    | 28.25 ±0.77                | No crossover             |
+| hwire_table (8N)    | 3.861               | 1.01×    | 20.57 ±0.58                | 66                       |
+| khashl              | 8.150               | 2.14×    | 10.36 ±0.25                | 394                      |
+| CC                  | 9.301               | 2.44×    | 7.96 ±0.02                 | 410                      |
+| absl::flat_hash_map | 9.740               | 2.56×    | 11.12 ±0.26                | 578                      |

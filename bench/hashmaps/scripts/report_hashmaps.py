@@ -3,15 +3,25 @@
 import argparse
 import csv
 import json
-import math
 import re
+import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "shared/scripts"))
+from report_common import environment, update_environment
 
 ROOT = Path(__file__).resolve().parents[1]
 RESULTS_DIR = ROOT / "results/storage"
 SCENARIOS = ("reserved", "growth-allocated")
 MODES = ("case-sensitive", "case-insensitive")
 OPERATIONS = ("build", "insert", "hit", "miss")
+METRIC_NOTES = {
+    "memory": "Final live container/storage bytes; borrowed key/value contents and allocator metadata are excluded.",
+    "build": "Initial acquisition and initialization plus all insertions; any expansion is included.",
+    "insert": "Insertions only; initial setup is excluded and insertion-triggered expansion is included.",
+    "hit": "Successful searches in the fully populated map, with equal frequency for each selected key.",
+    "miss": "Unsuccessful searches in the fully populated map using the prepared miss keys.",
+}
 
 def load_results(directory):
     manifest = directory / "active.json"
@@ -19,14 +29,16 @@ def load_results(directory):
     rows = []
     for path in sorted(directory.glob("*.csv")):
         name, _, variant = path.stem.rpartition("-")
-        if active is not None and name not in active:
+        if active is not None and path.stem not in active:
             continue
-        for row in csv.DictReader(path.open()):
+        for row in csv.DictReader(path.read_text().splitlines()):
             row.update(variant=variant, id=name)
             for column in ("count", "samples", "iterations", "container_bytes", "growths"):
                 row[column] = int(row[column])
             for column in ("mean_ns", "stddev_ns", "load_factor"):
                 row[column] = float(row[column])
+            # Use the same hundredth-nanosecond means as the displayed tables.
+            row["mean_ns"] = round(row["mean_ns"], 2)
             row["rciw"] = float(row["rciw"]) if row["rciw"] else None
             rows.append(row)
     return rows
@@ -90,7 +102,9 @@ def render_total_cost(rows, operation):
         elif saving <= 0:
             crossover = "No crossover"
         else:
-            crossover = f'{max(1, math.floor((build["mean_ns"] - reference_build) / saving) + 1):,}'
+            build_delta = round(build["mean_ns"] * 100) - round(reference_build * 100)
+            lookup_delta = round(reference_lookup * 100) - round(lookup["mean_ns"] * 100)
+            crossover = f"{max(1, build_delta // lookup_delta + 1):,}"
         label = build["map"]
         if any(r["rciw"] is not None and r["rciw"] > 0.02
                for r in (build, lookup)):
@@ -133,13 +147,11 @@ def render(rows):
                               else "ASCII case-insensitive comparisons.")
                 print(comparison + " " + scenario_summaries[scenario] + "\n")
                 print("Cleanup runs outside all timed intervals.\n")
-                print("Insert excludes initial setup and includes any expansion "
-                      "triggered by insertion. Hit and miss measure the fully "
-                      "populated maps.\n")
                 metrics = ("memory", *OPERATIONS)
                 counts = sorted({r["count"] for r in group})
                 for metric in metrics:
                     print(f"\n### {metric.capitalize()}\n")
+                    print(METRIC_NOTES[metric] + "\n")
                     for count in counts:
                         print(f"**{count} keys**\n")
                         case = [r for r in group if r["count"] == count]
@@ -147,14 +159,19 @@ def render(rows):
                             render_memory(case, count, scenario)
                         else:
                             render_operation(case, metric)
-                print("\n### Build + Lookup Total Cost\n")
-                print("Estimated from measured means as Build + Q × lookup time, "
-                      "rather than a timed first lookup immediately after construction. "
-                      "Each table uses the fastest Build + 1 lookup as its baseline. "
-                      "The crossover column is the minimum total lookup count Q "
-                      "that makes a map faster than that baseline; No crossover "
-                      "means it cannot overtake under this model. † marks an input "
-                      "with unmet Target RCIW; small timing differences make "
+                print("\n### First Lookup Cost and Break-even\n")
+                print("Estimate the total time to build and populate a map and perform its first key lookup. "
+                      "Each table shows that total, the per-lookup cost, and how many lookups are needed "
+                      "for faster searches to recover a higher construction cost.\n")
+                print("Totals use the displayed means: `Build + Q × lookup mean`. "
+                      "Hit and Miss are shown separately; for hit fraction p, the combined estimate is "
+                      "`Build + Q × (p × hit + (1 − p) × miss)`. "
+                      "Lookup costs are measured on a fully populated warm map; "
+                      "the first-lookup total is estimated, not timed immediately after construction.\n")
+                print("Each table uses the fastest Build + 1 lookup as its baseline. "
+                      "The crossover is the first integer Q that beats that baseline; "
+                      "No crossover means it cannot overtake under this model. "
+                      "† marks an input with unmet Target RCIW; small timing differences make "
                       "crossover estimates uncertain.\n")
                 for operation in ("hit", "miss"):
                     print(f"\n#### Build + {operation.capitalize()}\n")
@@ -184,9 +201,11 @@ def main():
                           r"|Case-Sensitive .*|Case-Insensitive .*)$",
                           previous, re.MULTILINE)
         introduction = previous[:match.start()] if match else "\n"
-        readme.write_text((prefix + "# Benchmark\n" + introduction.rstrip() +
-                           "\n\n" + out.getvalue()).rstrip() + "\n")
+        text = (prefix + "# Benchmark\n" + introduction.rstrip() +
+                "\n\n" + out.getvalue()).rstrip() + "\n"
+        readme.write_text(update_environment(text, args.directory / "platform.txt"))
     else:
+        environment(args.directory / "platform.txt")
         render(rows)
 if __name__ == "__main__":
     main()
