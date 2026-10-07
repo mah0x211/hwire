@@ -68,6 +68,44 @@ size_t h2o_header_lookup(const void *context, const char *key,
     return index >= 0 ? s->headers.entries[index].value.len + 1 : 0;
 }
 
+/* Tokens are library-global; the lowercase name is immutable query storage. */
+typedef struct {
+    const h2o_token_t *token;
+    size_t len;
+    char name[];
+} h2o_header_query_t;
+
+void *h2o_header_query_new(const char *key, size_t len)
+{
+    h2o_header_query_t *query = malloc(sizeof(*query) + len);
+    if (query == NULL) {
+        return NULL;
+    }
+    memcpy(query->name, key, len);
+    h2o_strtolower(query->name, len);
+    query->token = h2o_lookup_token(query->name, len);
+    query->len = len;
+    return query;
+}
+
+void h2o_header_query_free(void *query)
+{
+    free(query);
+}
+
+size_t h2o_header_lookup_prepared(const void *context, const void *prepared)
+{
+    const h2o_storage_t *s = context;
+    const h2o_header_query_t *query = prepared;
+    if (query->token == H2O_TOKEN_HOST) {
+        return s->input.authority.base != NULL ? s->input.authority.len + 1 : 0;
+    }
+    ssize_t index = query->token != NULL ?
+        h2o_find_header(&s->headers, query->token, -1) :
+        h2o_find_header_by_str(&s->headers, query->name, query->len, -1);
+    return index >= 0 ? s->headers.entries[index].value.len + 1 : 0;
+}
+
 int h2o_request_with_store(void **context, const unsigned char *data,
                                      size_t len, size_t header_capacity)
 {

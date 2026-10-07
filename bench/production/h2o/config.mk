@@ -10,3 +10,8 @@ else
 h2o_LDLIBS := -Wl,--gc-sections
 endif
 h2o_NAME := H2O
+ifeq ($(UNAME_M),x86_64)
+h2o_VARIANTS := nosimd sse42 native
+else
+h2o_VARIANTS := nosimd native
+endif

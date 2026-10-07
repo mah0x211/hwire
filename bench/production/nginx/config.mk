@@ -10,3 +10,4 @@ endif
 
 nginx_NAME := nginx
 nginx_BUILD_DEPS := nginx/gen_headers.py nginx/bin/header_keys.h
+nginx_VARIANTS := nosimd native

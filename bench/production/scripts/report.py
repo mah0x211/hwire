@@ -21,10 +21,13 @@ def load_results(directory):
         for row in csv.DictReader(path.read_text().splitlines()):
             key = (row["fixture"], int(row["header_capacity"]))
             label = active.get(path.stem, name) if isinstance(active, dict) else name
+            target = {"nosimd": "scalar", "sse2": "SSE2", "sse42": "SSE4.2",
+                      "neon": "NEON", "native": "native", "siphash": "native, SipHash"}.get(variant, variant)
+            label += f" ({target})"
             # Calculated totals use exactly the means displayed in individual tables.
             entry = dict(row, label=label, mean=round(float(row["mean_ns"]), 2),
                          stddev=float(row["stddev_ns"]), rciw=float(row["rciw"]))
-            data.setdefault(variant, {}).setdefault(key, {}).setdefault(name, {})[row["operation"]] = entry
+            data.setdefault(key, {}).setdefault(path.stem, {})[row["operation"]] = entry
     return data
 
 
@@ -68,57 +71,65 @@ def total_table(group, operation, title):
           "The crossover is the first integer Q giving a strictly lower total.")
 
 
+def lookup_comparison(group, operation):
+    comparison = {}
+    for name, results in group.items():
+        for prefix, method in (("", "string"), ("prepared_", "prepared")):
+            lookup = results.get(prefix + operation)
+            if lookup is None:
+                continue
+            label = lookup["label"] + f" ({method})"
+            comparison[(name, method)] = {
+                "parse": dict(results["parse"], label=label),
+                operation: dict(lookup, label=label),
+            }
+    return comparison
+
+
 def main(include_environment=True):
     data = load_results(RESULTS_DIR)
     if not data:
         sys.exit("no HTTP storage results (run make)")
     if include_environment:
         environment(RESULTS_DIR / "platform.txt")
-    for variant, fixtures in data.items():
-        for key, group in sorted(fixtures.items()):
-            fixture, header_limit = key
-            message_section(fixture)
-            policy = next(iter(group.values()))["parse"]["allocation"]
-            # Keep the allocation boundary explicit rather than saying
-            # "preallocated allocation" in the published report.
-            allocation = ("memory preallocated (system allocation excluded)"
-                          if policy == "preallocated" else "system allocation included")
-            print(f"\n{variant} CPU build; {allocation}; application header limit {header_limit}; headers only.\n")
-            print("Parse + Post-process includes initialization, HTTP parsing and native header storage, "
-                  "including any growth. Query decomposition, decoding and storage are excluded. "
-                  "Input preparation and context cleanup are outside timing.\n")
-            print("† Target RCIW was not reached; calculated totals inherit the marker from either component.\n")
-            measurement_table(group, "parse", "Parse + Post-process", "ns/request")
-            print("\nKnown/unknown describes native header-name definitions. Unknown hit names are present "
-                  "in the message but absent from those definitions; hwire_table treats all names as strings. "
-                  "Key lengths differ between groups, so costs include both name representation and key length. "
-                  "Each lookup starts from the original string; native name conversion is timed. "
-                  "Time is the mean per lookup for these keys on a completed warm context.")
-            cases = (
-                ("hit", "Lookup Hit — Known Headers",
-                 "Host, Accept, Cookie, User-Agent, Connection and Referer"),
-                ("hit_unknown", "Lookup Hit — Unknown Headers",
-                 "Sec-Fetch-Site, Sec-Fetch-Mode, Sec-Fetch-User, Sec-Fetch-Dest, Sec-CH-UA and Sec-CH-UA-Platform"),
-                ("hit_mixed", "Lookup Hit — Mixed Headers",
-                 "Host, Sec-Fetch-Site, Cookie, Sec-Fetch-Mode, Connection and Sec-CH-UA-Platform"),
-                ("miss", "Lookup Miss",
-                 "Hots, Accpet, Cooxie, User-Agend, Sec-CH-UA-Platforn and Referef"),
-            )
-            for operation, title, keys in cases:
-                measurement_table(group, operation, title, "ns/lookup")
-                print(f"\nSearches {keys}, in that order, repeated with equal frequency.")
-            print("\n\n### First Header Lookup Cost and Break-even\n")
-            print("Estimate the total time to parse and store a request and perform its first header lookup. "
-                  "Each table shows that total, the per-lookup cost, and how many lookups are needed "
-                  "for faster searches to recover a higher parsing and storage cost.\n")
-            print("Totals use the displayed means: "
-                  "`Parse + Post-process mean + Q × lookup mean`. "
-                  "Lookup costs are measured on a completed warm context; the first-lookup total is estimated, "
-                  "not timed immediately after parsing. "
-                  "The crossover is the first integer Q that beats the fastest Parse + Post-process + 1 lookup implementation.")
-            for operation, title, _ in cases:
-                total_table(group, operation, title)
-
+    for key, group in sorted(data.items()):
+        fixture, header_limit = key
+        message_section(fixture)
+        policy = next(iter(group.values()))["parse"]["allocation"]
+        # Keep the allocation boundary explicit rather than saying
+        # "preallocated allocation" in the published report.
+        allocation = ("memory preallocated (system allocation excluded)"
+                      if policy == "preallocated" else "system allocation included")
+        print(f"\nSupported CPU builds; {allocation}; application header limit {header_limit}; headers only.\n")
+        print("Parse + Post-process includes initialization, HTTP parsing and native header storage, "
+              "including any growth. Query decomposition, decoding and storage are excluded. "
+              "Input preparation and context cleanup are outside timing.\n")
+        print("† Target RCIW was not reached; calculated totals inherit the marker from either component.\n")
+        measurement_table(group, "parse", "Parse + Post-process", "ns/request")
+        cases = (
+            ("hit", "Lookup Hit — Known Headers",
+             "Host, Accept, Cookie, User-Agent, Connection and Referer"),
+            ("hit_unknown", "Lookup Hit — Unknown Headers",
+             "Sec-Fetch-Site, Sec-Fetch-Mode, Sec-Fetch-User, Sec-Fetch-Dest, Sec-CH-UA and Sec-CH-UA-Platform"),
+            ("hit_mixed", "Lookup Hit — Mixed Headers",
+             "Host, Sec-Fetch-Site, Cookie, Sec-Fetch-Mode, Connection and Sec-CH-UA-Platform"),
+            ("miss", "Lookup Miss",
+             "Hots, Accpet, Cooxie, User-Agend, Sec-CH-UA-Platforn and Referef"),
+        )
+        for operation, title, keys in cases:
+            measurement_table(lookup_comparison(group, operation), operation, title, "ns/lookup")
+            print(f"\nSearches {keys}, in that order, repeated with equal frequency.")
+        print("\n\n### First Header Lookup Cost and Break-even\n")
+        print("Estimate the total time to parse and store a request and perform its first header lookup. "
+              "Each table shows that total, the per-lookup cost, and how many lookups are needed "
+              "for faster searches to recover a higher parsing and storage cost.\n")
+        print("Totals use the displayed means: "
+              "`Parse + Post-process mean + Q × lookup mean`. "
+              "Lookup costs are measured on a completed warm context; the first-lookup total is estimated, "
+              "not timed immediately after parsing. "
+              "The crossover is the first integer Q that beats the fastest Parse + Post-process + 1 lookup implementation.")
+        for operation, title, _ in cases:
+            total_table(lookup_comparison(group, operation), operation, title)
 
 
 if __name__ == "__main__":

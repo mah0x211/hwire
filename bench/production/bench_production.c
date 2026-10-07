@@ -36,6 +36,9 @@ typedef struct {
     parser_fn_t request;
     context_free_fn_t context_free;
     size_t (*header_lookup)(const void *, const char *, size_t);
+    void *(*header_query_new)(const char *, size_t);
+    size_t (*header_lookup_prepared)(const void *, const void *);
+    void (*header_query_free)(void *);
 } implementations_t;
 
 #include "implementationlist.c"
@@ -176,14 +179,22 @@ static const lookup_case_t LOOKUP_CASES[] = {
 static volatile size_t lookup_sink;
 
 static double lookup_sample(const implementations_t *parser, const void *context,
-                             const lookup_key_t *keys, size_t count, size_t groups)
+                             const lookup_key_t *keys, void *const *queries, size_t count, size_t groups)
 {
     size_t sum = 0;
     uint64_t overhead = measure_timer_overhead(1);
     uint64_t start = now_ns();
-    for (size_t i = 0; i < groups; i++) {
-        for (size_t k = 0; k < count; k++) {
-            sum += parser->header_lookup(context, keys[k].key, keys[k].len);
+    if (queries != NULL) {
+        for (size_t i = 0; i < groups; ++i) {
+            for (size_t k = 0; k < count; ++k) {
+                sum += parser->header_lookup_prepared(context, queries[k]);
+            }
+        }
+    } else {
+        for (size_t i = 0; i < groups; ++i) {
+            for (size_t k = 0; k < count; ++k) {
+                sum += parser->header_lookup(context, keys[k].key, keys[k].len);
+            }
         }
     }
     uint64_t elapsed = now_ns() - start;
@@ -192,8 +203,20 @@ static double lookup_sample(const implementations_t *parser, const void *context
 }
 
 static int bench_lookup(FILE *out, const implementations_t *parser, const store_fixture_t *fixture,
-                         const char *operation, const lookup_key_t *keys, size_t count)
+                         const char *operation, const lookup_key_t *keys, size_t count, int prepared)
 {
+    void *queries[LOOKUP_KEY_COUNT] = {0};
+    if (prepared) {
+        for (size_t k = 0; k < count; ++k) {
+            queries[k] = parser->header_query_new(keys[k].key, keys[k].len);
+            if (queries[k] == NULL) {
+                for (size_t j = 0; j < k; ++j) {
+                    parser->header_query_free(queries[j]);
+                }
+                return -1;
+            }
+        }
+    }
     unsigned char input[fixture->len + 1];
     memcpy(input, fixture->data, fixture->len);
     input[fixture->len] = 0;
@@ -207,20 +230,30 @@ static int bench_lookup(FILE *out, const implementations_t *parser, const store_
 #ifdef BENCH_POOL
         parser_pool_end();
 #endif
+        if (prepared) {
+            for (size_t k = 0; k < count; ++k) {
+                parser->header_query_free(queries[k]);
+            }
+        }
         return -1;
     }
-    double warmup = lookup_sample(parser, context, keys, count, 1000);
+    double warmup = lookup_sample(parser, context, keys, prepared ? queries : NULL, count, 1000);
     size_t groups = sample_iterations(warmup * 1000 * count, 1000, quick);
     bench_stats_t stats = {0};
     do {
-        bench_stats_add(&stats, lookup_sample(parser, context, keys, count, groups));
+        bench_stats_add(&stats, lookup_sample(parser, context, keys, prepared ? queries : NULL, count, groups));
     } while (quick ? stats.count < 3 : !bench_stats_done(&stats));
     parser->context_free(context);
 #ifdef BENCH_POOL
     parser_pool_end();
 #endif
-    fprintf(out, "%s,%s,request,%zu,%u,%zu,%zu,%.3f,%.3f,%.6f,%s\n",
-            fixture->name, operation, fixture->len, HEADER_CAPACITY,
+    if (prepared) {
+        for (size_t k = 0; k < count; ++k) {
+            parser->header_query_free(queries[k]);
+        }
+    }
+    fprintf(out, "%s,%s%s,request,%zu,%u,%zu,%zu,%.3f,%.3f,%.6f,%s\n",
+            fixture->name, prepared ? "prepared_" : "", operation, fixture->len, HEADER_CAPACITY,
             stats.count, groups * count, stats.mean, bench_stats_stddev(&stats),
             bench_stats_rciw(&stats),
 #ifdef BENCH_POOL
@@ -229,8 +262,8 @@ static int bench_lookup(FILE *out, const implementations_t *parser, const store_
             "allocated"
 #endif
     );
-    fprintf(stderr, "%s/%s/%s: %zu samples, RCIW %.2f%%\n", parser->name,
-            fixture->name, operation, stats.count, 100.0 * bench_stats_rciw(&stats));
+    fprintf(stderr, "%s/%s/%s%s: %zu samples, RCIW %.2f%%\n", parser->name,
+            fixture->name, prepared ? "prepared_" : "", operation, stats.count, 100.0 * bench_stats_rciw(&stats));
     return 0;
 }
 
@@ -278,7 +311,14 @@ static int run_storage_benchmarks(void)
                 for (size_t c = 0; c < CASE_COUNT; c++) {
                     if (bench_lookup(out, parser, &STORE_FIXTURES[f],
                                      LOOKUP_CASES[c].operation, LOOKUP_CASES[c].keys,
-                                     LOOKUP_KEY_COUNT) != 0) {
+                                     LOOKUP_KEY_COUNT, 0) != 0) {
+                        result = -1;
+                        break;
+                    }
+                    if (parser->header_query_new != NULL &&
+                        bench_lookup(out, parser, &STORE_FIXTURES[f],
+                                     LOOKUP_CASES[c].operation, LOOKUP_CASES[c].keys,
+                                     LOOKUP_KEY_COUNT, 1) != 0) {
                         result = -1;
                         break;
                     }

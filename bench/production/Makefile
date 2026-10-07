@@ -5,17 +5,25 @@ CFLAGS ?= -O2 -DNDEBUG -std=c11
 BIN := bin
 RESULTS := results
 UNAME_M := $(shell uname -m)
-VARIANTS ?= native
 ifeq ($(UNAME_M),x86_64)
 NATIVE_FLAGS := -march=native
+VARIANTS ?= nosimd sse2 sse42 native
+VARIANT_FLAGS_sse42 := -msse4.2
 else
 NATIVE_FLAGS := -mcpu=native
+VARIANTS ?= nosimd neon native
 endif
+VARIANT_FLAGS_nosimd := -DHWIRE_NO_SIMD -DHWIRE_NO_AES -fno-tree-vectorize
 VARIANT_FLAGS_native := $(NATIVE_FLAGS)
 VARIANT_FLAGS_siphash := $(NATIVE_FLAGS) -DHWIRE_NO_AES
 GEN := python3 scripts/gen_production.py
 IMPLEMENTATIONS := $(shell $(GEN) list)
 -include $(foreach p,$(IMPLEMENTATIONS),$(p)/config.mk)
+# Register and compile only the instruction targets supported by each adapter.
+variant_implementations = $(foreach p,$(IMPLEMENTATIONS),$(if $(filter $(1),$(or $($(p)_VARIANTS),$(VARIANTS))),$(p)))
+variant_sources = $(sort $(foreach p,$(call variant_implementations,$(1)),$(wildcard $(p)/*.c) $($(p)_SOURCES)))
+variant_includes = -I../shared -I../../src $(foreach p,$(call variant_implementations,$(1)),-I$(p) $($(p)_CPPFLAGS))
+variant_libraries = $(foreach p,$(call variant_implementations,$(1)),$($(p)_LDLIBS))
 SRCS := $(sort $(foreach p,$(IMPLEMENTATIONS),$(wildcard $(p)/*.c) $($(p)_SOURCES)))
 INC := -I../shared -I../../src $(foreach p,$(IMPLEMENTATIONS),-I$(p) $($(p)_CPPFLAGS))
 LDLIBS = $(foreach p,$(IMPLEMENTATIONS),$($(p)_LDLIBS))
@@ -26,7 +34,7 @@ BUILD := $(wildcard $(foreach p,$(IMPLEMENTATIONS),$(p)/build.sh))
 DEP_NAMES := $(shell printf '%s\n' $(SRCS) | sed 's|[^A-Za-z0-9]|_|g;s|$$|.d|') driver.d $(if $(filter Linux Darwin,$(shell uname -s)),pool.d) $(if $(filter Darwin,$(shell uname -s)),pool_darwin.d)
 -include $(foreach v,$(VARIANTS),$(wildcard $(addprefix $(BIN)/$(v)/objects/,$(DEP_NAMES))))
 DEPS := $(wildcard $(SRCS) $(foreach p,$(IMPLEMENTATIONS),$(p)/*.h $($(p)_BUILD_DEPS)))
-BINS := $(if $(IMPLEMENTATIONS),$(foreach v,$(VARIANTS),$(BIN)/$(v)/bench_production))
+BINS := $(if $(IMPLEMENTATIONS),$(foreach v,$(VARIANTS),$(if $(call variant_implementations,$(v)),$(BIN)/$(v)/bench_production)))
 POOL_TESTS := $(if $(filter Linux Darwin,$(shell uname -s)),$(patsubst %/bench_production,%/test_pool,$(BINS)))
 ifeq ($(shell uname -s),Darwin)
 POOL_TEST_LINK = -L$(BIN)/$* -lbench_pool -Wl,-rpath,@loader_path
@@ -46,7 +54,7 @@ run: $(BINS)
 	@sh ../platform.sh $(RESULTS)/platform.txt '$(CC)' '$(CFLAGS)'
 	@$(foreach p,$(IMPLEMENTATIONS),$(if $($(p)_BUILD_INFO),printf '%s\n' '$(p) build: $($(p)_BUILD_INFO)' >> $(RESULTS)/platform.txt;))
 	@printf '%s\n' 'production variants: $(foreach v,$(VARIANTS),$(v)=$(VARIANT_FLAGS_$(v)))' >> $(RESULTS)/platform.txt
-	@$(foreach p,$(IMPLEMENTATIONS),$(p)_NAME='$($(p)_NAME)') python3 -c 'import json, os; from pathlib import Path; Path("results/active.json").write_text(json.dumps({p+"-"+v: os.getenv(p+"_NAME") or p for p in "$(IMPLEMENTATIONS)".split() for v in "$(VARIANTS)".split()}))'
+	@$(foreach p,$(IMPLEMENTATIONS),$(p)_NAME='$($(p)_NAME)' $(p)_VARIANTS='$(or $($(p)_VARIANTS),$(VARIANTS))') python3 -c 'import json, os; from pathlib import Path; Path("results/active.json").write_text(json.dumps({p+"-"+v: os.getenv(p+"_NAME") or p for p in "$(IMPLEMENTATIONS)".split() for v in "$(VARIANTS)".split() if v in os.environ[p+"_VARIANTS"].split()}))'
 	@for binary in $(BINS); do ./$$binary || exit 1; done
 	@$(MAKE) --no-print-directory report
 report:
@@ -71,7 +79,7 @@ $(BIN)/%/config.txt: FORCE
 	@if cmp -s $@.tmp $@; then rm $@.tmp; else mv $@.tmp $@; fi
 $(BIN)/%/implementationlist.c: FORCE scripts/gen_production.py ../shared/scripts/registration.py
 	@mkdir -p $(BIN)/$*
-	@$(GEN) write $@ $*
+	@$(GEN) write $@ $* $(call variant_implementations,$*)
 $(BIN)/%/bench_production: $(BIN)/%/config.txt $(BIN)/%/implementationlist.c Makefile bench_production.c ../shared/bench_stats.h ../shared/bench_timer.h ../shared/scripts/build_variant.sh shared/pool.c shared/pool.h shared/pool_darwin.c ../data/scenarios/browser_cdn.h $(DEPS) $(CONFIGS) $(FETCH) $(BUILD) | setup
-	@for p in $(IMPLEMENTATIONS); do if [ -f "$$p/build.sh" ]; then CARGO='$(CARGO)' sh "$$p/build.sh" '$*' || exit 1; fi; done
-	@$(foreach p,$(IMPLEMENTATIONS),$(p)_CFLAGS='$($(p)_CFLAGS)') CC='$(CC)' CFLAGS='$(CFLAGS)' SRCS='$(SRCS)' INC='$(INC)' LDLIBS='$(subst %,$*,$(LDLIBS))' DRIVER='bench_production.c' POOL='1' sh ../shared/scripts/build_variant.sh '$*' '$(VARIANT_FLAGS_$*)'
+	@for p in $(call variant_implementations,$*); do if [ -f "$$p/build.sh" ]; then CARGO='$(CARGO)' sh "$$p/build.sh" '$*' || exit 1; fi; done
+	@$(foreach p,$(IMPLEMENTATIONS),$(p)_CFLAGS='$($(p)_CFLAGS)') CC='$(CC)' CFLAGS='$(CFLAGS)' SRCS='$(call variant_sources,$*)' INC='$(call variant_includes,$*)' LDLIBS='$(subst %,$*,$(call variant_libraries,$*))' DRIVER='bench_production.c' POOL='1' sh ../shared/scripts/build_variant.sh '$*' '$(VARIANT_FLAGS_$*)'
