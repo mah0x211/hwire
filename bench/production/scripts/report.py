@@ -71,6 +71,21 @@ def total_table(group, operation, title):
           "The crossover is the first integer Q giving a strictly lower total.")
 
 
+def lookup_comparison(group, operation):
+    comparison = {}
+    for name, results in group.items():
+        for prefix, method in (("", "string"), ("prepared_", "prepared")):
+            lookup = results.get(prefix + operation)
+            if lookup is None:
+                continue
+            label = lookup["label"] + f" ({method})"
+            comparison[(name, method)] = {
+                "parse": dict(results["parse"], label=label),
+                operation: dict(lookup, label=label),
+            }
+    return comparison
+
+
 def main(include_environment=True):
     data = load_results(RESULTS_DIR)
     if not data:
@@ -102,7 +117,7 @@ def main(include_environment=True):
              "Hots, Accpet, Cooxie, User-Agend, Sec-CH-UA-Platforn and Referef"),
         )
         for operation, title, keys in cases:
-            measurement_table(group, operation, title, "ns/lookup")
+            measurement_table(lookup_comparison(group, operation), operation, title, "ns/lookup")
             print(f"\nSearches {keys}, in that order, repeated with equal frequency.")
         print("\n\n### First Header Lookup Cost and Break-even\n")
         print("Estimate the total time to parse and store a request and perform its first header lookup. "
@@ -114,7 +129,7 @@ def main(include_environment=True):
               "not timed immediately after parsing. "
               "The crossover is the first integer Q that beats the fastest Parse + Post-process + 1 lookup implementation.")
         for operation, title, _ in cases:
-            total_table(group, operation, title)
+            total_table(lookup_comparison(group, operation), operation, title)
 
 
 if __name__ == "__main__":

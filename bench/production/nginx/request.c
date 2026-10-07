@@ -145,6 +145,53 @@ size_t nginx_header_lookup(const void *context, const char *key, size_t len)
     return 0;
 }
 
+/* Request-independent selector: native field offset plus normalized name. */
+typedef struct {
+    size_t offset;
+    size_t len;
+    u_char name[];
+} nginx_header_query_t;
+
+void *nginx_header_query_new(const char *key, size_t len)
+{
+    nginx_header_query_t *query = malloc(sizeof(*query) + len);
+    if (query == NULL) {
+        return NULL;
+    }
+    ngx_uint_t hash = ngx_hash_strlow(query->name, (u_char *)key, len);
+    query->offset = (size_t)(uintptr_t)ngx_hash_find(&native_header_hash, hash,
+                                                   query->name, len);
+    query->len = len;
+    return query;
+}
+
+void nginx_header_query_free(void *query)
+{
+    free(query);
+}
+
+size_t nginx_header_lookup_prepared(const void *context, const void *prepared)
+{
+    const nginx_storage_t *s = context;
+    const nginx_header_query_t *query = prepared;
+    if (query->offset != 0) {
+        const ngx_table_elt_t *h = *(ngx_table_elt_t *const *)(
+            (const u_char *)&s->request.headers_in + query->offset - 1);
+        return h != NULL ? h->value.len + 1 : 0;
+    }
+    for (const ngx_list_part_t *part = &s->request.headers_in.headers.part;
+         part != NULL; part = part->next) {
+        const ngx_table_elt_t *headers = part->elts;
+        for (ngx_uint_t i = 0; i < part->nelts; ++i) {
+            if (headers[i].key.len == query->len &&
+                ngx_strncmp(headers[i].lowcase_key, query->name, query->len) == 0) {
+                return headers[i].value.len + 1;
+            }
+        }
+    }
+    return 0;
+}
+
 int nginx_request_with_store(void **context, const unsigned char *data,
                              size_t len, size_t header_capacity)
 {

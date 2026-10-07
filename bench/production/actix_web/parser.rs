@@ -113,3 +113,27 @@ pub unsafe extern "C" fn actix_web_header_lookup(context: *const Request,
     // Use the application's string API; HeaderName conversion is timed.
     unsafe { (*context).head().headers.get(key).map_or(0, |value| value.len() + 1) }
 }
+
+// HeaderName is immutable and contains no request-specific data.
+#[no_mangle]
+pub unsafe extern "C" fn actix_web_header_query_new(key: *const u8, len: usize) -> *mut HeaderName {
+    let bytes = unsafe { slice::from_raw_parts(key, len) };
+    match HeaderName::from_bytes(bytes) {
+        Ok(name) => Box::into_raw(Box::new(name)),
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn actix_web_header_query_free(query: *mut HeaderName) {
+    if !query.is_null() {
+        drop(unsafe { Box::from_raw(query) });
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn actix_web_header_lookup_prepared(
+    context: *const Request, query: *const HeaderName,
+) -> usize {
+    unsafe { (*context).head().headers.get(&*query).map_or(0, |value| value.len() + 1) }
+}
