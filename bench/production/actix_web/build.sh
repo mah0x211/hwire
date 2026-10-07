@@ -7,9 +7,8 @@ cargo=${CARGO:-cargo}
 flags='-C target-cpu=generic'
 disable=0
 case "$variant" in
-    native|siphash) flags="-C target-cpu=native" ;;
-    nosimd) disable=1 ;;
-    sse2) disable=1; flags="$flags -C target-feature=+sse2,-sse4.2,-avx2" ;;
+    native) flags="-C target-cpu=native" ;;
+    nosimd) disable=1; flags="$flags -C no-vectorize-loops -C no-vectorize-slp" ;;
     sse42) flags="$flags -C target-feature=+sse4.2,-avx2" ;;
     neon) flags="$flags -C target-feature=+neon" ;;
 esac

@@ -10,8 +10,10 @@ SUFFIX = "_with_store"
 REQUIRED = ("header_lookup",)
 
 
-def write_table(out, variant, directory=None):
+def write_table(out, variant, directory=None, implementations=None):
     names = list(registered(directory or ROOT, SUFFIX, REQUIRED, directions=("request",)))
+    if implementations is not None:
+        names = [name for name in names if name in implementations]
     lines = []
     for name in names:
         lines.append(f"int {name}_request{SUFFIX}(void **, const unsigned char *, size_t, size_t);")
@@ -36,6 +38,6 @@ if __name__ == "__main__":
     if sys.argv[1] == "list":
         print(" ".join(registered(ROOT, SUFFIX, REQUIRED, directions=("request",))))
     elif sys.argv[1] == "write":
-        write_table(sys.argv[2], sys.argv[3])
+        write_table(sys.argv[2], sys.argv[3], implementations=sys.argv[4:] or None)
     else:
         sys.exit("usage: gen_registration.py list | write OUT VARIANT")
