@@ -20,7 +20,7 @@ static void test_vectors(void)
     for (size_t k = 0; k < sizeof aes_keys / sizeof aes_keys[0]; ++k) {
         for (size_t n = 0; n < sizeof aes_lengths / sizeof aes_lengths[0];
              ++n) {
-            assert(hash_aes(&aes_keys[k], input, aes_lengths[n], 0) ==
+            assert(hash_aes_cs(&aes_keys[k], input, aes_lengths[n]) ==
                    aes_expected[k][n]);
         }
     }
@@ -42,12 +42,14 @@ static void check_key(const char *raw, const char *normalized, size_t len)
                (HWIRE_TABLE_CASE_SENSITIVE | HWIRE_TABLE_CASE_INSENSITIVE),
                storage, 1, index, HWIRE_TABLE_SLOTS_CAP_2N) == HWIRE_TABLE_OK);
 #if defined(HWIRE_TABLE_HAVE_AES)
-    assert(hash_key(&table, raw, len, 0) == hash_aes(&key, raw, len, 0));
+    assert(compute_bytes_hash_cs(&table.key, raw, len) ==
+           hash_aes_cs(&key, raw, len));
 #else
-    assert(hash_key(&table, raw, len, 0) == hash_siphash(&key, raw, len, 0));
+    assert(compute_bytes_hash_cs(&table.key, raw, len) ==
+           hash_siphash_cs(&key, raw, len));
 #endif
-    assert(hash_key(&table, raw, len, 1) ==
-           hash_key(&table, normalized, len, 0));
+    assert(compute_bytes_hash_ci(&table.key, raw, len) ==
+           compute_bytes_hash_cs(&table.key, normalized, len));
     hwire_kv_pair_t pair = {
         {len, raw },
         {0,   NULL}
@@ -82,7 +84,7 @@ static void test_binary_ci(void)
             check_key(raw + 1, normalized + 1, len);
         }
     }
-    check_key(NULL, NULL, 0);
+    check_key("", "", 0);
 }
 
 /** Place each key immediately before an unreadable page to detect overreads. */

@@ -84,15 +84,20 @@ static inline table_aes_block_t table_aes_reverse(table_aes_block_t a)
     return vextq_u8(reversed, reversed, 8);
 }
 
-/** Load exactly sixteen bytes and optionally fold ASCII A-Z. */
-static inline table_aes_block_t table_aes_load(const char *data, int ci)
+/** Load exactly sixteen bytes without ASCII folding. */
+static inline table_aes_block_t table_aes_load_cs(const char *data)
 {
     table_aes_block_t a = vld1q_u8((const unsigned char *)data);
-    if (ci) {
-        table_aes_block_t upper = vandq_u8(vcgeq_u8(a, vdupq_n_u8('A')),
-                                           vcleq_u8(a, vdupq_n_u8('Z')));
-        a = vorrq_u8(a, vandq_u8(upper, vdupq_n_u8(0x20)));
-    }
+    return a;
+}
+
+/** Load exactly sixteen bytes and fold ASCII A-Z. */
+static inline table_aes_block_t table_aes_load_ci(const char *data)
+{
+    table_aes_block_t a = vld1q_u8((const unsigned char *)data);
+    table_aes_block_t upper =
+        vandq_u8(vcgeq_u8(a, vdupq_n_u8('A')), vcleq_u8(a, vdupq_n_u8('Z')));
+    a = vorrq_u8(a, vandq_u8(upper, vdupq_n_u8(0x20)));
     return a;
 }
 
@@ -149,17 +154,23 @@ static inline table_aes_block_t table_aes_reverse(table_aes_block_t a)
     return _mm_shuffle_epi8(a, order);
 }
 
-/** Load exactly sixteen bytes and optionally fold ASCII A-Z. */
-static inline table_aes_block_t table_aes_load(const char *data, int ci)
+/** Load exactly sixteen bytes without ASCII folding. */
+static inline table_aes_block_t table_aes_load_cs(const char *data)
 {
     table_aes_block_t a;
     memcpy(&a, data, sizeof a);
-    if (ci) {
-        table_aes_block_t upper =
-            _mm_and_si128(_mm_cmpgt_epi8(a, _mm_set1_epi8('A' - 1)),
-                          _mm_cmpgt_epi8(_mm_set1_epi8('Z' + 1), a));
-        a = _mm_or_si128(a, _mm_and_si128(upper, _mm_set1_epi8(0x20)));
-    }
+    return a;
+}
+
+/** Load exactly sixteen bytes and fold ASCII A-Z. */
+static inline table_aes_block_t table_aes_load_ci(const char *data)
+{
+    table_aes_block_t a;
+    memcpy(&a, data, sizeof a);
+    table_aes_block_t upper =
+        _mm_and_si128(_mm_cmpgt_epi8(a, _mm_set1_epi8('A' - 1)),
+                      _mm_cmpgt_epi8(_mm_set1_epi8('Z' + 1), a));
+    a = _mm_or_si128(a, _mm_and_si128(upper, _mm_set1_epi8(0x20)));
     return a;
 }
 
@@ -176,11 +187,18 @@ static inline uint64_t table_aes_low(table_aes_block_t a)
 
 #if defined(HWIRE_TABLE_HAVE_AES)
 /** Read at most eight little-endian bytes without reading outside the slice. */
-static inline uint64_t table_aes_read(const char *data, size_t len, int ci)
+static inline uint64_t table_aes_read_cs(const char *data, size_t len)
 {
     uint64_t value = 0;
     memcpy(&value, data, len);
-    return ci ? fold_word(value) : value;
+    return value;
+}
+
+static inline uint64_t table_aes_read_ci(const char *data, size_t len)
+{
+    uint64_t value = 0;
+    memcpy(&value, data, len);
+    return fold_word(value);
 }
 
 /** Mix a block into the independent AES and shuffled-add states. */
@@ -196,8 +214,8 @@ static inline void table_aes_mix(table_aes_block_t *enc, table_aes_block_t *sum,
  * The build target must support the required instructions. All loads
  * stay inside the slice; CI folds ASCII only while loading, without allocation.
  */
-static uint64_t hash_aes(const hwire_table_key_t *key, const char *data,
-                         size_t len, int ci)
+static uint64_t hash_aes_cs(const hwire_table_key_t *key, const char *data,
+                            size_t len)
 {
     table_aes_block_t enc =
         table_aes_pack(key->words[0] ^ UINT64_C(0x243f6a8885a308d3),
@@ -211,34 +229,34 @@ static uint64_t hash_aes(const hwire_table_key_t *key, const char *data,
         uint64_t low  = 0;
         uint64_t high = 0;
         if (len >= 4u) {
-            low  = table_aes_read(data, 4, ci);
-            high = table_aes_read(data + len - 4u, 4, ci);
+            low  = table_aes_read_cs(data, 4);
+            high = table_aes_read_cs(data + len - 4u, 4);
         } else if (len >= 2u) {
-            low  = table_aes_read(data, 2, ci);
-            high = table_aes_read(data + len - 1u, 1, ci);
+            low  = table_aes_read_cs(data, 2);
+            high = table_aes_read_cs(data + len - 1u, 1);
         } else if (len == 1u) {
-            low  = table_aes_read(data, 1, ci);
+            low  = table_aes_read_cs(data, 1);
             high = low;
         }
         table_aes_mix(&enc, &sum, table_aes_pack(low, high));
     } else if (len <= 16u) {
         table_aes_mix(&enc, &sum,
-                      table_aes_pack(table_aes_read(data, 8, ci),
-                                     table_aes_read(data + len - 8u, 8, ci)));
+                      table_aes_pack(table_aes_read_cs(data, 8),
+                                     table_aes_read_cs(data + len - 8u, 8)));
     } else if (len <= 32u) {
-        table_aes_mix(&enc, &sum, table_aes_load(data, ci));
-        table_aes_mix(&enc, &sum, table_aes_load(data + len - 16u, ci));
+        table_aes_mix(&enc, &sum, table_aes_load_cs(data));
+        table_aes_mix(&enc, &sum, table_aes_load_cs(data + len - 16u));
     } else if (len <= 64u) {
-        table_aes_mix(&enc, &sum, table_aes_load(data, ci));
-        table_aes_mix(&enc, &sum, table_aes_load(data + 16u, ci));
-        table_aes_mix(&enc, &sum, table_aes_load(data + len - 32u, ci));
-        table_aes_mix(&enc, &sum, table_aes_load(data + len - 16u, ci));
+        table_aes_mix(&enc, &sum, table_aes_load_cs(data));
+        table_aes_mix(&enc, &sum, table_aes_load_cs(data + 16u));
+        table_aes_mix(&enc, &sum, table_aes_load_cs(data + len - 32u));
+        table_aes_mix(&enc, &sum, table_aes_load_cs(data + len - 16u));
     } else {
         const char *tail     = data + len - 64u;
-        table_aes_block_t t0 = table_aes_load(tail, ci);
-        table_aes_block_t t1 = table_aes_load(tail + 16u, ci);
-        table_aes_block_t t2 = table_aes_load(tail + 32u, ci);
-        table_aes_block_t t3 = table_aes_load(tail + 48u, ci);
+        table_aes_block_t t0 = table_aes_load_cs(tail);
+        table_aes_block_t t1 = table_aes_load_cs(tail + 16u);
+        table_aes_block_t t2 = table_aes_load_cs(tail + 32u);
+        table_aes_block_t t3 = table_aes_load_cs(tail + 48u);
         table_aes_block_t c0 = table_aes_enc(seed, t0);
         table_aes_block_t c1 = table_aes_dec(seed, t1);
         table_aes_block_t c2 = table_aes_enc(seed, t2);
@@ -250,10 +268,10 @@ static uint64_t hash_aes(const hwire_table_key_t *key, const char *data,
         s1          = table_aes_add(table_aes_reverse(s1), t3);
         size_t left = len;
         while (left > 64u) {
-            t0 = table_aes_load(data, ci);
-            t1 = table_aes_load(data + 16u, ci);
-            t2 = table_aes_load(data + 32u, ci);
-            t3 = table_aes_load(data + 48u, ci);
+            t0 = table_aes_load_cs(data);
+            t1 = table_aes_load_cs(data + 16u);
+            t2 = table_aes_load_cs(data + 32u);
+            t3 = table_aes_load_cs(data + 48u);
             c0 = table_aes_dec(c0, t0);
             c1 = table_aes_dec(c1, t1);
             c2 = table_aes_dec(c2, t2);
@@ -276,5 +294,87 @@ static uint64_t hash_aes(const hwire_table_key_t *key, const char *data,
     return table_aes_low(
         table_aes_dec(table_aes_dec(combined, seed), combined));
 }
+
+static uint64_t hash_aes_ci(const hwire_table_key_t *key, const char *data,
+                            size_t len)
+{
+    table_aes_block_t enc =
+        table_aes_pack(key->words[0] ^ UINT64_C(0x243f6a8885a308d3),
+                       UINT64_C(0x13198a2e03707344));
+    table_aes_block_t sum =
+        table_aes_pack(key->words[1] ^ UINT64_C(0xa4093822299f31d0),
+                       UINT64_C(0x082efa98ec4e6c89));
+    table_aes_block_t seed = table_aes_xor(enc, sum);
+    enc = table_aes_add(enc, table_aes_pack((uint64_t)len, 0));
+    if (len <= 8u) {
+        uint64_t low  = 0;
+        uint64_t high = 0;
+        if (len >= 4u) {
+            low  = table_aes_read_ci(data, 4);
+            high = table_aes_read_ci(data + len - 4u, 4);
+        } else if (len >= 2u) {
+            low  = table_aes_read_ci(data, 2);
+            high = table_aes_read_ci(data + len - 1u, 1);
+        } else if (len == 1u) {
+            low  = table_aes_read_ci(data, 1);
+            high = low;
+        }
+        table_aes_mix(&enc, &sum, table_aes_pack(low, high));
+    } else if (len <= 16u) {
+        table_aes_mix(&enc, &sum,
+                      table_aes_pack(table_aes_read_ci(data, 8),
+                                     table_aes_read_ci(data + len - 8u, 8)));
+    } else if (len <= 32u) {
+        table_aes_mix(&enc, &sum, table_aes_load_ci(data));
+        table_aes_mix(&enc, &sum, table_aes_load_ci(data + len - 16u));
+    } else if (len <= 64u) {
+        table_aes_mix(&enc, &sum, table_aes_load_ci(data));
+        table_aes_mix(&enc, &sum, table_aes_load_ci(data + 16u));
+        table_aes_mix(&enc, &sum, table_aes_load_ci(data + len - 32u));
+        table_aes_mix(&enc, &sum, table_aes_load_ci(data + len - 16u));
+    } else {
+        const char *tail     = data + len - 64u;
+        table_aes_block_t t0 = table_aes_load_ci(tail);
+        table_aes_block_t t1 = table_aes_load_ci(tail + 16u);
+        table_aes_block_t t2 = table_aes_load_ci(tail + 32u);
+        table_aes_block_t t3 = table_aes_load_ci(tail + 48u);
+        table_aes_block_t c0 = table_aes_enc(seed, t0);
+        table_aes_block_t c1 = table_aes_dec(seed, t1);
+        table_aes_block_t c2 = table_aes_enc(seed, t2);
+        table_aes_block_t c3 = table_aes_dec(seed, t3);
+        table_aes_block_t s0 = table_aes_add(seed, t0);
+        table_aes_block_t s1 = table_aes_add(
+            table_aes_xor(seed, table_aes_pack(UINT64_MAX, UINT64_MAX)), t1);
+        s0          = table_aes_add(table_aes_reverse(s0), t2);
+        s1          = table_aes_add(table_aes_reverse(s1), t3);
+        size_t left = len;
+        while (left > 64u) {
+            t0 = table_aes_load_ci(data);
+            t1 = table_aes_load_ci(data + 16u);
+            t2 = table_aes_load_ci(data + 32u);
+            t3 = table_aes_load_ci(data + 48u);
+            c0 = table_aes_dec(c0, t0);
+            c1 = table_aes_dec(c1, t1);
+            c2 = table_aes_dec(c2, t2);
+            c3 = table_aes_dec(c3, t3);
+            s0 = table_aes_add(table_aes_reverse(s0), t0);
+            s1 = table_aes_add(table_aes_reverse(s1), t1);
+            s0 = table_aes_add(table_aes_reverse(s0), t2);
+            s1 = table_aes_add(table_aes_reverse(s1), t3);
+            data += 64u;
+            left -= 64u;
+        }
+        table_aes_mix(&enc, &sum, c0);
+        table_aes_mix(&enc, &sum, c1);
+        table_aes_mix(&enc, &sum, c2);
+        table_aes_mix(&enc, &sum, c3);
+        table_aes_mix(&enc, &sum, s0);
+        table_aes_mix(&enc, &sum, s1);
+    }
+    table_aes_block_t combined = table_aes_enc(sum, enc);
+    return table_aes_low(
+        table_aes_dec(table_aes_dec(combined, seed), combined));
+}
+
 #endif
 #endif
