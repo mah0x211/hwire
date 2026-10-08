@@ -22,7 +22,7 @@ Zero-allocation `HTTP/1.1` parser written in `C99` or later.
 
 ## RFC Compliance
 
-This library parses `HTTP/1.x` **message framing and header field syntax**. Application-level HTTP semantics (content negotiation, conditional requests, authentication, caching) are outside its scope.
+This library parses `HTTP/1.x` **request/response lines, header fields, and chunk-size lines with extensions**. Application-level HTTP semantics (content negotiation, conditional requests, authentication, caching) are outside its scope.
 
 ### Compliant
 
@@ -54,7 +54,7 @@ The following behaviors deviate from strict RFC requirements for robustness and 
 
 ### Out of scope
 
-Message body parsing, transfer-coding, and connection management (**RFC 9112** §6–9), and all application-level HTTP semantics (**RFC 9110** §6–12) are not implemented. This library parses the request/response line and header fields only.
+Message body parsing, transfer-coding, and connection management (**RFC 9112** §6–9), and all application-level HTTP semantics (**RFC 9110** §6–12) are not implemented.
 
 ---
 
