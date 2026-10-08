@@ -1622,8 +1622,10 @@ static inline void skip_ws(const unsigned char **ustr,
  *
  *  parameters = *( OWS ";" OWS [ parameter ] )
  *
- * Caller must inspect the byte at *pos (e.g., for CRLF or end of data)
- * after this function returns HWIRE_OK.
+ * Empty parameters do not invoke param_cb. A trailing semicolon is
+ * complete at input end. CR or LF after an empty parameter is left unconsumed.
+ * After HWIRE_OK, the caller must check *pos against len and, if input
+ * remains, validate the terminator at str[*pos].
  *
  * @param str String to parse (must not be NULL)
  * @param len Number of available input bytes from str[0]
@@ -1690,11 +1692,7 @@ SKIP_SEMICOLON:
     // skip ';'
     ustr++;
 
-    // check position
     *pos = (size_t)(ustr - (const unsigned char *)str);
-    if (ustr >= tail) {
-        return ((size_t)(ustr - head) >= maxlen) ? HWIRE_ELEN : HWIRE_EAGAIN;
-    }
 
 CHECK_PARAM:
     // skip trailing OWS
@@ -1709,6 +1707,13 @@ CHECK_PARAM:
     if (ustr >= tail) {
         *pos = (size_t)(ustr - (const unsigned char *)str);
         return (*pos >= len) ? HWIRE_OK : HWIRE_ELEN;
+    }
+
+    if (*ustr == CR || *ustr == LF) {
+        // Leave the line terminator for the caller, including after empty
+        // parameters.
+        *pos = (size_t)(ustr - (const unsigned char *)str);
+        return HWIRE_OK;
     }
 
     // parse one parameter

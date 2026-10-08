@@ -385,12 +385,14 @@ int hwire_parse_quoted_string(const char *str, size_t len, size_t *pos,
 /**
  * @brief Parse parameters from a semicolon-separated list
  *
- * Parses parameters according to RFC 7230:
+ * Parses parameters according to RFC 9110 Section 5.6.6:
  *   parameters = *( OWS ";" OWS [ parameter ] )
  *   parameter = parameter-name "=" parameter-value
  *
- * Caller must inspect the byte at *pos (e.g., for CRLF or end of data)
- * after this function returns HWIRE_OK.
+ * Empty parameters do not invoke param_cb. A trailing semicolon is
+ * complete at input end. CR or LF after an empty parameter is left unconsumed.
+ * After HWIRE_OK, the caller must check *pos against len and, if input
+ * remains, validate the terminator at str[*pos].
  *
  * @param str String to parse (must not be NULL)
  * @param len Number of available input bytes from str[0]
