@@ -120,8 +120,8 @@ void test_parse_tchar_offset_boundaries(void)
 
 /*
  * Covers: RFC 9110 §5.6.2  tchar ABNF exhaustive verification
- * MUST: hwire_is_tchar() MUST return true for exactly the 76 tchar bytes
- * defined by RFC 9110 §5.6.2 and false for all other 180 bytes (0x00-0xFF).
+ * MUST: hwire_is_tchar() MUST return true for exactly the 77 tchar bytes
+ * defined by RFC 9110 §5.6.2 and false for all other 179 bytes (0x00-0xFF).
  *   Valid tchar: ALPHA (a-z, A-Z), DIGIT (0-9),
  *     '!' '#' '$' '%' '&' '\'' '*' '+' '-' '.' '^' '_' '`' '|' '~'
  */
