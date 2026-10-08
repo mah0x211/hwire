@@ -126,3 +126,12 @@ analyze:
 
 clean:
 	rm -rf $(OBJ_DIR) $(COV_DIR) *.gcno *.gcda *.profraw *.profdata
+
+# Bounded libFuzzer runs; variables such as FUZZ_SECONDS propagate to the submake.
+.PHONY: fuzz
+fuzz:
+	$(MAKE) -C tests/fuzz run
+
+.PHONY: fuzz-coverage
+fuzz-coverage:
+	$(MAKE) -C tests/fuzz coverage
