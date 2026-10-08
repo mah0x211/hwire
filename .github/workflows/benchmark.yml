@@ -1,0 +1,81 @@
+name: benchmark
+
+on:
+  workflow_dispatch:
+    inputs:
+      suite:
+        description: Benchmark suite
+        type: choice
+        options: [all, parsers, hashmaps, production]
+        default: all
+      compare_ref:
+        description: Optional branch, tag or commit to measure in the same job
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  benchmark:
+    name: Benchmark (${{ inputs.suite }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      CC: gcc
+      CXX: g++
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+    - name: Checkout measured revision
+      uses: actions/checkout@v4
+      with:
+        persist-credentials: false
+
+    - name: Checkout comparison revision
+      if: inputs.compare_ref != ''
+      uses: actions/checkout@v4
+      with:
+        ref: ${{ inputs.compare_ref }}
+        path: .benchmark-comparison
+        persist-credentials: false
+
+    - name: Install build tools
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential clang pkg-config libssl-dev curl xz-utils
+        rustup toolchain install 1.88.0 --profile minimal
+        rustup default 1.88.0
+
+    - name: Install Zig for parser targets
+      if: inputs.suite == 'all' || inputs.suite == 'parsers'
+      run: |
+        cd "$RUNNER_TEMP"
+        curl -fL --retry 2 https://ziglang.org/download/0.15.1/zig-x86_64-linux-0.15.1.tar.xz -o zig.tar.xz
+        echo 'c61c5da6edeea14ca51ecd5e4520c6f4189ef5250383db33d01848293bfafe05  zig.tar.xz' | sha256sum -c -
+        tar -xf zig.tar.xz
+        echo "$RUNNER_TEMP/zig-x86_64-linux-0.15.1" >> "$GITHUB_PATH"
+
+    - name: Measure selected revision
+      env:
+        BENCH_SUITE: ${{ inputs.suite }}
+      run: |
+        python3 bench/shared/scripts/actions_benchmark.py \
+          --source "$GITHUB_WORKSPACE" --suite "$BENCH_SUITE" --label measured \
+          --output "$RUNNER_TEMP/benchmark-results/measured" --summary "$GITHUB_STEP_SUMMARY"
+
+    - name: Measure comparison revision
+      if: inputs.compare_ref != ''
+      env:
+        BENCH_SUITE: ${{ inputs.suite }}
+      run: |
+        python3 bench/shared/scripts/actions_benchmark.py \
+          --source "$GITHUB_WORKSPACE/.benchmark-comparison" --suite "$BENCH_SUITE" --label comparison \
+          --output "$RUNNER_TEMP/benchmark-results/comparison" --summary "$GITHUB_STEP_SUMMARY"
+
+    - name: Upload reports, measurements and logs
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: benchmark-${{ inputs.suite }}-${{ github.run_id }}-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/benchmark-results/
+        if-no-files-found: ignore
