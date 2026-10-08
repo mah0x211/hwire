@@ -567,14 +567,14 @@ int hwire_parse_parameters(hwire_ctx_t *ctx, const char *str, size_t len,
                            int skip_leading_semicolon);
 ```
 
-Parses a semicolon-separated parameter list per **RFC 7230**:
+Parses a semicolon-separated parameter list per **RFC 9110 §5.6.6**:
 
 ```
 parameters = *( OWS ";" OWS [ parameter ] )
 parameter  = parameter-name "=" parameter-value
 ```
 
-`ctx->param_cb` is called for each parameter; `ctx->key_lc` receives the lowercase parameter name. On `HWIRE_OK`, inspect `str[*pos]` to determine what follows (e.g., `\r\n`, end of data).
+`ctx->param_cb` is called for each non-empty parameter; `ctx->key_lc` receives the lowercase parameter name. Empty parameters are skipped, and a trailing semicolon is complete at input end. CR or LF after an empty parameter is left unconsumed. On `HWIRE_OK`, check `*pos` against `len` and, if input remains, validate the terminator at `str[*pos]`.
 
 **Parameters**
 

@@ -173,7 +173,7 @@ void test_parse_parameters_invalid(void)
 
 /*
  * Covers: edge cases in RFC 9110 §5.6.6 parameter parsing.
- * MUST return HWIRE_EAGAIN if input ends at ";" with no parameter following.
+ * MUST return HWIRE_OK if input ends at ";" (the parameter is optional).
  * MUST return HWIRE_EAGAIN if input ends immediately after "=" (no value yet).
  * MUST return HWIRE_ELEN if parameter-name pushes position past maxlen.
  * MUST return HWIRE_OK and pos==6 when buffer ends in trailing OWS
@@ -198,11 +198,12 @@ void test_parse_parameters_edge_cases(void)
     int rv;
     const char *buf;
 
-    /* Input ends at ";" with no parameter following → HWIRE_EAGAIN */
+    /* Input ends at ";" with an optional empty parameter → HWIRE_OK */
     buf = ";";
     pos = 0;
     rv  = hwire_parse_parameters(&cb, buf, strlen(buf), &pos, 100, 0);
-    ASSERT_EQ(rv, HWIRE_EAGAIN);
+    ASSERT_OK(rv);
+    ASSERT_EQ(pos, 1);
 
     /* Parameter value exceeds maxlen → HWIRE_ELEN */
     buf = "; key=value";
@@ -310,14 +311,13 @@ void test_parse_parameters_hard_budget(void)
     size_t pos      = 0;
     int rv = hwire_parse_parameters(&cb, buf, strlen(buf), &pos, 1, 0);
 
-    /* A consumed semicolon requires a following byte. At the exact budget
-     * boundary, reading more input cannot complete the parse in-budget. */
-    ASSERT_EQ(rv, HWIRE_ELEN);
+    /* The optional parameter may be empty at the exact input boundary. */
+    ASSERT_OK(rv);
     ASSERT_EQ(pos, 1);
 
     pos = 0;
     rv  = hwire_parse_parameters(&cb, buf, strlen(buf), &pos, 2, 0);
-    ASSERT_EQ(rv, HWIRE_EAGAIN);
+    ASSERT_OK(rv);
     ASSERT_EQ(pos, 1);
 
     buf = ";k=";
