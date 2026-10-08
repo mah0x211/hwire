@@ -23,10 +23,12 @@ PARSER_VARIANTS = scalar sse2 sse42 native
 FLAGS_sse2 = -msse2 -mno-sse4.2 -DFUZZ_EXPECT_SSE2
 FLAGS_sse42 = -msse4.2 -DFUZZ_EXPECT_SSE42
 FLAGS_native = -march=native
+TABLE_AES_FLAGS = -maes
 else
 PARSER_VARIANTS = scalar neon native
 FLAGS_neon = -DFUZZ_EXPECT_NEON
 FLAGS_native = -mcpu=native
+TABLE_AES_FLAGS = -march=armv8-a+crypto
 endif
 FLAGS_scalar = -DHWIRE_NO_SIMD -DFUZZ_EXPECT_SCALAR
 FLAGS_siphash = $(FLAGS_native) -DHWIRE_NO_AES
@@ -47,13 +49,19 @@ build run replay:
 	  for variant in $$variants; do \
 	    case " $$allowed " in *" $$variant "*) ;; *) echo "Unsupported variant: $$variant ($(ARCH))" >&2; exit 1 ;; esac; \
 	    case "$$variant" in scalar) flags='$(FLAGS_scalar)' ;; sse2) flags='$(FLAGS_sse2)' ;; sse42) flags='$(FLAGS_sse42)' ;; neon) flags='$(FLAGS_neon)' ;; native) flags='$(FLAGS_native)' ;; siphash) flags='$(FLAGS_siphash)' ;; esac; \
-	    dir='$(OUT)'/$$target/$$variant; mkdir -p "$$dir/artifacts"; \
-	    echo "=== $$target / $$variant: build ==="; \
+	    if [ "$$target" = table ]; then \
+      case "$$variant" in native) flags="$$flags $(TABLE_AES_FLAGS) -DHWIRE_TEST_EXPECT_AES=1" ;; siphash) flags="$$flags -DHWIRE_TEST_EXPECT_AES=0" ;; esac; \
+    fi; \
+    dir='$(OUT)'/$$target/$$variant; mkdir -p "$$dir/artifacts"; \
+	    echo "=== $$target / $$variant: build ==="; : >"$$dir/build.log"; \
 	    if [ '$@' = run ] && [ '$(FUZZ_COVERAGE)' = 1 ]; then \
 	      printf '%s\t%s\t%s\n' "$$target" "$$variant" '$(FUZZ_SECONDS)' >> '$(OUT)/coverage-runs.tsv'; \
 	      rm -f "$$dir/exit-code" "$$dir/run.log"; \
 	    fi; \
-	    $(CC) $(CFLAGS) $(COVERAGE_FLAGS) $$flags $(SANITIZERS) $$target.c $$source -o "$$dir/fuzz" >"$$dir/build.log" 2>&1 || { cat "$$dir/build.log"; exit 1; }; \
+	    if [ "$$target" = table ]; then \
+      $(CC) $(CFLAGS) $$flags -fsyntax-only ../table/test_aes.c >"$$dir/build.log" 2>&1 || { cat "$$dir/build.log"; exit 1; }; \
+    fi; \
+    $(CC) $(CFLAGS) $(COVERAGE_FLAGS) $$flags $(SANITIZERS) $$target.c $$source -o "$$dir/fuzz" >>"$$dir/build.log" 2>&1 || { cat "$$dir/build.log"; exit 1; }; \
 	    if [ '$@' = build ]; then continue; fi; \
 	    if [ '$@' = replay ]; then \
 	      echo "=== $$target / $$variant: replay ==="; \
