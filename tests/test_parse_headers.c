@@ -11,10 +11,7 @@
 void test_parse_headers_valid(void)
 {
     TEST_START("test_parse_headers_valid");
-
-    char key_storage[TEST_KEY_SIZE];
     hwire_ctx_t cb = {
-        .key_lc = {.buf = key_storage, .size = sizeof(key_storage), .len = 0},
         .header_cb = mock_header_cb
     };
     size_t pos;
@@ -71,15 +68,6 @@ void test_parse_headers_valid(void)
     rv  = hwire_parse_headers(&cb, buf, strlen(buf), &pos, 1024);
     ASSERT_EQ(rv, HWIRE_EHDRVALUE);
 
-    { /* hwire: MUST return HWIRE_EKEYLEN if the key_lc buffer is too small. */
-        hwire_ctx_t cb_small = cb;
-        cb_small.key_lc.size = 2;
-        buf                  = "Key: val\r\n\r\n";
-        pos                  = 0;
-        rv = hwire_parse_headers(&cb_small, buf, strlen(buf), &pos, 1024);
-        ASSERT_EQ(rv, HWIRE_EKEYLEN);
-    }
-
     /* RFC 9110 §5.5: HTAB is valid between field-vchar chars in field-content
        (MUST accept) */
     buf = "Key: val\tue\r\n\r\n";
@@ -100,10 +88,7 @@ void test_parse_headers_valid(void)
 void test_parse_headers_fail(void)
 {
     TEST_START("test_parse_headers_fail");
-
-    char key_storage[TEST_KEY_SIZE];
     hwire_ctx_t cb = {
-        .key_lc = {.buf = key_storage, .size = sizeof(key_storage), .len = 0},
         .header_cb = mock_header_cb_fail
     };
     size_t pos      = 0;
@@ -124,10 +109,7 @@ void test_parse_headers_fail(void)
 void test_parse_headers_ows_handling(void)
 {
     TEST_START("test_parse_headers_ows_handling");
-
-    char key_storage[TEST_KEY_SIZE];
     hwire_ctx_t cb = {
-        .key_lc = {.buf = key_storage, .size = sizeof(key_storage), .len = 0},
         .header_cb = mock_header_cb
     };
     size_t pos = 0;
@@ -153,10 +135,7 @@ void test_parse_headers_ows_handling(void)
 void test_parse_headers_cr_handling(void)
 {
     TEST_START("test_parse_headers_cr_handling");
-
-    char key_storage[TEST_KEY_SIZE];
     hwire_ctx_t cb = {
-        .key_lc = {.buf = key_storage, .size = sizeof(key_storage), .len = 0},
         .header_cb = mock_header_cb
     };
     size_t pos = 0;
@@ -199,10 +178,7 @@ void test_parse_headers_cr_handling(void)
 void test_parse_headers_invalid_values(void)
 {
     TEST_START("test_parse_headers_invalid_values");
-
-    char key_storage[TEST_KEY_SIZE];
     hwire_ctx_t cb = {
-        .key_lc = {.buf = key_storage, .size = sizeof(key_storage), .len = 0},
         .header_cb = mock_header_cb
     };
     size_t pos = 0;
@@ -222,31 +198,24 @@ void test_parse_headers_key_parsing(void)
 {
     TEST_START("test_parse_headers_key_parsing");
 
-    hwire_ctx_t cb_no_lc = {
-        .key_lc    = {.buf = NULL, .size = 0, .len = 0},
+    hwire_ctx_t cb = {
         .header_cb = mock_header_cb
     };
     size_t pos;
     int rv;
     const char *buf;
 
-    /* No key_lc buffer */
+    /* Valid token key */
     buf = "Key: value\r\n\r\n";
     pos = 0;
-    rv  = hwire_parse_headers(&cb_no_lc, buf, strlen(buf), &pos, 1024);
+    rv  = hwire_parse_headers(&cb, buf, strlen(buf), &pos, 1024);
     ASSERT_OK(rv);
 
-    /* Non-tchar char in key with no key_lc buffer */
+    /* Non-tchar character in key */
     buf = "Ke@y: value\r\n\r\n";
     pos = 0;
-    rv  = hwire_parse_headers(&cb_no_lc, buf, strlen(buf), &pos, 1024);
+    rv  = hwire_parse_headers(&cb, buf, strlen(buf), &pos, 1024);
     ASSERT_EQ(rv, HWIRE_EHDRNAME);
-
-    char key_storage[TEST_KEY_SIZE];
-    hwire_ctx_t cb = {
-        .key_lc = {.buf = key_storage, .size = sizeof(key_storage), .len = 0},
-        .header_cb = mock_header_cb
-    };
 
     /* Key without colon exhausts the available header budget. */
     buf = "KeyWithoutColon";
@@ -260,10 +229,7 @@ void test_parse_headers_key_parsing(void)
 void test_parse_headers_empty_and_eol(void)
 {
     TEST_START("test_parse_headers_empty_and_eol");
-
-    char key_storage[TEST_KEY_SIZE];
     hwire_ctx_t cb = {
-        .key_lc = {.buf = key_storage, .size = sizeof(key_storage), .len = 0},
         .header_cb = mock_header_cb
     };
     size_t pos;
@@ -294,10 +260,7 @@ void test_parse_headers_empty_and_eol(void)
 void test_parse_headers_ows_maxlen(void)
 {
     TEST_START("test_parse_headers_ows_maxlen");
-
-    char key_storage[TEST_KEY_SIZE];
     hwire_ctx_t cb = {
-        .key_lc = {.buf = key_storage, .size = sizeof(key_storage), .len = 0},
         .header_cb = mock_header_cb
     };
     size_t pos = 0;
@@ -321,10 +284,7 @@ void test_parse_headers_ows_maxlen(void)
 void test_parse_headers_hval_maxlen_boundary(void)
 {
     TEST_START("test_parse_headers_hval_maxlen_boundary");
-
-    char key_storage[TEST_KEY_SIZE];
     hwire_ctx_t cb = {
-        .key_lc = {.buf = key_storage, .size = sizeof(key_storage), .len = 0},
         .header_cb = mock_header_cb
     };
     size_t pos = 0;
@@ -375,10 +335,7 @@ static int check_empty_value_cb(hwire_ctx_t *ctx, hwire_header_t *header)
 void test_parse_headers_allows_empty_value(void)
 {
     TEST_START("test_parse_headers_allows_empty_value");
-
-    char key_storage[TEST_KEY_SIZE];
     hwire_ctx_t cb = {
-        .key_lc = {.buf = key_storage, .size = sizeof(key_storage), .len = 0},
         .header_cb = check_empty_value_cb
     };
     size_t pos;
@@ -403,10 +360,7 @@ void test_parse_headers_allows_empty_value(void)
 void test_parse_headers_rfc_compliance(void)
 {
     TEST_START("test_parse_headers_rfc_compliance");
-
-    char key_storage[TEST_KEY_SIZE];
     hwire_ctx_t cb = {
-        .key_lc = {.buf = key_storage, .size = sizeof(key_storage), .len = 0},
         .header_cb = mock_header_cb
     };
     size_t pos;
@@ -458,10 +412,7 @@ void test_parse_headers_rfc_compliance(void)
 void test_parse_headers_obstext(void)
 {
     TEST_START("test_parse_headers_obstext");
-
-    char key_storage[TEST_KEY_SIZE];
     hwire_ctx_t cb = {
-        .key_lc = {.buf = key_storage, .size = sizeof(key_storage), .len = 0},
         .header_cb = mock_header_cb
     };
     size_t pos = 0;
@@ -506,10 +457,7 @@ static int capture_header_value_len_cb(hwire_ctx_t *ctx, hwire_header_t *header)
 void test_parse_headers_ows_exact(void)
 {
     TEST_START("test_parse_headers_ows_exact");
-
-    char key_storage[TEST_KEY_SIZE];
     hwire_ctx_t cb = {
-        .key_lc = {.buf = key_storage, .size = sizeof(key_storage), .len = 0},
         .header_cb = capture_header_value_len_cb
     };
     size_t pos = 0;
@@ -554,10 +502,7 @@ void test_parse_headers_ows_exact(void)
 void test_parse_headers_simd_boundary(void)
 {
     TEST_START("test_parse_headers_simd_boundary");
-
-    char key_storage[TEST_KEY_SIZE];
     hwire_ctx_t cb = {
-        .key_lc = {.buf = key_storage, .size = sizeof(key_storage), .len = 0},
         .header_cb = mock_header_cb
     };
     char buf[256];
@@ -626,9 +571,7 @@ void test_parse_headers_streaming(void)
 
     const char *full = "Host: example.com\r\nContent-Length: 0\r\n\r\n";
     size_t full_len  = strlen(full);
-    char key_storage[TEST_KEY_SIZE];
     hwire_ctx_t cb = {
-        .key_lc = {.buf = key_storage, .size = sizeof(key_storage), .len = 0},
         .header_cb = mock_header_cb
     };
     size_t pos;
@@ -636,7 +579,6 @@ void test_parse_headers_streaming(void)
 
     /* Every prefix of length 1..full_len-1 MUST give HWIRE_EAGAIN */
     for (size_t i = 1; i < full_len; i++) {
-        cb.key_lc.len = 0;
         pos           = 0;
         rv            = hwire_parse_headers(&cb, full, i, &pos, 1024);
         if (rv != HWIRE_EAGAIN) {
@@ -650,7 +592,6 @@ void test_parse_headers_streaming(void)
     }
 
     /* Full block MUST succeed with pos == full_len */
-    cb.key_lc.len = 0;
     pos           = 0;
     rv            = hwire_parse_headers(&cb, full, full_len, &pos, 1024);
     ASSERT_OK(rv);
@@ -664,7 +605,6 @@ typedef struct {
     size_t name_len;
     const char *value;
     size_t value_len;
-    const char *key_lc_str;
     const char *buf;
     size_t buf_len;
     int called;
@@ -697,15 +637,6 @@ static int verify_hdr_content_cb(hwire_ctx_t *ctx, hwire_header_t *header)
                 (int)header->value.len, header->value.ptr, header->value.len);
         e->failed = 1;
     }
-    if (e->key_lc_str != NULL) {
-        size_t lc_len = strlen(e->key_lc_str);
-        if (ctx->key_lc.len != lc_len ||
-            strncmp(ctx->key_lc.buf, e->key_lc_str, lc_len) != 0) {
-            fprintf(stderr, "key_lc: expected '%s', got '%.*s'\n",
-                    e->key_lc_str, (int)ctx->key_lc.len, ctx->key_lc.buf);
-            e->failed = 1;
-        }
-    }
     return 0;
 }
 
@@ -713,21 +644,21 @@ static int verify_hdr_content_cb(hwire_ctx_t *ctx, hwire_header_t *header)
  * Covers: exact content of parsed header field-name and field-value.
  * MUST: key.ptr/len MUST reference the original input bytes.
  * MUST: value.ptr/len MUST reflect the OWS-stripped value.
- * MUST: key_lc.buf MUST contain the lowercase header name.
  */
 void test_parse_headers_content_verification(void)
 {
     TEST_START("test_parse_headers_content_verification");
 
-    char key_storage[TEST_KEY_SIZE];
-
-    /* Case 1: Content-Type: text/html → key_lc="content-type" */
+    /* Case 1: Content-Type: text/html */
     {
         hdr_verify_expect_t exp = {
-            "Content-Type", 12, "text/html", 9, "content-type", NULL, 0, 0, 0};
+            .name = "Content-Type",
+            .name_len = 12,
+            .value = "text/html",
+            .value_len = 9
+        };
         hwire_ctx_t cb = {
             .uctx      = &exp,
-            .key_lc    = {.buf = key_storage, .size = sizeof(key_storage)},
             .header_cb = verify_hdr_content_cb
         };
         size_t pos      = 0;
@@ -743,10 +674,13 @@ void test_parse_headers_content_verification(void)
     /* Case 2: X-Custom: hello world */
     {
         hdr_verify_expect_t exp = {
-            "X-Custom", 8, "hello world", 11, NULL, NULL, 0, 0, 0};
+            .name = "X-Custom",
+            .name_len = 8,
+            .value = "hello world",
+            .value_len = 11
+        };
         hwire_ctx_t cb = {
             .uctx      = &exp,
-            .key_lc    = {.buf = key_storage, .size = sizeof(key_storage)},
             .header_cb = verify_hdr_content_cb
         };
         size_t pos      = 0;
@@ -762,11 +696,14 @@ void test_parse_headers_content_verification(void)
     /* Case 3: OWS-Key:   trimmed   → leading+trailing OWS stripped → "trimmed"
      */
     {
-        hdr_verify_expect_t exp = {"OWS-Key", 7, "trimmed", 7, NULL,
-                                   NULL,      0, 0,         0};
+        hdr_verify_expect_t exp = {
+            .name = "OWS-Key",
+            .name_len = 7,
+            .value = "trimmed",
+            .value_len = 7
+        };
         hwire_ctx_t cb          = {
             .uctx      = &exp,
-            .key_lc    = {.buf = key_storage, .size = sizeof(key_storage)},
             .header_cb = verify_hdr_content_cb
         };
         size_t pos      = 0;

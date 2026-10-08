@@ -65,9 +65,8 @@ typedef enum {
     HWIRE_EEXTNAME  = -12, /**< Invalid extension name */
     HWIRE_EEXTVAL   = -13, /**< Invalid extension value or missing EOL */
     HWIRE_ENOBUFS   = -14, /**< Insufficient output buffer space */
-    HWIRE_EKEYLEN   = -15, /**< Key length exceeds buffer size */
-    HWIRE_ECALLBACK = -16, /**< Callback returned non-zero */
-    HWIRE_EURI      = -17  /**< Invalid request-target */
+    HWIRE_ECALLBACK = -15, /**< Callback returned non-zero */
+    HWIRE_EURI      = -16  /**< Invalid request-target */
 } hwire_code_t;
 
 /** @} */ /* end of Error Codes */
@@ -100,7 +99,7 @@ typedef struct {
 /**
  * @brief Caller-owned output buffer
  *
- * Used for lowercase-converted keys or decoded query parameters.
+ * Used for decoded query parameters.
  */
 typedef struct {
     size_t size; /**< Buffer capacity */
@@ -192,15 +191,13 @@ typedef struct {
 /**
  * @brief Parser context
  *
- * Holds the user-context pointer, caller-owned output buffers, and callbacks.
+ * Holds the user-context pointer, caller-owned query buffer, and callbacks.
  * Allocate on the stack or heap, zero-initialize, then set the required
- * callbacks before passing to parse functions. Set key_lc.buf/size when a
- * parser needs lowercase field names; hwire_parse_query uses qrybuf instead.
+ * callbacks before passing to parse functions. hwire_parse_query uses qrybuf
+ * for decoded keys and values. Other key names retain their original bytes.
  */
 typedef struct hwire_ctx_st {
     void *uctx;         /**< User context pointer (not used by the library) */
-    hwire_buf_t key_lc; /**< Lowercase key buffer; caller must allocate
-                           key_lc.buf and set key_lc.size before parsing */
     hwire_buf_t qrybuf; /**< Decoded query buffer; caller must allocate
                            qrybuf.buf and set qrybuf.size before
                            hwire_parse_query */
@@ -215,6 +212,7 @@ typedef struct hwire_ctx_st {
 
     /**
      * Called for each parameter parsed by hwire_parse_parameters.
+     * Parameter names retain their original bytes.
      * @param ctx  Parser context
      * @param param Parsed parameter (key.ptr references input buffer)
      * @return 0 to continue, non-zero to stop (HWIRE_ECALLBACK)
@@ -242,7 +240,7 @@ typedef struct hwire_ctx_st {
 
     /**
      * Called for each header field parsed by hwire_parse_headers.
-     * @param ctx    Parser context (key_lc.buf contains lowercase field name)
+     * @param ctx    Parser context
      * @param header Parsed header (key.ptr references input buffer)
      * @return 0 to continue, non-zero to stop (HWIRE_ECALLBACK)
      */
@@ -279,10 +277,6 @@ typedef struct hwire_ctx_st {
  *
  * @param c Character to check
  * @return 1 if character is tchar, 0 otherwise
- *
- * @note This function does NOT modify the character (unlike the internal
- *       TCHAR table which returns lowercase for tchar). Returns 1 if tchar,
- *       0 otherwise.
  */
 int hwire_is_tchar(unsigned char c);
 
@@ -408,7 +402,6 @@ int hwire_parse_quoted_string(const char *str, size_t len, size_t *pos,
  * @return HWIRE_EILSEQ for invalid byte sequence
  * @return HWIRE_ELEN if a required component is incomplete when maxlen is
  * exhausted
- * @return HWIRE_EKEYLEN if key length exceeds ctx->key_lc.size
  * @return HWIRE_ECALLBACK if callback returned non-zero
  * @note Item limits are enforced by callbacks using caller-owned state.
  * Nonzero callback returns stop parsing with HWIRE_ECALLBACK.
@@ -432,7 +425,7 @@ int hwire_parse_parameters(hwire_ctx_t *ctx, const char *str, size_t len,
  * suffices. ctx->qrybuf.len is reset to zero on valid entry and tracks
  * accepted output.
  *
- * @param ctx Context with query_cb and qrybuf.buf/size set (key_lc is unused)
+ * @param ctx Context with query_cb and qrybuf.buf/size set
  * @param str Input containing the query (must not be NULL)
  * @param len Number of available bytes in str
  * @param pos Input: query start offset; output: parser position. An initial
@@ -500,7 +493,8 @@ int hwire_parse_chunksize(hwire_ctx_t *ctx, const char *str, size_t len,
  * @brief Parse HTTP headers
  *
  * Parses headers until an empty CRLF or LF line is encountered. Calls
- * header_cb for each parsed header.
+ * header_cb for each parsed header. Field names retain their original bytes;
+ * case-insensitive comparison belongs to the application or its container.
  *
  * @param str String to parse (must not be NULL)
  * @param len Number of available input bytes from str[0]
@@ -508,8 +502,7 @@ int hwire_parse_chunksize(hwire_ctx_t *ctx, const char *str, size_t len,
  * line (must not be NULL); unchanged on failure
  * @param maxlen Maximum total length of the header block from the initial
  * *pos, including the terminating empty line
- * @param ctx Parser context (key_lc must be allocated, header_cb must not be
- * NULL)
+ * @param ctx Parser context (header_cb must not be NULL)
  * @return HWIRE_OK on success, empty line consumed
  * @return HWIRE_EAGAIN if input is absent at the start or ends before the
  * header block budget
@@ -518,7 +511,6 @@ int hwire_parse_chunksize(hwire_ctx_t *ctx, const char *str, size_t len,
  * @return HWIRE_EHDRLEN if the header block is incomplete when maxlen is
  * exhausted
  * @return HWIRE_EEOL if a line terminator is invalid (CR without LF)
- * @return HWIRE_EKEYLEN if key length exceeds ctx->key_lc.size
  * @return HWIRE_ECALLBACK if callback returned non-zero
  * @note Line terminators match CR?LF: both CRLF and bare LF are accepted;
  * bare CR is invalid.
@@ -556,7 +548,6 @@ int hwire_parse_headers(hwire_ctx_t *ctx, const char *str, size_t len,
  * @return HWIRE_EHDRVALUE for invalid header field value
  * @return HWIRE_EHDRLEN if the header section is incomplete when the remaining
  * maxlen budget is exhausted
- * @return HWIRE_EKEYLEN if key length exceeds ctx->key_lc.size
  * @return HWIRE_ECALLBACK if callback returned non-zero
  * @note Line terminators and leading empty lines match CR?LF: both CRLF and
  * bare LF are accepted; bare CR is invalid.
@@ -592,7 +583,6 @@ int hwire_parse_request(hwire_ctx_t *ctx, const char *str, size_t len,
  * @return HWIRE_EHDRVALUE for invalid header field value
  * @return HWIRE_EHDRLEN if the header section is incomplete when the remaining
  * maxlen budget is exhausted
- * @return HWIRE_EKEYLEN if key length exceeds ctx->key_lc.size
  * @return HWIRE_ECALLBACK if callback returned non-zero
  * @note Line terminators and leading empty lines match CR?LF: both CRLF and
  * bare LF are accepted; bare CR is invalid.

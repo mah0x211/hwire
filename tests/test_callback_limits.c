@@ -42,11 +42,9 @@ static void test_capacity_rejection(void)
     for (int api = 0; api < API_COUNT; api++) {
         for (size_t capacity = 0; capacity <= 3; capacity++) {
             char decoded[16];
-            char lowercase[TEST_KEY_SIZE];
             test_capacity_t storage = {.capacity = capacity};
             hwire_ctx_t ctx = {
                 .uctx = &storage,
-                .key_lc = {.buf = lowercase, .size = sizeof(lowercase)},
                 .qrybuf = {.buf = decoded, .size = sizeof(decoded)},
                 .request_cb = mock_request_cb,
                 .response_cb = mock_response_cb,

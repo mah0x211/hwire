@@ -475,96 +475,7 @@ static const int8_t ALIGNED(16) TCHAR_NIBBLE_HI[16] = {
 #endif
 
 /**
- * @brief Count consecutive tchar characters with lowercase conversion
- *
- * Counts the number of consecutive tchar (token) characters from the
- * beginning of str, writing the lowercase-converted characters into lc->buf.
- *
- * Uses the SSSE3 (16B/iter) nibble-trick when available.  For typical HTTP
- * header names (4-15 chars) the SIMD path completes in a single iteration.
- * A scalar 4-char-unrolled fallback handles any remaining bytes.  AVX2
- * builds also take the 128-bit path (see strtchar_cmp).
- *
- * @param str   String to parse (must not be NULL)
- * @param len   Maximum length of string
- * @param lc    Lowercase output buffer (must not be NULL)
- * @return Number of consecutive tchar characters written to lc->buf
- * @return SIZE_MAX if lc->buf is full and more tchars remain in str
- */
-static inline size_t strtchar_cmp_lc(const unsigned char *str, size_t len,
-                                     hwire_buf_t *lc)
-{
-    size_t pos         = 0;
-    unsigned char *buf = (unsigned char *)lc->buf;
-    size_t limit       = (len < lc->size) ? len : lc->size;
-
-#if defined(__SSSE3__)
-    if (pos + 16 <= limit) {
-        const __m128i lo_lut =
-            _mm_loadu_si128((const __m128i *)(const void *)TCHAR_NIBBLE_LO);
-        const __m128i hi_lut =
-            _mm_loadu_si128((const __m128i *)(const void *)TCHAR_NIBBLE_HI);
-        const __m128i nibble  = _mm_set1_epi8(0x0F);
-        const __m128i at_char = _mm_set1_epi8(0x40); // '@' (0x41-1)
-        const __m128i bkt     = _mm_set1_epi8(0x5B); // '[' (0x5A+1)
-        const __m128i bit5    = _mm_set1_epi8(0x20);
-        do {
-            __m128i data =
-                _mm_loadu_si128((const __m128i *)(const void *)(str + pos));
-            __m128i lo_v =
-                _mm_shuffle_epi8(lo_lut, _mm_and_si128(data, nibble));
-            __m128i hi_v = _mm_shuffle_epi8(
-                hi_lut, _mm_and_si128(_mm_srli_epi16(data, 4), nibble));
-            int mask = _mm_movemask_epi8(
-                _mm_cmpeq_epi8(_mm_and_si128(lo_v, hi_v), _mm_setzero_si128()));
-            // lowercase: A-Z (0x41-0x5A) -> set bit5
-            __m128i is_upper =
-                _mm_and_si128(_mm_cmpgt_epi8(data, at_char), // c > '@'
-                              _mm_cmpgt_epi8(bkt, data));    // '[' > c
-            __m128i lc_out = _mm_or_si128(data, _mm_and_si128(is_upper, bit5));
-            // store 16 bytes (safe: pos+16 <= limit <= lc->size)
-            _mm_storeu_si128((__m128i *)(void *)(buf + pos), lc_out);
-            if (mask) {
-                pos += (size_t)ctz32((unsigned)mask);
-                lc->len = pos;
-                return pos;
-            }
-            pos += 16;
-        } while (pos + 16 <= limit);
-    }
-#endif
-
-    // scalar fallback for remaining bytes (< 16/32) or non-SIMD builds
-    while (pos + 4 <= limit) {
-        unsigned char c0 = str[pos];
-        unsigned char c1 = str[pos + 1];
-        unsigned char c2 = str[pos + 2];
-        unsigned char c3 = str[pos + 3];
-        if (likely(is_tchar(c0) & is_tchar(c1) & is_tchar(c2) & is_tchar(c3))) {
-            buf[pos]     = TCHAR[c0];
-            buf[pos + 1] = TCHAR[c1];
-            buf[pos + 2] = TCHAR[c2];
-            buf[pos + 3] = TCHAR[c3];
-            pos += 4;
-            continue;
-        }
-        break;
-    }
-    while (pos < limit && is_tchar(str[pos])) {
-        buf[pos] = TCHAR[str[pos]];
-        pos++;
-    }
-    lc->len = pos;
-
-    // buffer is full - check if there are more tchars
-    if (pos < len && is_tchar(str[pos])) {
-        return SIZE_MAX;
-    }
-    return pos;
-}
-
-/**
- * @brief Count consecutive tchar characters (no lowercase conversion)
+ * @brief Count consecutive tchar characters
  *
  * Uses the SSSE3 (16B/iter) nibble-trick when available, with a scalar
  * fallback for tail bytes. For typical HTTP header names (6-15 chars) the
@@ -576,7 +487,7 @@ static inline size_t strtchar_cmp_lc(const unsigned char *str, size_t len,
  * @param len Maximum length of string
  * @return Index of first non-tchar byte (0 if first char is not tchar)
  */
-static inline size_t strtchar_cmp(const unsigned char *str, size_t len)
+static inline size_t strtchar(const unsigned char *str, size_t len)
 {
     size_t pos = 0;
 
@@ -596,8 +507,9 @@ static inline size_t strtchar_cmp(const unsigned char *str, size_t len)
                 hi_lut, _mm_and_si128(_mm_srli_epi16(data, 4), nibble));
             int mask = _mm_movemask_epi8(
                 _mm_cmpeq_epi8(_mm_and_si128(lo_v, hi_v), _mm_setzero_si128()));
-            if (mask)
+            if (mask) {
                 return pos + (size_t)ctz32((unsigned)mask);
+            }
             pos += 16;
         } while (pos + 16 <= len);
     }
@@ -607,31 +519,6 @@ static inline size_t strtchar_cmp(const unsigned char *str, size_t len)
         pos++;
     }
     return pos;
-}
-
-/**
- * @brief Count consecutive tchar characters with optional lowercase conversion
- *
- * Counts the number of consecutive tchar (token) characters from the
- * beginning of str. Uses 8x loop unrolling for performance.
- *
- * If lc is non-NULL, stores the lowercase-converted tchar characters into
- * lc->buf starting at lc->len.
- *
- * @param str String to parse (must not be NULL)
- * @param len Maximum length of string
- * @param lc  Optional lowercase buffer (NULL to skip lowercase conversion)
- * @return Number of consecutive tchar characters (0 if first char is not tchar)
- * @return SIZE_MAX if buffer is full and there are more tchars to process
- */
-static inline size_t strtchar(const unsigned char *str, size_t len,
-                              hwire_buf_t *lc)
-{
-    if (lc) {
-        return strtchar_cmp_lc(str, len, lc);
-    }
-
-    return strtchar_cmp(str, len);
 }
 
 // strvchar_cmp: Compare characters in str against VCHAR set, with optional
@@ -1308,7 +1195,7 @@ size_t hwire_parse_tchar(const char *str, size_t len, size_t *pos)
 
     if (cur < len) {
         const unsigned char *ustr = (const unsigned char *)str + cur;
-        size_t n                  = strtchar(ustr, len - cur, NULL);
+        size_t n                  = strtchar(ustr, len - cur);
         *pos += n;
         return n;
     }
@@ -1489,7 +1376,6 @@ int hwire_parse_quoted_string(const char *str, size_t len, size_t *pos,
  * @return HWIRE_EAGAIN if input ends before the budget
  * @return HWIRE_EILSEQ for invalid byte sequence
  * @return HWIRE_ELEN if a required component is incomplete at the budget
- * @return HWIRE_EKEYLEN if key length exceeds ctx->key_lc.size
  * @return HWIRE_ECALLBACK if callback returned non-zero
  * @see RFC 7231 Section 3.1.1.1 Parameter
  * @see RFC 9110 Section 5.6.6 Parameters
@@ -1513,16 +1399,7 @@ static int parse_parameter(const unsigned char **ustr,
     } while (0)
 
     // parse parameter-name (token)
-    if (ctx->key_lc.size > 0) {
-        size_t n = strtchar(str, (size_t)(tail - str), &ctx->key_lc);
-        if (n == SIZE_MAX) {
-            *ustr = str;
-            return HWIRE_EKEYLEN;
-        }
-        str += n;
-    } else {
-        str += strtchar(str, (size_t)(tail - str), NULL);
-    }
+    str += strtchar(str, (size_t)(tail - str));
     CHECK_POSITION();
     param.key.ptr = (const char *)pstr;
     param.key.len = (size_t)(str - pstr);
@@ -1559,7 +1436,7 @@ static int parse_parameter(const unsigned char **ustr,
 
     // parse as a token
     param.value.ptr = (const char *)str;
-    param.value.len = strtchar(str, (size_t)(tail - str), NULL);
+    param.value.len = strtchar(str, (size_t)(tail - str));
     str += param.value.len;
     if (param.value.len == 0) {
         CHECK_POSITION();
@@ -1639,7 +1516,6 @@ static inline void skip_ws(const unsigned char **ustr,
  * @return HWIRE_EILSEQ for invalid byte sequence
  * @return HWIRE_ELEN if a required component is incomplete when maxlen is
  * exhausted
- * @return HWIRE_EKEYLEN if key length exceeds ctx->key_lc.size
  * @return HWIRE_ECALLBACK if callback returned non-zero
  * @note Item limits are enforced by callbacks using caller-owned state.
  * Nonzero callback returns stop parsing with HWIRE_ECALLBACK.
@@ -1697,9 +1573,6 @@ SKIP_SEMICOLON:
 CHECK_PARAM:
     // skip trailing OWS
     skip_ws(&ustr, tail);
-
-    // reset key_lc.len before parsing each parameter
-    ctx->key_lc.len = 0;
 
     // Checking for end of string is required because we might have
     // consumed a semicolon (empty parameter) and reached EOS.
@@ -1951,7 +1824,7 @@ CHECK_EOL:
 
     // parse ext-name
     pstr = ustr;
-    ustr += strtchar(ustr, (size_t)(tail - ustr), NULL);
+    ustr += strtchar(ustr, (size_t)(tail - ustr));
     if (ustr == pstr) {
         // disallow empty ext-name (invalid extension name)
         return HWIRE_EEXTNAME;
@@ -1986,7 +1859,7 @@ CHECK_EOL:
     }
     // parse as a token
     pstr = ustr;
-    ustr += strtchar(ustr, (size_t)(tail - ustr), NULL);
+    ustr += strtchar(ustr, (size_t)(tail - ustr));
     if (ustr == pstr) {
         // delimiters here mean '=' was followed by no extension value
         if (*ustr == CR || *ustr == LF || *ustr == SEMICOLON) {
@@ -2072,25 +1945,16 @@ REMOVE_OWS:
 }
 
 /**
- * @brief Parse header key and store lowercase in key_lc
+ * @brief Parse header key
  *
  * Ported from parse.c:parse_hkey
  */
 static int parse_hkey(const unsigned char **ustr, const unsigned char *tail,
-                      size_t *klen, hwire_ctx_t *ctx)
+                      size_t *klen)
 {
     assert(ustr != NULL && *ustr != NULL);
     const unsigned char *str = *ustr;
-    size_t tchar_len         = 0;
-
-    if (ctx->key_lc.size > 0) {
-        tchar_len = strtchar(str, (size_t)(tail - str), &ctx->key_lc);
-        if (tchar_len == SIZE_MAX) {
-            return HWIRE_EKEYLEN;
-        }
-    } else {
-        tchar_len = strtchar(str, (size_t)(tail - str), NULL);
-    }
+    size_t tchar_len         = strtchar(str, (size_t)(tail - str));
 
     if (unlikely(tchar_len == 0)) {
         // Empty or first character is invalid
@@ -2158,14 +2022,12 @@ RETRY:
         // Any other control char <= CR falls through to parse_hkey().
     }
 
-    field_head      = str;
-    klen            = 0;
-    ctx->key_lc.len = 0;
-    // parse key and store lowercase in key_lc
+    field_head = str;
+    klen       = 0;
     // header-field = field-name ":" OWS field-value OWS
     // field-name = token
     // RFC 7230 3.2 / RFC 9112 5.1: Field Names
-    rv              = parse_hkey(&str, tail, &klen, ctx);
+    rv         = parse_hkey(&str, tail, &klen);
     if (unlikely(rv != HWIRE_OK)) {
         if (rv == HWIRE_EAGAIN) {
             return (size_t)(tail - head) >= maxlen ? HWIRE_EHDRLEN :
@@ -3142,7 +3004,7 @@ static int parse_method(const unsigned char **ustr, const unsigned char *head,
 {
     assert(ustr != NULL && *ustr != NULL);
     const unsigned char *pstr = *ustr;
-    size_t mlen               = strtchar(pstr, (size_t)(tail - pstr), NULL);
+    size_t mlen               = strtchar(pstr, (size_t)(tail - pstr));
     const unsigned char *str  = pstr + mlen;
 
     // method = 1*tchar terminated by SP

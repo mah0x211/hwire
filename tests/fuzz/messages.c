@@ -29,13 +29,9 @@ static void run(const uint8_t options[4], const uint8_t *data, size_t len)
     } else if ((options[1] & 3) == 2) {
         budget = options[3] % (remaining + 1);
     }
-    size_t key_size = (options[1] & 4) ? options[3] : len;
-    char *key = malloc(key_size ? key_size : 1);
-    CHECK(key);
     callback_state_t state = {.input = input, .len = len,
         .stop_at = (options[1] & 8) ? 1 + options[3] % 4 : 0};
     hwire_ctx_t ctx = {.uctx = &state,
-        .key_lc = {.buf = key, .size = key_size},
         .request_cb = check_request, .response_cb = check_response,
         .header_cb = check_pair};
     size_t pos = start;
@@ -60,8 +56,6 @@ static void run(const uint8_t options[4], const uint8_t *data, size_t len)
     if (state.stopped) {
         CHECK(code == HWIRE_ECALLBACK);
     }
-    CHECK(ctx.key_lc.len <= key_size);
-    free(key);
     free(input);
 }
 

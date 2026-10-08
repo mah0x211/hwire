@@ -36,10 +36,9 @@ static int uri_hexdigit(unsigned char c)
            (c >= 'a' && c <= 'f');
 }
 
-static hwire_ctx_t make_ctx(char *key_storage)
+static hwire_ctx_t make_ctx(void)
 {
     hwire_ctx_t cb = {
-        .key_lc     = {.buf = key_storage, .size = TEST_KEY_SIZE, .len = 0},
         .request_cb = capture_request_cb,
         .header_cb  = mock_header_cb
     };
@@ -55,9 +54,7 @@ static hwire_ctx_t make_ctx(char *key_storage)
 void test_strurichar_charset_exhaustive(void)
 {
     TEST_START("test_strurichar_charset_exhaustive");
-
-    char key_storage[TEST_KEY_SIZE];
-    hwire_ctx_t cb = make_ctx(key_storage);
+    hwire_ctx_t cb = make_ctx();
     static const size_t offsets[] = {0, 1, 2, 14, 15, 16, 17, 30, 31, 32, 33};
 
     for (size_t oi = 0; oi < sizeof(offsets) / sizeof(offsets[0]); oi++) {
@@ -123,9 +120,7 @@ void test_strurichar_charset_exhaustive(void)
 void test_strurichar_length_sweep(void)
 {
     TEST_START("test_strurichar_length_sweep");
-
-    char key_storage[TEST_KEY_SIZE];
-    hwire_ctx_t cb = make_ctx(key_storage);
+    hwire_ctx_t cb = make_ctx();
 
     for (size_t k = 1; k <= 48; k++) {
         unsigned char buf[128];
@@ -163,9 +158,7 @@ void test_strurichar_length_sweep(void)
 void test_strurichar_fuzz(void)
 {
     TEST_START("test_strurichar_fuzz");
-
-    char key_storage[TEST_KEY_SIZE];
-    hwire_ctx_t cb    = make_ctx(key_storage);
+    hwire_ctx_t cb    = make_ctx();
     unsigned long rng = 0x9E3779B97F4A7C15UL;
 
     for (int iter = 0; iter < 20000; iter++) {

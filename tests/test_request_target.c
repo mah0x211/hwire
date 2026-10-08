@@ -29,9 +29,7 @@ static int capture_request(hwire_ctx_t *ctx, hwire_request_t *req)
 static int parse_request_from(const char *buf, size_t len, size_t *pos,
                               size_t maxlen)
 {
-    char key_storage[TEST_KEY_SIZE];
     hwire_ctx_t ctx = {
-        .key_lc = {.buf = key_storage, .size = sizeof(key_storage), .len = 0},
         .request_cb = capture_request,
         .header_cb  = mock_header_cb
     };

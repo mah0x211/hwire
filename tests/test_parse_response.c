@@ -11,10 +11,7 @@
 void test_parse_response_valid(void)
 {
     TEST_START("test_parse_response_valid");
-
-    char key_storage[TEST_KEY_SIZE];
     hwire_ctx_t cb = {
-        .key_lc = {.buf = key_storage, .size = sizeof(key_storage), .len = 0},
         .response_cb = mock_response_cb,
         .header_cb   = mock_header_cb
     };
@@ -80,10 +77,7 @@ void test_parse_response_valid(void)
 void test_parse_response_cb_fail(void)
 {
     TEST_START("test_parse_response_cb_fail");
-
-    char key_storage[TEST_KEY_SIZE];
     hwire_ctx_t cb = {
-        .key_lc = {.buf = key_storage, .size = sizeof(key_storage), .len = 0},
         .response_cb = mock_response_cb_fail,
         .header_cb   = mock_header_cb
     };
@@ -108,10 +102,7 @@ void test_parse_response_cb_fail(void)
 void test_parse_response_reason_phrase(void)
 {
     TEST_START("test_parse_response_reason_phrase");
-
-    char key_storage[TEST_KEY_SIZE];
     hwire_ctx_t cb = {
-        .key_lc = {.buf = key_storage, .size = sizeof(key_storage), .len = 0},
         .response_cb = mock_response_cb,
         .header_cb   = mock_header_cb
     };
@@ -199,10 +190,7 @@ void test_parse_response_reason_phrase(void)
 void test_parse_response_status_errors(void)
 {
     TEST_START("test_parse_response_status_errors");
-
-    char key_storage[TEST_KEY_SIZE];
     hwire_ctx_t cb = {
-        .key_lc = {.buf = key_storage, .size = sizeof(key_storage), .len = 0},
         .response_cb = mock_response_cb,
         .header_cb   = mock_header_cb
     };
@@ -237,10 +225,7 @@ void test_parse_response_status_errors(void)
 void test_parse_response_edge_cases(void)
 {
     TEST_START("test_parse_response_edge_cases");
-
-    char key_storage[TEST_KEY_SIZE];
     hwire_ctx_t cb = {
-        .key_lc = {.buf = key_storage, .size = sizeof(key_storage), .len = 0},
         .response_cb = mock_response_cb,
         .header_cb   = mock_header_cb
     };
@@ -298,10 +283,7 @@ void test_parse_response_edge_cases(void)
 void test_parse_response_reason_obstext(void)
 {
     TEST_START("test_parse_response_reason_obstext");
-
-    char key_storage[TEST_KEY_SIZE];
     hwire_ctx_t cb = {
-        .key_lc = {.buf = key_storage, .size = sizeof(key_storage), .len = 0},
         .response_cb = mock_response_cb,
         .header_cb   = mock_header_cb
     };
@@ -334,10 +316,7 @@ void test_parse_response_reason_obstext(void)
 void test_parse_response_status_boundaries(void)
 {
     TEST_START("test_parse_response_status_boundaries");
-
-    char key_storage[TEST_KEY_SIZE];
     hwire_ctx_t cb = {
-        .key_lc = {.buf = key_storage, .size = sizeof(key_storage), .len = 0},
         .response_cb = mock_response_cb,
         .header_cb   = mock_header_cb
     };
@@ -469,15 +448,12 @@ void test_parse_response_content_verification(void)
 {
     TEST_START("test_parse_response_content_verification");
 
-    char key_storage[TEST_KEY_SIZE];
-
     /* Case 1: HTTP/1.1 200 OK */
     {
         rsp_content_expect_t exp = {HWIRE_HTTP_V11, 200, "OK", 2,
                                     NULL,           0,   0,    0};
         hwire_ctx_t cb           = {
                       .uctx        = &exp,
-                      .key_lc      = {.buf = key_storage, .size = sizeof(key_storage)},
                       .response_cb = verify_response_content_cb,
                       .header_cb   = mock_header_cb
         };
@@ -497,7 +473,6 @@ void test_parse_response_content_verification(void)
                                     NULL,           0,   0,           0};
         hwire_ctx_t cb           = {
                       .uctx        = &exp,
-                      .key_lc      = {.buf = key_storage, .size = sizeof(key_storage)},
                       .response_cb = verify_response_content_cb,
                       .header_cb   = mock_header_cb
         };
@@ -516,7 +491,6 @@ void test_parse_response_content_verification(void)
         rsp_content_expect_t exp = {HWIRE_HTTP_V11, 200, "", 0, NULL, 0, 0, 0};
         hwire_ctx_t cb           = {
                       .uctx        = &exp,
-                      .key_lc      = {.buf = key_storage, .size = sizeof(key_storage)},
                       .response_cb = verify_response_content_cb,
                       .header_cb   = mock_header_cb
         };
@@ -535,7 +509,6 @@ void test_parse_response_content_verification(void)
         rsp_hdr_content_expect_t exp = {"X-Foo", 5, "bar", 3, NULL, 0, 0, 0};
         hwire_ctx_t cb               = {
                           .uctx        = &exp,
-                          .key_lc      = {.buf = key_storage, .size = sizeof(key_storage)},
                           .response_cb = mock_response_cb,
                           .header_cb   = verify_rsp_header_content_cb
         };
@@ -560,10 +533,7 @@ void test_parse_response_content_verification(void)
 void test_parse_response_maxlen_cumulative(void)
 {
     TEST_START("test_parse_response_maxlen_cumulative");
-
-    char key_storage[TEST_KEY_SIZE];
     hwire_ctx_t cb = {
-        .key_lc = {.buf = key_storage, .size = sizeof(key_storage), .len = 0},
         .response_cb = mock_response_cb,
         .header_cb   = mock_header_cb
     };
