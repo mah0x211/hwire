@@ -97,7 +97,18 @@ summary, LLVM JSON/profiles and HTML under `out/coverage/report/`. Open
 `<parser-or-table>-<variant>/html/index.html` to inspect uncovered lines and branches.
 Parser totals combine the messages and values harnesses for the same build;
 table builds are reported separately. Only targets that completed successfully
-are included, and the summary identifies partial runs and reporting failures.
+are included in source coverage, and the summary identifies partial runs and
+reporting failures.
+
+Execution statistics show the completed input count, elapsed time, executions
+per second, saved corpus file count and bytes, peak RSS, and libFuzzer's random
+seed for each target/build. Elapsed time is reported by libFuzzer in whole
+seconds and excludes compilation and coverage replay. Unavailable statistics
+are shown as `—`, including when a run stops before printing its final totals.
+Saved corpus counts include earlier inputs if the output directory is reused;
+they are not the size of libFuzzer's current in-memory corpus. Reproducing an
+entire search requires the same initial corpus, binary and options as well as
+the seed. A saved failure input can be replayed directly as described above.
 
 To regenerate reports without repeating fuzzing, run `make coverage-report` in
 this directory. Python 3 and matching `llvm-profdata` / `llvm-cov` are required;
@@ -110,7 +121,9 @@ informational because short fuzz runs vary; no fixed coverage gate is applied.
 The test workflow runs separate Ubuntu and macOS jobs, in parallel with the
 ordinary tests. Each target/variant runs for 30 seconds. The default search budget
 is five minutes on x86-64 and four minutes on ARM64, with a ten-minute job timeout
-including setup, compilation and reporting. Coverage is displayed in the GitHub
-Actions job summary, with HTML and detailed data in a fuzz-coverage artifact. A failure stops that job and uploads its logs
-and failure inputs as an additional artifact. No network services or credentials
+including setup, compilation and reporting. Execution statistics and coverage
+are displayed in the GitHub Actions job summary, with HTML and detailed data in
+a `fuzz-coverage-<os>` artifact. Build, run and coverage replay logs are uploaded
+as `fuzz-logs-<os>` on both success and failure. A failure stops that job and
+uploads failure inputs as `fuzz-failures-<os>`. No network services or credentials
 are needed.

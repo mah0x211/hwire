@@ -103,14 +103,21 @@ jobs:
         path: tests/fuzz/out/coverage/report/
         if-no-files-found: ignore
 
-    - name: Upload Fuzz Failure Inputs and Logs
+    - name: Upload Fuzz Logs
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: fuzz-logs-${{ matrix.os }}
+        path: |
+          tests/fuzz/out/**/run.log
+          tests/fuzz/out/**/build.log
+          tests/fuzz/out/**/coverage-replay.log
+        if-no-files-found: ignore
+
+    - name: Upload Fuzz Failure Inputs
       if: failure()
       uses: actions/upload-artifact@v4
       with:
         name: fuzz-failures-${{ matrix.os }}
-        path: |
-          tests/fuzz/out/**/artifacts/*
-          tests/fuzz/out/**/run.log
-          tests/fuzz/out/**/build.log
-          tests/fuzz/out/**/coverage-replay.log
+        path: tests/fuzz/out/**/artifacts/*
         if-no-files-found: ignore
