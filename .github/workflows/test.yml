@@ -66,3 +66,39 @@ jobs:
         flags: unittests
         disable_search: true
         files: ./coverage/coverage.info
+
+  fuzz:
+    name: Fuzz (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Install Clang and libFuzzer (Ubuntu)
+      if: runner.os == 'Linux'
+      run: sudo apt-get update && sudo apt-get install -y clang libclang-rt-dev
+
+    - name: Set Up LLVM (macOS)
+      if: runner.os == 'macOS'
+      run: |
+        brew list llvm >/dev/null 2>&1 || brew install llvm
+        echo "$(brew --prefix llvm)/bin" >> "$GITHUB_PATH"
+        echo "SDKROOT=$(xcrun --show-sdk-path)" >> "$GITHUB_ENV"
+
+    - name: Run Bounded Fuzzing
+      run: make fuzz FUZZ_SECONDS=30
+
+    - name: Upload Fuzz Failure Inputs and Logs
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: fuzz-failures-${{ matrix.os }}
+        path: |
+          tests/fuzz/out/**/artifacts/*
+          tests/fuzz/out/**/run.log
+        if-no-files-found: ignore
