@@ -20,37 +20,6 @@ Zero-allocation `HTTP/1.1` parser written in `C99` or later.
 - **`C99` or later / `C++` compatible** — single header + single source file; `extern "C"` guard included.
 
 
-## Benchmark
-
-Three independent benchmark suites live in [bench/](bench/):
-HTTP parsing, hashmap operations, and production request/header processing.
-Each implementation owns its dependency-fetch and build configuration.
-
-```sh
-cd bench
-make             # all three suites
-make parsers     # parser only
-make hashmaps    # map operations and memory
-make production  # native request/header storage and lookup
-```
-
-Detailed configurations and results are in [Parsers](bench/parsers/README.md),
-[Hashmaps](bench/hashmaps/README.md) and [Production](bench/production/README.md).
-
-### Parser-only benchmark
-
-The hwire results below measure start-line and header parsing with stack state.
-Sampling targets a 2% relative confidence interval width, with 20–100 samples
-and approximately 1 ms per sample. Cells show **ns/message (M messages/s)**;
-† marks an unmet RCIW target.
-
-| Fixture | Bytes | Scalar | SSE2 | SSE4.2 |
-| --- | --- | --- | --- | --- |
-| Browser GET request | 900 | 411.2 (2.43) | 250.3 (3.99) | 218.6 (4.57) |
-| S3 API request | 941 | 427.6 (2.34) | 252.1 (3.97) | 228.3 (4.38) |
-| Browser response | 950 | 406.5 (2.46) | 247.3 (4.04) | 229.0 (4.37) |
-| No Content response | 105 | 58.5 (17.08) † | 44.4 (22.51) | 48.7 (20.51) |
-
 ## RFC Compliance
 
 This library parses `HTTP/1.x` **message framing and header field syntax**. Application-level HTTP semantics (content negotiation, conditional requests, authentication, caching) are outside its scope.
@@ -88,6 +57,68 @@ The following behaviors deviate from strict RFC requirements for robustness and 
 Message body parsing, transfer-coding, and connection management (**RFC 9112** §6–9), and all application-level HTTP semantics (**RFC 9110** §6–12) are not implemented. This library parses the request/response line and header fields only.
 
 ---
+
+## Benchmark
+
+Three independent benchmark suites live in [bench/](bench/):
+HTTP parsing, hashmap operations, and production request/header processing.
+Each implementation owns its dependency-fetch and build configuration.
+
+```sh
+cd bench
+make             # all three suites
+make parsers     # parser only
+make hashmaps    # map operations and memory
+make production  # native request/header storage and lookup
+```
+
+Detailed configurations and results are in [Parsers](bench/parsers/README.md),
+[Hashmaps](bench/hashmaps/README.md) and [Production](bench/production/README.md).
+
+### Parser-only benchmark
+
+The hwire results below measure start-line and header parsing with stack state.
+Sampling targets a 2% relative confidence interval width, with 20–100 samples
+and approximately 1 ms per sample. Cells show **ns/message (M messages/s)**;
+† marks an unmet RCIW target.
+
+| Fixture             | Bytes | Scalar       | SSE2         | SSE4.2       | Native       |
+| ------------------- | ----- | ------------ | ------------ | ------------ | ------------ |
+| Browser GET request | 900   | 460.0 (2.17) | 240.1 (4.16) | 221.8 (4.51) | 207.0 (4.83) |
+| S3 API request      | 941   | 487.0 (2.05) | 257.5 (3.88) | 228.4 (4.38) | 216.7 (4.62) |
+| Browser response    | 950   | 470.4 (2.13) | 233.5 (4.28) | 237.4 (4.21) | 215.6 (4.64) |
+| No Content response | 105   | 73.2 (13.66) | 44.5 (22.45) | 59.5 (16.81) | 41.0 (24.41) |
+
+
+### Production request and header storage
+
+These hwire + hwire_table results measure request initialization, HTTP parsing
+and header storage using preallocated memory on an AMD Ryzen 7 PRO 4750GE
+(KVM, Linux x86-64). The native CPU build uses AES hashing, a case-insensitive
+table and 8N slots. Socket I/O, arrival delays, input copying,
+system allocation and cleanup are excluded. Cells show **mean ± SD (ns/request)**.
+All displayed results met the 2% RCIW target.
+
+**Complete Browser GET via CDN (998 bytes, 21 headers)**
+
+| Implementation      | Parse + Post-process (ns/request) |
+| ------------------- | --------------------------------- |
+| hwire + hwire_table | 504.84 ±6.81                      |
+
+**Authorization and session Cookie request (4,201 bytes, 22 headers)**
+
+The same request is measured complete and in two calls: first 2,100 bytes (50%)
+or 3,780 bytes (90%), then the rest. Split results include both attempts and
+required partial-storage reset. These supplemental cases measure retry overhead;
+they do not assume a fragmentation frequency or rank overall server throughput.
+
+| Implementation      | Complete input | Split at 50%  | Split at 90%   |
+| ------------------- | -------------- | ------------- | -------------- |
+| hwire + hwire_table | 727.16 ±7.99   | 1201.85 ±5.52 | 1324.80 ±11.41 |
+
+See [Production](bench/production/README.md) for CPU settings, retry behavior,
+confidence intervals, header lookup and calculated total costs.
+
 
 ## Requirements
 

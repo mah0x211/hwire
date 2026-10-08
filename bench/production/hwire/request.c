@@ -143,3 +143,33 @@ int hwire_request_with_store(void **context, const unsigned char *data,
                0 :
                -1;
 }
+
+/* Retry on accumulated input; callbacks from the partial parse are discarded.
+ * Both fixture prefixes fit in the initial table, so no growth is involved. */
+int hwire_request_with_store_split(void **context, const unsigned char *data,
+                                   size_t len, size_t header_capacity,
+                                   size_t split_at)
+{
+    app_request_t *storage = app_request_new(data, len, header_capacity);
+    if (storage == NULL) {
+        return -1;
+    }
+    *context = storage;
+    hwire_ctx_t parser = {.uctx = storage,
+                          .header_cb = app_store_header,
+                          .request_cb = store_request};
+    size_t pos = 0;
+    if (hwire_parse_request(&parser, (const char *)data, split_at, &pos, len) != HWIRE_EAGAIN) {
+        return -1;
+    }
+    hwire_table_t *table = &storage->header.table;
+    hwire_table_key_t key = table->key;
+    if (hwire_table_init(table, &key, HWIRE_TABLE_CASE_INSENSITIVE,
+                         storage->header.entries, table->capacity,
+                         storage->header.index, APP_SLOTS) != HWIRE_TABLE_OK) {
+        return -1;
+    }
+    pos = 0;
+    return hwire_parse_request(&parser, (const char *)data, len, &pos, len) ==
+                   HWIRE_OK ? 0 : -1;
+}

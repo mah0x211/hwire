@@ -74,12 +74,12 @@ def update_environment(text, path):
     return text.replace("# Benchmark\n", "# Benchmark\n\n" + section + "\n", 1)
 
 
-def message_section(name):
+def message_section(name, level=3):
     """Display the measured fixture, normalizing CRLF for Markdown only."""
     from gen_fixtures import fixture_info
     fixture = fixture_info(name)
     message = fixture["message"]
-    print(f"\n\n### {fixture['title']}\n")
+    print("\n\n" + "#" * level + f" {fixture['title']}\n")
     if fixture["description"]:
         print(fixture["description"] + "\n")
     print(f"<details>\n<summary>Message ({len(message.encode('ascii'))} bytes)</summary>\n")

@@ -18,6 +18,7 @@ def write_table(out, variant, directory=None, implementations=None):
         names = [name for name in names if name in implementations]
     lines = []
     prepared = set()
+    split = set()
     for name in names:
         text = ((directory or ROOT) / name / "request.c").read_text()
         present = [bool(re.search(r"\b" + name + "_" + symbol + r"\s*\(", text))
@@ -28,6 +29,9 @@ def write_table(out, variant, directory=None, implementations=None):
             raise ValueError(f"{name}: prepared lookup requires all three entry points")
 
         lines.append(f"int {name}_request{SUFFIX}(void **, const unsigned char *, size_t, size_t);")
+        if re.search(r"\b" + name + r"_request_with_store_split\s*\(", text):
+            split.add(name)
+            lines.append(f"int {name}_request_with_store_split(void **, const unsigned char *, size_t, size_t, size_t);")
         lines.append(f"void {name}_context_free(void *);")
         lines.append(f"size_t {name}_header_lookup(const void *, const char *, size_t);")
         if name in prepared:
@@ -40,6 +44,8 @@ def write_table(out, variant, directory=None, implementations=None):
         fields = [f'.name = "{display}"', f".request = {name}_request{SUFFIX}",
                   f".context_free = {name}_context_free"]
         fields.append(f".header_lookup = {name}_header_lookup")
+        if name in split:
+            fields.append(f".request_split = {name}_request_with_store_split")
         if name in prepared:
             fields.extend(f".{symbol} = {name}_{symbol}" for symbol in PREPARED)
         lines.append("{ " + ", ".join(fields) + " },")
