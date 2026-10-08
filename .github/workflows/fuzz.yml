@@ -1,0 +1,80 @@
+name: fuzz
+
+on:
+  push:
+    branches: [master]
+    paths-ignore:
+      - '**.md'
+      - 'LICENSE'
+  workflow_dispatch:
+    inputs:
+      seconds:
+        description: Seconds per fuzz target/build
+        type: number
+        required: true
+        default: 60
+
+jobs:
+  fuzz:
+    name: Fuzz (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: ${{ github.event_name == 'workflow_dispatch' && 75 || 20 }}
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Install Clang and libFuzzer (Ubuntu)
+      if: runner.os == 'Linux'
+      run: |
+        sudo apt-get update && sudo apt-get install -y clang libclang-rt-dev llvm
+        echo "/usr/bin" >> "$GITHUB_PATH"
+
+    - name: Set Up LLVM (macOS)
+      if: runner.os == 'macOS'
+      run: |
+        brew list llvm >/dev/null 2>&1 || brew install llvm
+        echo "$(brew --prefix llvm)/bin" >> "$GITHUB_PATH"
+        echo "SDKROOT=$(xcrun --show-sdk-path)" >> "$GITHUB_ENV"
+
+    - name: Run Bounded Fuzzing
+      env:
+        FUZZ_SECONDS: ${{ inputs.seconds }}
+      run: |
+        case "$GITHUB_EVENT_NAME" in
+          push) FUZZ_SECONDS=30 ;;
+        esac
+        case "$FUZZ_SECONDS" in
+          ''|*[!0-9]*) echo 'seconds must be a positive integer' >&2; exit 1 ;;
+        esac
+        make fuzz-coverage FUZZ_SECONDS="$FUZZ_SECONDS"
+
+    - name: Upload Fuzz Coverage Report
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: fuzz-coverage-${{ matrix.os }}
+        path: tests/fuzz/out/coverage/report/
+        if-no-files-found: ignore
+
+    - name: Upload Fuzz Logs
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: fuzz-logs-${{ matrix.os }}
+        path: |
+          tests/fuzz/out/**/run.log
+          tests/fuzz/out/**/build.log
+          tests/fuzz/out/**/coverage-replay.log
+        if-no-files-found: ignore
+
+    - name: Upload Fuzz Failure Inputs
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: fuzz-failures-${{ matrix.os }}
+        path: tests/fuzz/out/**/artifacts/*
+        if-no-files-found: ignore

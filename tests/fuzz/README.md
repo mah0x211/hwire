@@ -118,12 +118,30 @@ informational because short fuzz runs vary; no fixed coverage gate is applied.
 
 ## CI
 
-The test workflow runs separate Ubuntu and macOS jobs, in parallel with the
-ordinary tests. Each target/variant runs for 30 seconds. The default search budget
-is five minutes on x86-64 and four minutes on ARM64, with a ten-minute job timeout
-including setup, compilation and reporting. Execution statistics and coverage
-are displayed in the GitHub Actions job summary, with HTML and detailed data in
-a `fuzz-coverage-<os>` artifact. Build, run and coverage replay logs are uploaded
-as `fuzz-logs-<os>` on both success and failure. A failure stops that job and
-uploads failure inputs as `fuzz-failures-<os>`. No network services or credentials
-are needed.
+PR checks run the ordinary tests and ASan/UBSan tests; no fuzz builds or
+runs are performed. The same checks also run on pushes to `master`.
+Fuzz report-parser tests run as part of the separate exploration workflow.
+
+Exploration runs separately in `.github/workflows/fuzz.yml`, with independent
+Ubuntu and macOS jobs:
+
+| Trigger | Time per target/build | Exploration budget (x86-64 / ARM64) |
+| --- | ---: | --- |
+| Push to `master` | 30 seconds | 5 / 4 minutes |
+| Manual dispatch | Configurable; default 60 seconds | Depends on the selected duration |
+
+Automatic exploration jobs have a 20-minute timeout including setup,
+compilation and reporting. Manual jobs have a 75-minute timeout; the selected
+duration must fit that limit across all builds. Push and PR checks skip
+documentation-only changes.
+
+Execution statistics and coverage are displayed in the GitHub Actions job
+summary, with HTML and detailed data in a `fuzz-coverage-<os>` artifact. Build,
+run and coverage replay logs are uploaded as `fuzz-logs-<os>` on both success
+and failure. A failure stops that job and uploads failure inputs as
+`fuzz-failures-<os>`.
+
+For merge requirements, select ordinary tests rather than the
+exploration jobs in the repository's branch protection or Ruleset settings.
+A workflow split alone does not change those settings. No network services or
+credentials are needed by the fuzz targets.
