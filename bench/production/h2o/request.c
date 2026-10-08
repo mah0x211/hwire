@@ -124,3 +124,30 @@ int h2o_request_with_store(void **context, const unsigned char *data,
     s->version = 0x100 | (minor != 0);
     return h2o_store_headers(s, headers, count);
 }
+
+int h2o_request_with_store_split(void **context, const unsigned char *data,
+                                 size_t len, size_t header_capacity,
+                                 size_t split_at)
+{
+    (void)header_capacity;
+    h2o_storage_t *s = h2o_storage_new();
+    *context = s;
+    struct phr_header headers[H2O_MAX_HEADERS];
+    size_t count = H2O_MAX_HEADERS;
+    int minor;
+    if (phr_parse_request((const char *)data, split_at,
+                          (const char **)&s->input.method.base, &s->input.method.len,
+                          (const char **)&s->input.path.base, &s->input.path.len,
+                          &minor, headers, &count, 0) != -2) {
+        return -1;
+    }
+    count = H2O_MAX_HEADERS;
+    if (phr_parse_request((const char *)data, len,
+                          (const char **)&s->input.method.base, &s->input.method.len,
+                          (const char **)&s->input.path.base, &s->input.path.len,
+                          &minor, headers, &count, split_at) <= 0) {
+        return -1;
+    }
+    s->version = 0x100 | (minor != 0);
+    return h2o_store_headers(s, headers, count);
+}

@@ -19,6 +19,7 @@ static int quick;
 
 
 #include "../data/scenarios/browser_cdn.h"
+#include "../data/scenarios/browser_auth.h"
 #ifdef BENCH_POOL
 #  include "pool.h"
 #endif
@@ -29,11 +30,14 @@ enum {
 
 typedef int (*parser_fn_t)(void **context, const unsigned char *data,
                            size_t len, size_t header_capacity);
+typedef int (*split_parser_fn_t)(void **context, const unsigned char *data,
+                                 size_t len, size_t header_capacity, size_t split_at);
 typedef void (*context_free_fn_t)(void *context);
 
 typedef struct {
     const char *name;
     parser_fn_t request;
+    split_parser_fn_t request_split;
     context_free_fn_t context_free;
     size_t (*header_lookup)(const void *, const char *, size_t);
     void *(*header_query_new)(const char *, size_t);
@@ -47,14 +51,17 @@ typedef struct {
     const char *name;
     const unsigned char *data;
     size_t len;
+    int split_input;
 } store_fixture_t;
 
 static const store_fixture_t STORE_FIXTURES[] = {
     { .name = "scenario_browser_cdn", .data = MSG_BROWSER_CDN,
-      .len = sizeof(MSG_BROWSER_CDN) - 1 }
+      .len = sizeof(MSG_BROWSER_CDN) - 1 },
+    { .name = "scenario_browser_auth", .data = MSG_BROWSER_AUTH,
+      .len = sizeof(MSG_BROWSER_AUTH) - 1, .split_input = 1 }
 };
 
-static double bench_store(parser_fn_t fn, context_free_fn_t context_free,
+static double bench_store(const implementations_t *parser, size_t split_at,
                           const store_fixture_t *fixture,
                           size_t header_capacity,
                           size_t iterations)
@@ -71,10 +78,12 @@ static double bench_store(parser_fn_t fn, context_free_fn_t context_free,
         parser_pool_begin();
 #endif
         uint64_t start = now_ns();
-        int result = fn(&context, input, fixture->len, header_capacity);
+        int result = split_at != 0 ?
+            parser->request_split(&context, input, fixture->len, header_capacity, split_at) :
+            parser->request(&context, input, fixture->len, header_capacity);
 
         elapsed += now_ns() - start;
-        context_free(context);
+        parser->context_free(context);
 #ifdef BENCH_POOL
         parser_pool_end();
 #endif
@@ -91,7 +100,8 @@ static double bench_store(parser_fn_t fn, context_free_fn_t context_free,
 }
 
 static int bench_store_scenario(FILE *out, const implementations_t *parser,
-                                const store_fixture_t *fixture)
+                                const store_fixture_t *fixture, size_t split_at,
+                                const char *operation)
 {
     const size_t warmup = 100;
     size_t iterations;
@@ -103,8 +113,11 @@ static int bench_store_scenario(FILE *out, const implementations_t *parser,
         unsigned char input[fixture->len + 1];
         memcpy(input, fixture->data, fixture->len);
         void *context = NULL;
-        if (parser->request(&context, input, fixture->len,
-                             HEADER_CAPACITY) != 0) {
+        input[fixture->len] = 0;
+        int result = split_at != 0 ?
+            parser->request_split(&context, input, fixture->len, HEADER_CAPACITY, split_at) :
+            parser->request(&context, input, fixture->len, HEADER_CAPACITY);
+        if (result != 0) {
             parser->context_free(context);
             return -1;
         }
@@ -112,14 +125,14 @@ static int bench_store_scenario(FILE *out, const implementations_t *parser,
         return 0;
     }
     start = now_ns();
-    if (bench_store(parser->request, parser->context_free, fixture, HEADER_CAPACITY,
+    if (bench_store(parser, split_at, fixture, HEADER_CAPACITY,
                     warmup) < 0.0) {
         return -1;
     }
     elapsed = (double)(now_ns() - start);
     iterations = sample_iterations(elapsed, warmup, quick);
     do {
-        double sample = bench_store(parser->request, parser->context_free, fixture,
+        double sample = bench_store(parser, split_at, fixture,
                                      HEADER_CAPACITY,
                                      iterations);
         if (sample < 0.0) {
@@ -127,8 +140,8 @@ static int bench_store_scenario(FILE *out, const implementations_t *parser,
         }
         bench_stats_add(&stats, sample);
     } while (quick ? stats.count < 3 : !bench_stats_done(&stats));
-    fprintf(out, "%s,parse,request,%zu,%u,%zu,%zu,%.3f,%.3f,%.6f,%s\n",
-            fixture->name, fixture->len, HEADER_CAPACITY,
+    fprintf(out, "%s,%s,request,%zu,%u,%zu,%zu,%.3f,%.3f,%.6f,%s\n",
+            fixture->name, operation, fixture->len, HEADER_CAPACITY,
             stats.count, iterations, stats.mean, bench_stats_stddev(&stats),
             bench_stats_rciw(&stats),
 #ifdef BENCH_POOL
@@ -137,8 +150,8 @@ static int bench_store_scenario(FILE *out, const implementations_t *parser,
             "allocated"
 #endif
     );
-    fprintf(stderr, "%s/%s: %zu samples, RCIW %.2f%%\n", parser->name,
-            fixture->name, stats.count, 100.0 * bench_stats_rciw(&stats));
+    fprintf(stderr, "%s/%s/%s: %zu samples, RCIW %.2f%%\n", parser->name,
+            fixture->name, operation, stats.count, 100.0 * bench_stats_rciw(&stats));
     return 0;
 }
 
@@ -303,9 +316,19 @@ static int run_storage_benchmarks(void)
         }
         enum { CASE_COUNT = sizeof(LOOKUP_CASES) / sizeof(LOOKUP_CASES[0]) };
         for (size_t f = 0; f < sizeof(STORE_FIXTURES) / sizeof(STORE_FIXTURES[0]); f++) {
-            if (bench_store_scenario(out, parser, &STORE_FIXTURES[f]) != 0) {
+            if (bench_store_scenario(out, parser, &STORE_FIXTURES[f], 0, "parse") != 0) {
                 result = -1;
                 break;
+            }
+            if (STORE_FIXTURES[f].split_input && parser->request_split != NULL) {
+                const size_t length = STORE_FIXTURES[f].len;
+                if (bench_store_scenario(out, parser, &STORE_FIXTURES[f],
+                                         length / 2, "parse_split_50") != 0 ||
+                    bench_store_scenario(out, parser, &STORE_FIXTURES[f],
+                                         length * 9 / 10, "parse_split_90") != 0) {
+                    result = -1;
+                    break;
+                }
             }
             if (!check_only) {
                 for (size_t c = 0; c < CASE_COUNT; c++) {

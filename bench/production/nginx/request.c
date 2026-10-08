@@ -201,7 +201,8 @@ int nginx_request_with_store(void **context, const unsigned char *data,
     }
     *context = s;
     ngx_http_request_t *request = &s->request;
-    ngx_buf_t buffer = { .pos = (u_char *)data, .last = (u_char *)data + len };
+    ngx_buf_t buffer = { .pos = (u_char *)data,
+        .last = (u_char *)data + len };
     ngx_int_t code = ngx_http_parse_request_line(request, &buffer);
     if (code != NGX_OK) {
         return -1;
@@ -253,6 +254,91 @@ int nginx_request_with_store(void **context, const unsigned char *data,
         request->request_length += buffer.pos - request->header_name_start;
         if (nginx_store_header(s, request) != 0) {
             return -1;
+        }
+    }
+    if (code == NGX_HTTP_PARSE_HEADER_DONE) {
+        request->request_length += buffer.pos - request->header_name_start;
+        request->http_state = NGX_HTTP_PROCESS_REQUEST_STATE;
+        return 0;
+    }
+    return -1;
+}
+
+/* Preserve parser state and completed headers across the two input exposures. */
+int nginx_request_with_store_split(void **context, const unsigned char *data,
+                                   size_t len, size_t header_capacity,
+                                   size_t split_at)
+{
+    nginx_storage_t *s = nginx_storage_new(header_capacity);
+    if (s == NULL) {
+        return -1;
+    }
+    *context = s;
+    ngx_http_request_t *request = &s->request;
+    ngx_buf_t buffer = { .pos = (u_char *)data,
+        .last = (u_char *)data + split_at };
+    ngx_int_t code = ngx_http_parse_request_line(request, &buffer);
+    if (code == NGX_AGAIN && buffer.last != (u_char *)data + len) {
+        buffer.last = (u_char *)data + len;
+        code = ngx_http_parse_request_line(request, &buffer);
+    }
+    if (code != NGX_OK) {
+        return -1;
+    }
+    request->request_length = buffer.pos - request->request_start;
+    request->request_line = (ngx_str_t){
+        .len = (size_t)(request->request_end - request->request_start),
+        .data = request->request_start
+    };
+    request->method_name = (ngx_str_t){
+        .len = (size_t)(request->method_end - request->request_start + 1),
+        .data = request->request_start
+    };
+    if (request->http_protocol.data != NULL) {
+        request->http_protocol.len = request->request_end - request->http_protocol.data;
+    }
+    request->uri.len = request->args_start != NULL
+        ? (size_t)(request->args_start - 1 - request->uri_start)
+        : (size_t)(request->uri_end - request->uri_start);
+    if (request->complex_uri || request->quoted_uri || request->empty_path_in_uri) {
+        if (request->empty_path_in_uri) {
+            request->uri.len++;
+        }
+        request->uri.data = ngx_pnalloc(request->pool, request->uri.len);
+        if (request->uri.data == NULL || ngx_http_parse_complex_uri(request, 1) != NGX_OK) {
+            return -1;
+        }
+    } else {
+        request->uri.data = request->uri_start;
+    }
+    request->unparsed_uri = (ngx_str_t){
+        .len = (size_t)(request->uri_end - request->uri_start),
+        .data = request->uri_start
+    };
+    request->valid_unparsed_uri = !request->empty_path_in_uri;
+    if (request->uri_ext != NULL) {
+        request->exten = (ngx_str_t){
+            .len = (size_t)((request->args_start != NULL ? request->args_start - 1 : request->uri_end) - request->uri_ext),
+            .data = request->uri_ext
+        };
+    }
+    if (request->args_start != NULL && request->uri_end > request->args_start) {
+        request->args = (ngx_str_t){
+            .len = (size_t)(request->uri_end - request->args_start),
+            .data = request->args_start
+        };
+    }
+    for (;;) {
+        code = ngx_http_parse_header_line(request, &buffer, 0);
+        if (code == NGX_OK) {
+            request->request_length += buffer.pos - request->header_name_start;
+            if (nginx_store_header(s, request) != 0) {
+                return -1;
+            }
+        } else if (code == NGX_AGAIN && buffer.last != (u_char *)data + len) {
+            buffer.last = (u_char *)data + len;
+        } else {
+            break;
         }
     }
     if (code == NGX_HTTP_PARSE_HEADER_DONE) {

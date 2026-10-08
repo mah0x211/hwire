@@ -12,3 +12,7 @@ static void __attribute__((constructor)) actix_web_storage_init(void)
 {
     actix_web_store_init();
 }
+
+int actix_web_request_with_store_split(void **context, const unsigned char *data,
+                                      size_t len, size_t header_capacity,
+                                      size_t split_at);

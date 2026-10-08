@@ -82,6 +82,43 @@ pub unsafe extern "C" fn actix_web_request_with_store(
 }
 
 #[no_mangle]
+pub unsafe extern "C" fn actix_web_request_with_store_split(
+    context: *mut *mut Request, data: *const u8, len: usize,
+    _header_capacity: usize, split_at: usize,
+) -> i32 {
+    let bytes = unsafe { slice::from_raw_parts(data, len) };
+    let mut indices = [EMPTY_HEADER_INDEX; MAX_HEADERS];
+    let mut headers = [MaybeUninit::uninit(); MAX_HEADERS];
+    let mut request = httparse::Request::new(&mut []);
+    if !matches!(request.parse_with_uninit_headers(&bytes[..split_at], &mut headers),
+                 Ok(httparse::Status::Partial)) {
+        return -1;
+    }
+    // The native decoder starts a fresh httparse request on each retry.
+    request = httparse::Request::new(&mut []);
+    match request.parse_with_uninit_headers(bytes, &mut headers) {
+        Ok(httparse::Status::Complete(_)) => {
+            let method = Method::from_bytes(request.method.unwrap().as_bytes()).unwrap();
+            let uri = Uri::try_from(request.path.unwrap()).unwrap();
+            let version = if request.version.unwrap() == 1 {
+                Version::HTTP_11
+            } else {
+                Version::HTTP_10
+            };
+            record_headers(data, request.headers, &mut indices);
+            let mut message = unsafe { store_headers(data, len, &indices[..request.headers.len()]) };
+            let head = message.head_mut();
+            head.method = method;
+            head.uri = uri;
+            head.version = version;
+            unsafe { *context = Box::into_raw(Box::new(message)); }
+            0
+        }
+        _ => -1,
+    }
+}
+
+#[no_mangle]
 pub unsafe extern "C" fn actix_web_context_free(context: *mut Request) {
     if !context.is_null() {
         let message = unsafe { *Box::from_raw(context) };

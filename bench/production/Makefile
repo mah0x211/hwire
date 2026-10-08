@@ -80,6 +80,6 @@ $(BIN)/%/config.txt: FORCE
 $(BIN)/%/implementationlist.c: FORCE scripts/gen_production.py ../shared/scripts/registration.py
 	@mkdir -p $(BIN)/$*
 	@$(GEN) write $@ $* $(call variant_implementations,$*)
-$(BIN)/%/bench_production: $(BIN)/%/config.txt $(BIN)/%/implementationlist.c Makefile bench_production.c ../shared/bench_stats.h ../shared/bench_timer.h ../shared/scripts/build_variant.sh shared/pool.c shared/pool.h shared/pool_darwin.c ../data/scenarios/browser_cdn.h $(DEPS) $(CONFIGS) $(FETCH) $(BUILD) | setup
+$(BIN)/%/bench_production: $(BIN)/%/config.txt $(BIN)/%/implementationlist.c Makefile bench_production.c ../shared/bench_stats.h ../shared/bench_timer.h ../shared/scripts/build_variant.sh shared/pool.c shared/pool.h shared/pool_darwin.c ../data/scenarios/browser_cdn.h ../data/scenarios/browser_auth.h $(DEPS) $(CONFIGS) $(FETCH) $(BUILD) | setup
 	@for p in $(call variant_implementations,$*); do if [ -f "$$p/build.sh" ]; then CARGO='$(CARGO)' sh "$$p/build.sh" '$*' || exit 1; fi; done
 	@$(foreach p,$(IMPLEMENTATIONS),$(p)_CFLAGS='$($(p)_CFLAGS)') CC='$(CC)' CFLAGS='$(CFLAGS)' SRCS='$(call variant_sources,$*)' INC='$(call variant_includes,$*)' LDLIBS='$(subst %,$*,$(call variant_libraries,$*))' DRIVER='bench_production.c' POOL='1' sh ../shared/scripts/build_variant.sh '$*' '$(VARIANT_FLAGS_$*)'
