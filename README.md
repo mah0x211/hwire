@@ -28,7 +28,7 @@ This library parses `HTTP/1.x` **request/response lines, header fields, and chun
 
 The following rules from [RFC 9110](https://www.rfc-editor.org/rfc/rfc9110) and [RFC 9112](https://www.rfc-editor.org/rfc/rfc9112) are fully implemented:
 
-- **Token characters** (**RFC 9110** §5.6.2): all 76 `tchar` values recognized.
+- **Token characters** (**RFC 9110** §5.6.2): all 77 `tchar` values recognized.
 - **Quoted-string** (**RFC 9110** §5.6.4): including quoted-pair (`\` escapes).
 - **Parameters** (**RFC 9110** §5.6.6): semicolon-separated parameter parsing.
 - **Header field values** (**RFC 9110** §5.5): `obs-text` bytes (0x80–0xFF) permitted.
