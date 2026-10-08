@@ -7,6 +7,14 @@
 #include <sys/mman.h>
 #include <unistd.h>
 
+#if defined(HWIRE_TEST_EXPECT_AES)
+# if HWIRE_TEST_EXPECT_AES && !defined(HWIRE_TABLE_HAVE_AES)
+#  error "AES test configuration selected the SipHash fallback"
+# elif !HWIRE_TEST_EXPECT_AES && defined(HWIRE_TABLE_HAVE_AES)
+#  error "SipHash test configuration selected AES"
+# endif
+#endif
+
 #if defined(HWIRE_TABLE_HAVE_AES)
 # include "aes_vectors.h"
 

@@ -11,8 +11,10 @@ endif
 # Match native test flags to the host architecture.
 ifneq ($(filter arm64 aarch64,$(UNAME_M)),)
     NATIVE_TEST_FLAGS = -mcpu=native
+    AES_TEST_FLAGS = -march=armv8-a+crypto
 else ifneq ($(filter x86_64 amd64 i386 i486 i586 i686,$(UNAME_M)),)
     NATIVE_TEST_FLAGS = -march=native
+    AES_TEST_FLAGS = -maes
 endif
 LDFLAGS =
 
@@ -36,7 +38,7 @@ COV_EXES = $(TEST_EXES) $(TABLE_TEST_EXES)
 COV_OBJECTS = $(patsubst %,-object=%,$(wordlist 2,$(words $(COV_EXES)),$(COV_EXES)))
 
 # Common dependencies for tests
-TEST_DEPS = $(TARGET_SRC) $(TEST_DIR)/test_helpers.c
+TEST_DEPS = $(TARGET_SRC) $(SRC_DIR)/hwire.h $(TEST_DIR)/test_helpers.c $(TEST_DIR)/test_helpers.h
 
 .PHONY: all test table-test test-nosimd coverage html-coverage analyze clean
 
@@ -63,13 +65,13 @@ table-test: $(TABLE_TEST_EXES)
 	done
 
 $(OBJ_DIR)/table_test_slots: $(TEST_DIR)/table/test_slots.c $(SRC_DIR)/hwire_table.c $(SRC_DIR)/hwire_table.h $(SRC_DIR)/hwire_table_aes.h $(SRC_DIR)/hwire.h | $(OBJ_DIR)
-	$(CC) $(CFLAGS) $(NATIVE_TEST_FLAGS) $(LDFLAGS) -o $@ $(TEST_DIR)/table/test_slots.c
+	$(CC) $(CFLAGS) $(NATIVE_TEST_FLAGS) $(AES_TEST_FLAGS) $(LDFLAGS) -o $@ $(TEST_DIR)/table/test_slots.c
 
 $(OBJ_DIR)/table_test_slots_noaes: $(TEST_DIR)/table/test_slots.c $(SRC_DIR)/hwire_table.c $(SRC_DIR)/hwire_table.h $(SRC_DIR)/hwire_table_aes.h $(SRC_DIR)/hwire.h | $(OBJ_DIR)
 	$(CC) $(CFLAGS) -DHWIRE_NO_AES $(LDFLAGS) -o $@ $(TEST_DIR)/table/test_slots.c
 
 $(OBJ_DIR)/table_test_multitable: $(TEST_DIR)/table/test_multitable.c $(SRC_DIR)/hwire_table.c $(SRC_DIR)/hwire_table.h $(SRC_DIR)/hwire_table_aes.h $(SRC_DIR)/hwire.h | $(OBJ_DIR)
-	$(CC) $(CFLAGS) $(NATIVE_TEST_FLAGS) $(LDFLAGS) -o $@ $(TEST_DIR)/table/test_multitable.c $(SRC_DIR)/hwire_table.c
+	$(CC) $(CFLAGS) $(NATIVE_TEST_FLAGS) $(AES_TEST_FLAGS) $(LDFLAGS) -o $@ $(TEST_DIR)/table/test_multitable.c $(SRC_DIR)/hwire_table.c
 
 $(OBJ_DIR)/table_test_multitable_noaes: $(TEST_DIR)/table/test_multitable.c $(SRC_DIR)/hwire_table.c $(SRC_DIR)/hwire_table.h $(SRC_DIR)/hwire_table_aes.h $(SRC_DIR)/hwire.h | $(OBJ_DIR)
 	$(CC) $(CFLAGS) -DHWIRE_NO_AES $(LDFLAGS) -o $@ $(TEST_DIR)/table/test_multitable.c $(SRC_DIR)/hwire_table.c
@@ -81,14 +83,14 @@ $(OBJ_DIR)/table_test_siphash: $(TEST_DIR)/table/test_siphash.c $(SRC_DIR)/hwire
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(TEST_DIR)/table/test_siphash.c
 
 $(OBJ_DIR)/table_test_aes: $(TEST_DIR)/table/test_aes.c $(TEST_DIR)/table/aes_vectors.h $(SRC_DIR)/hwire_table.c $(SRC_DIR)/hwire_table.h $(SRC_DIR)/hwire_table_aes.h $(SRC_DIR)/hwire.h | $(OBJ_DIR)
-	$(CC) $(CFLAGS) $(NATIVE_TEST_FLAGS) $(LDFLAGS) -o $@ $(TEST_DIR)/table/test_aes.c
+	$(CC) $(CFLAGS) $(NATIVE_TEST_FLAGS) $(AES_TEST_FLAGS) -DHWIRE_TEST_EXPECT_AES=1 $(LDFLAGS) -o $@ $(TEST_DIR)/table/test_aes.c
 
 $(OBJ_DIR)/table_test_table_noaes: $(TEST_DIR)/table/test_table.c $(SRC_DIR)/hwire_table.c $(SRC_DIR)/hwire_table.h $(SRC_DIR)/hwire_table_aes.h $(SRC_DIR)/hwire.h | $(OBJ_DIR)
 	$(CC) $(CFLAGS) -DHWIRE_NO_AES $(LDFLAGS) -o $@ $(TEST_DIR)/table/test_table.c $(SRC_DIR)/hwire_table.c
 
-# Native flags exercise AES on the test host; the disabled build checks fallback.
+# Explicit CPU flags require AES on supported test hosts; the disabled build checks fallback.
 $(OBJ_DIR)/table_test_aes_noaes: $(TEST_DIR)/table/test_aes.c $(TEST_DIR)/table/aes_vectors.h $(SRC_DIR)/hwire_table.c $(SRC_DIR)/hwire_table.h $(SRC_DIR)/hwire_table_aes.h $(SRC_DIR)/hwire.h | $(OBJ_DIR)
-	$(CC) $(CFLAGS) $(NATIVE_TEST_FLAGS) -DHWIRE_NO_AES $(LDFLAGS) -o $@ $(TEST_DIR)/table/test_aes.c
+	$(CC) $(CFLAGS) $(NATIVE_TEST_FLAGS) $(AES_TEST_FLAGS) -DHWIRE_NO_AES -DHWIRE_TEST_EXPECT_AES=0 $(LDFLAGS) -o $@ $(TEST_DIR)/table/test_aes.c
 
 # Compile and run tests without SIMD
 test-nosimd:
@@ -97,7 +99,7 @@ test-nosimd:
 
 # Rule to build test executables
 $(OBJ_DIR)/%: $(TEST_DIR)/%.c $(TEST_DEPS)
-	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $^
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(filter %.c,$^)
 
 # LCOV_EXCL_LINE / LCOV_EXCL_BR_LINE omit documented defensive paths.
 # Raw LCOV and LLVM HTML remain available without exclusions.
