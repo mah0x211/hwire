@@ -53,6 +53,19 @@ static void test_links(hwire_table_mode_t mode)
     assert(hwire_table_link(&a.table, &a.table) == HWIRE_TABLE_EINVAL);
     assert(hwire_table_link(&a.table, &wrong.table) == HWIRE_TABLE_EINVAL);
     push(&b.table, "old");
+    /* Public descriptors can contain a NULL or foreign tail. Reject either
+     * malformed candidate without changing either descriptor. */
+    hwire_table_t *invalid_tails[] = {NULL, &c.table};
+    for (size_t i = 0; i < sizeof(invalid_tails) / sizeof(invalid_tails[0]); i++) {
+        hwire_table_t root_before, candidate_before;
+        b.table.tail = invalid_tails[i];
+        memcpy(&root_before, &a.table, sizeof(root_before));
+        memcpy(&candidate_before, &b.table, sizeof(candidate_before));
+        assert(hwire_table_link(&a.table, &b.table) == HWIRE_TABLE_EINVAL);
+        assert(memcmp(&a.table, &root_before, sizeof(root_before)) == 0);
+        assert(memcmp(&b.table, &candidate_before, sizeof(candidate_before)) == 0);
+    }
+    b.table.tail = &b.table;
     hwire_kv_pair_t old = b.pairs[0];
     assert(hwire_table_link(&a.table, &b.table) == HWIRE_TABLE_OK);
     assert(b.table.len == 0 && memcmp(&old, &b.pairs[0], sizeof(old)) == 0);

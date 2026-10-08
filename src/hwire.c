@@ -2556,7 +2556,8 @@ static int parse_ip_v4(const unsigned char **ustr, const unsigned char *head,
         }
         str++;
     }
-    return HWIRE_EURI;
+    /* NOTE: The fourth octet always returns from inside the loop. */
+    return HWIRE_EURI; /* LCOV_EXCL_LINE */
 }
 
 static int parse_ip_v6(const unsigned char **ustr, const unsigned char *head,
@@ -2732,8 +2733,9 @@ static int parse_authority_form(const unsigned char **ustr,
     unsigned char c                 = 0;
     int rv                          = 0;
 
-    if (str >= tail) {
-        return uri_incomplete(head, tail, maxlen);
+    /* NOTE: parse_uri checks for available input before dispatching here. */
+    if (str >= tail) {                             /* LCOV_EXCL_BR_LINE */
+        return uri_incomplete(head, tail, maxlen); /* LCOV_EXCL_LINE */
     } else if (*str == '[') {
         str++;
         rv = parse_ip_literal(&str, head, tail, maxlen);

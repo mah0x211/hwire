@@ -1,5 +1,6 @@
 CC = clang
 CFLAGS = -std=c99 -Isrc -Wall -Wextra -Wpedantic -Wconversion -Wsign-conversion -Wshadow -Wstrict-prototypes -Wmissing-declarations -Wunused-parameter -Werror -Wundef -Wcast-align -Wwrite-strings -Wunreachable-code -Wformat=2 -fno-common -Wno-gnu-statement-expression -Wno-bitwise-instead-of-logical
+PYTHON ?= python3
 COV_FLAGS = -fprofile-instr-generate -fcoverage-mapping
 
 # Detect architecture for AVX2 support (only x86_64)
@@ -98,6 +99,8 @@ test-nosimd:
 $(OBJ_DIR)/%: $(TEST_DIR)/%.c $(TEST_DEPS)
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $^
 
+# LCOV_EXCL_LINE / LCOV_EXCL_BR_LINE omit documented defensive paths.
+# Raw LCOV and LLVM HTML remain available without exclusions.
 # Coverage target
 coverage:
 	$(MAKE) clean
@@ -111,7 +114,8 @@ coverage:
 	@echo "All tests passed!"
 	@echo "Generating coverage report..."
 	llvm-profdata merge -sparse $(COV_DIR)/*.profraw -o $(COV_DIR)/coverage.profdata
-	llvm-cov export -format=lcov $(firstword $(COV_EXES)) $(COV_OBJECTS) -instr-profile=$(COV_DIR)/coverage.profdata --sources $(SRC_DIR)/hwire.c $(SRC_DIR)/hwire_table.c $(SRC_DIR)/hwire_table_aes.h > $(COV_DIR)/coverage.info
+	llvm-cov export -format=lcov $(firstword $(COV_EXES)) $(COV_OBJECTS) -instr-profile=$(COV_DIR)/coverage.profdata --sources $(SRC_DIR)/hwire.c $(SRC_DIR)/hwire_table.c $(SRC_DIR)/hwire_table_aes.h > $(COV_DIR)/coverage.raw.info
+	$(PYTHON) tests/filter_coverage.py $(COV_DIR)/coverage.raw.info $(COV_DIR)/coverage.info
 	@echo "Coverage report generated in $(COV_DIR)/coverage.info"
 
 # HTML coverage report (local use)

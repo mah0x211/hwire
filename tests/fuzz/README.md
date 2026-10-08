@@ -88,6 +88,9 @@ are asserted, and iterators are recreated after link, unlink or reset.
 
 ## Coverage reports
 
+These LLVM reports are unfiltered; the defensive-path exclusions applied to
+the ordinary tests' LCOV report do not change fuzz coverage or LLVM HTML.
+
 `make fuzz-coverage` runs coverage-instrumented fuzz builds and replays each
 build's generated corpus with fresh profiles. It produces a source coverage
 summary, LLVM JSON/profiles and HTML under `out/coverage/report/`. Open
