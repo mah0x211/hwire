@@ -2643,6 +2643,8 @@ IPV6_GROUP:
         }
         compressed = 1;
         str++;
+    } else if (*str == ']') {
+        return HWIRE_EURI;
     }
     goto IPV6_GROUP_START;
 
