@@ -21,9 +21,7 @@ typedef int (*parse_message_fn)(const char *buf, size_t len, size_t maxlen,
 static int parse_request_message(const char *buf, size_t len, size_t maxlen,
                                  size_t *pos)
 {
-    char key_storage[TEST_KEY_SIZE];
     hwire_ctx_t ctx = {
-        .key_lc = {.buf = key_storage, .size = sizeof(key_storage), .len = 0},
         .request_cb = mock_request_cb,
         .header_cb  = mock_header_cb
     };
@@ -35,9 +33,7 @@ static int parse_request_message(const char *buf, size_t len, size_t maxlen,
 static int parse_response_message(const char *buf, size_t len, size_t maxlen,
                                   size_t *pos)
 {
-    char key_storage[TEST_KEY_SIZE];
     hwire_ctx_t ctx = {
-        .key_lc = {.buf = key_storage, .size = sizeof(key_storage), .len = 0},
         .response_cb = mock_response_cb,
         .header_cb   = mock_header_cb
     };

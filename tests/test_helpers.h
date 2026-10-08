@@ -9,7 +9,6 @@
 
 /* Common buffer sizes */
 #define TEST_BUF_SIZE 256
-#define TEST_KEY_SIZE 64
 
 /* Test counters */
 extern int g_tests_run;

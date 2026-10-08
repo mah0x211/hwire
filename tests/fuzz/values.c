@@ -23,14 +23,12 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
     char *input = copy_input(data + 4, len);
     size_t start = data[2] % (len + 1);
     size_t capacity = (data[1] & 4) ? data[3] % (len + 1) : len;
-    char *key = malloc(capacity ? capacity : 1);
     char *decoded = malloc(capacity ? capacity : 1);
-    CHECK(key && decoded);
+    CHECK(decoded);
     callback_state_t state = {.input = input, .len = len,
         .decoded = decoded, .decoded_size = capacity,
         .stop_at = (data[1] & 8) ? 1 + data[3] % 4 : 0};
     hwire_ctx_t ctx = {.uctx = &state,
-        .key_lc = {.buf = key, .size = capacity},
         .qrybuf = {.buf = decoded, .size = capacity},
         .param_cb = check_pair, .query_cb = check_query,
         .chunksize_cb = check_chunk, .chunksize_ext_cb = check_pair};
@@ -86,12 +84,11 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
     }
     }
     CHECK(pos >= start && pos <= len);
-    CHECK(ctx.key_lc.len <= capacity && ctx.qrybuf.len <= capacity);
+    CHECK(ctx.qrybuf.len <= capacity);
     if (state.stopped) {
         CHECK(code == HWIRE_ECALLBACK);
     }
     free(decoded);
-    free(key);
     free(input);
     return 0;
 }

@@ -11,10 +11,7 @@
 void test_parse_parameters_valid(void)
 {
     TEST_START("test_parse_parameters_valid");
-
-    char key_storage[TEST_KEY_SIZE];
     hwire_ctx_t cb = {
-        .key_lc   = {.buf = key_storage, .size = sizeof(key_storage), .len = 0},
         .param_cb = mock_param_cb
     };
     size_t pos;
@@ -61,15 +58,11 @@ void test_parse_parameters_valid(void)
  * MUST return HWIRE_ECALLBACK when caller-owned parameter storage is full.
  * MUST return HWIRE_ECALLBACK if param_cb returns non-zero.
  * MUST return HWIRE_ELEN if OWS exceeds maxlen.
- * MUST return HWIRE_EKEYLEN if key length exceeds key_lc.size.
  */
 void test_parse_parameters_invalid(void)
 {
     TEST_START("test_parse_parameters_invalid");
-
-    char key_storage[TEST_KEY_SIZE];
     hwire_ctx_t cb = {
-        .key_lc   = {.buf = key_storage, .size = sizeof(key_storage), .len = 0},
         .param_cb = mock_param_cb
     };
     size_t pos;
@@ -82,17 +75,6 @@ void test_parse_parameters_invalid(void)
     pos = 0;
     rv  = hwire_parse_parameters(&cb, buf, strlen(buf), &pos, 100, 0);
     ASSERT_EQ(rv, HWIRE_EILSEQ);
-
-    { /* No key_lc buffer: hwire MUST still parse successfully (lowercase
-         conversion skipped) */
-        hwire_ctx_t cb_no_lc = cb;
-        cb_no_lc.key_lc.size = 0;
-        buf                  = "; KEY=Val ";
-        pos                  = 0;
-        rv = hwire_parse_parameters(&cb_no_lc, buf, strlen(buf), &pos, 100,
-                                    0);
-        ASSERT_OK(rv);
-    }
 
     { /* MUST return HWIRE_ECALLBACK if param_cb returns non-zero (quoted-string
          value) */
@@ -156,18 +138,6 @@ void test_parse_parameters_invalid(void)
         ASSERT_EQ(rv, HWIRE_ECALLBACK);
     }
 
-    { /* hwire: parameter-name key_lc.size exceeded → HWIRE_EKEYLEN */
-        char small_key[3];
-        hwire_ctx_t cb_small = cb;
-        cb_small.key_lc.buf  = small_key;
-        cb_small.key_lc.size = sizeof(small_key);
-        buf                  = "; longkey=val";
-        pos                  = 0;
-        rv = hwire_parse_parameters(&cb_small, buf, strlen(buf), &pos, 100,
-                                    0);
-        ASSERT_EQ(rv, HWIRE_EKEYLEN);
-    }
-
     TEST_END();
 }
 
@@ -188,10 +158,7 @@ void test_parse_parameters_invalid(void)
 void test_parse_parameters_edge_cases(void)
 {
     TEST_START("test_parse_parameters_edge_cases");
-
-    char key_storage[TEST_KEY_SIZE];
     hwire_ctx_t cb = {
-        .key_lc   = {.buf = key_storage, .size = sizeof(key_storage), .len = 0},
         .param_cb = mock_param_cb
     };
     size_t pos;
@@ -259,10 +226,7 @@ void test_parse_parameters_edge_cases(void)
 void test_parse_parameters_numeric_boundaries(void)
 {
     TEST_START("test_parse_parameters_numeric_boundaries");
-
-    char key_storage[TEST_KEY_SIZE];
     hwire_ctx_t cb = {
-        .key_lc   = {.buf = key_storage, .size = sizeof(key_storage), .len = 0},
         .param_cb = mock_param_cb
     };
     const char *buf = "xkey=value";
@@ -301,10 +265,7 @@ void test_parse_parameters_numeric_boundaries(void)
 void test_parse_parameters_hard_budget(void)
 {
     TEST_START("test_parse_parameters_hard_budget");
-
-    char key_storage[TEST_KEY_SIZE] = {0};
     hwire_ctx_t cb                  = {
-        .key_lc   = {.buf = key_storage, .size = sizeof(key_storage), .len = 0},
         .param_cb = mock_param_cb
     };
     const char *buf = ";";
@@ -363,10 +324,7 @@ void test_parse_parameters_hard_budget(void)
 void test_parse_parameters_rfc_compliance(void)
 {
     TEST_START("test_parse_parameters_rfc_compliance");
-
-    char key_storage[TEST_KEY_SIZE];
     hwire_ctx_t cb = {
-        .key_lc   = {.buf = key_storage, .size = sizeof(key_storage), .len = 0},
         .param_cb = mock_param_cb
     };
     size_t pos;
@@ -426,10 +384,7 @@ static int verify_param_content_cb(hwire_ctx_t *ctx, hwire_param_t *param)
 void test_parse_parameters_content_verification(void)
 {
     TEST_START("test_parse_parameters_content_verification");
-
-    char key_storage[TEST_KEY_SIZE];
     hwire_ctx_t cb = {
-        .key_lc   = {.buf = key_storage, .size = sizeof(key_storage), .len = 0},
         .param_cb = verify_param_content_cb
     };
     size_t pos      = 0;
@@ -499,8 +454,6 @@ static int verify_multi_param_cb(hwire_ctx_t *ctx, hwire_param_t *param)
 void test_parse_parameters_multi_content_verification(void)
 {
     TEST_START("test_parse_parameters_multi_content_verification");
-
-    char key_storage[TEST_KEY_SIZE];
     multi_param_expect_t exp = {
         .params = {{"key1", 4, "val1", 4},
                    {"key2", 4, "val2", 4},
@@ -510,7 +463,6 @@ void test_parse_parameters_multi_content_verification(void)
     };
     hwire_ctx_t cb = {
         .uctx     = &exp,
-        .key_lc   = {.buf = key_storage, .size = sizeof(key_storage)},
         .param_cb = verify_multi_param_cb
     };
     size_t pos      = 0;

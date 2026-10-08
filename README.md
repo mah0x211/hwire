@@ -203,9 +203,9 @@ static int on_request(hwire_ctx_t *ctx, hwire_request_t *req)
 
 static int on_header(hwire_ctx_t *ctx, hwire_header_t *hdr)
 {
-    /* ctx->key_lc.buf holds the lowercase field name */
+    (void)ctx;
     printf("  %.*s: %.*s\n",
-           (int)ctx->key_lc.len, ctx->key_lc.buf,
+           (int)hdr->key.len, hdr->key.ptr,
            (int)hdr->value.len, hdr->value.ptr);
     return 0;
 }
@@ -218,10 +218,7 @@ int main(void)
         "Connection: close\r\n"
         "\r\n";
 
-    char keybuf[256];
     hwire_ctx_t ctx = {0};
-    ctx.key_lc.buf  = keybuf;
-    ctx.key_lc.size = sizeof(keybuf);
     ctx.request_cb  = on_request;
     ctx.header_cb   = on_header;
 
@@ -241,8 +238,8 @@ Expected output:
 
 ```
 GET /index.html HTTP/1.1
-  host: example.com
-  connection: close
+  Host: example.com
+  Connection: close
 consumed 66 bytes
 ```
 
@@ -271,9 +268,8 @@ All parse functions return `hwire_code_t`. Negative values are errors.
 | `HWIRE_EEXTNAME` | −12 | Invalid chunk extension name |
 | `HWIRE_EEXTVAL` | −13 | Invalid chunk extension value or missing EOL |
 | `HWIRE_ENOBUFS` | −14 | Insufficient output buffer space |
-| `HWIRE_EKEYLEN` | −15 | Key length exceeds `ctx->key_lc.size` |
-| `HWIRE_ECALLBACK` | −16 | A callback returned non-zero |
-| `HWIRE_EURI` | −17 | Invalid request-target form, component, or character |
+| `HWIRE_ECALLBACK` | −15 | A callback returned non-zero |
+| `HWIRE_EURI` | −16 | Invalid request-target form, component, or character |
 
 ---
 
@@ -310,7 +306,7 @@ typedef struct {
 } hwire_buf_t;
 ```
 
-Used for `ctx.key_lc` to receive the lowercase header field name. When `size == 0` (zero-initialized default), lowercase conversion is skipped entirely. To enable lowercase key storage, set `buf` to a caller-allocated buffer and `size` to its capacity before calling any parse function.
+Used for `ctx.qrybuf` to receive decoded query keys and values. Set `buf` to a caller-allocated buffer and `size` to its capacity before calling `hwire_parse_query`.
 
 #### `hwire_kv_pair_t` / aliases
 
@@ -390,7 +386,6 @@ Compare with `HWIRE_HTTP_V11` or `HWIRE_HTTP_V10` directly (e.g., `req->version 
 ```c
 typedef struct hwire_ctx_st {
     void        *uctx;   /* Opaque user pointer; not used by the library */
-    hwire_buf_t  key_lc; /* Lowercase-key buffer; set buf and size before parsing */
     hwire_buf_t  qrybuf; /* Decoded query buffer; set buf and size before hwire_parse_query */
 
     int (*query_cb      )(struct hwire_ctx_st *ctx, hwire_query_param_t    *param);
@@ -407,14 +402,12 @@ typedef struct hwire_ctx_st {
 
 | Parse function | Required callbacks | Buffer |
 |---|---|---|
-| `hwire_parse_parameters` | `param_cb` | `key_lc` optional |
+| `hwire_parse_parameters` | `param_cb` | — |
 | `hwire_parse_chunksize` | `chunksize_cb` | — |
-| `hwire_parse_headers` | `header_cb` | `key_lc` optional |
-| `hwire_parse_request` | `request_cb`, `header_cb` | `key_lc` optional |
-| `hwire_parse_response` | `response_cb`, `header_cb` | `key_lc` optional |
+| `hwire_parse_headers` | `header_cb` | — |
+| `hwire_parse_request` | `request_cb`, `header_cb` | — |
+| `hwire_parse_response` | `response_cb`, `header_cb` | — |
 | `hwire_parse_query` | `query_cb` | `qrybuf` required |
-
-> **`key_lc`**: when `key_lc.size > 0`, `key_lc.buf` must point to a caller-allocated buffer of at least `key_lc.size` bytes; the library writes the lowercase field/parameter name there before each callback. Set `size = 0` (zero-initialized default) to disable lowercase key storage.
 
 > **`qrybuf`**: before calling `hwire_parse_query`, set `qrybuf.buf` to non-NULL caller-owned storage and `qrybuf.size` to its capacity. Decoded callback slices remain valid until that storage is reused or released.
 
@@ -435,8 +428,6 @@ static int on_header(hwire_ctx_t *ctx, hwire_header_t *hdr)
 my_state_t state = {0};
 hwire_ctx_t ctx  = {0};
 ctx.uctx         = &state;
-ctx.key_lc.buf   = keybuf;
-ctx.key_lc.size  = sizeof(keybuf);
 ctx.header_cb    = on_header;
 ```
 
@@ -574,7 +565,7 @@ parameters = *( OWS ";" OWS [ parameter ] )
 parameter  = parameter-name "=" parameter-value
 ```
 
-`ctx->param_cb` is called for each non-empty parameter; `ctx->key_lc` receives the lowercase parameter name. Empty parameters are skipped, and a trailing semicolon is complete at input end. CR or LF after an empty parameter is left unconsumed. On `HWIRE_OK`, check `*pos` against `len` and, if input remains, validate the terminator at `str[*pos]`.
+`ctx->param_cb` is called for each non-empty parameter. Parameter names reference the original input bytes; case-insensitive comparison is handled by the application or its container. Empty parameters are skipped, and a trailing semicolon is complete at input end. CR or LF after an empty parameter is left unconsumed. On `HWIRE_OK`, check `*pos` against `len` and, if input remains, validate the terminator at `str[*pos]`.
 
 **Parameters**
 
@@ -595,7 +586,6 @@ parameter  = parameter-name "=" parameter-value
 | `HWIRE_EAGAIN` | A required parameter component needs more input before `maxlen` is exhausted |
 | `HWIRE_EILSEQ` | Invalid byte sequence |
 | `HWIRE_ELEN` | A required parameter component is incomplete upon exhausting `maxlen` |
-| `HWIRE_EKEYLEN` | Key length exceeds `ctx->key_lc.size` |
 | `HWIRE_ECALLBACK` | Callback returned non-zero |
 
 ---
@@ -657,7 +647,7 @@ int hwire_parse_headers(hwire_ctx_t *ctx, const char *str, size_t len,
                         size_t *pos, size_t maxlen);
 ```
 
-Parses HTTP header fields until an empty `CRLF` or `LF` line. `ctx->header_cb` is called for each field; `ctx->key_lc.buf` is populated with the lowercase field name before each callback.
+Parses HTTP header fields until an empty `CRLF` or `LF` line. `ctx->header_cb` is called for each field. Field names reference the original input bytes; case-insensitive comparison is handled by the application or its container, such as `hwire_table`.
 
 **Parameters**
 
@@ -681,7 +671,6 @@ Parses HTTP header fields until an empty `CRLF` or `LF` line. `ctx->header_cb` i
 | `HWIRE_EHDRVALUE` | Invalid header field value |
 | `HWIRE_EHDRLEN` | Header block is incomplete upon exhausting `maxlen` |
 | `HWIRE_EEOL` | Invalid end-of-line in header value (CR without LF) |
-| `HWIRE_EKEYLEN` | Key length exceeds `ctx->key_lc.size` |
 | `HWIRE_ECALLBACK` | Callback returned non-zero |
 
 #### `hwire_parse_request`
@@ -725,7 +714,6 @@ Host: example.com\r\n
 | `HWIRE_EHDRNAME` | Invalid header field name |
 | `HWIRE_EHDRVALUE` | Invalid header field value |
 | `HWIRE_EHDRLEN` | The header section is incomplete upon exhausting the remaining `maxlen` budget |
-| `HWIRE_EKEYLEN` | Key length exceeds `ctx->key_lc.size` |
 | `HWIRE_ECALLBACK` | Callback returned non-zero |
 
 #### `hwire_parse_query`
@@ -833,7 +821,6 @@ Content-Length: 0\r\n
 | `HWIRE_EHDRNAME` | Invalid header field name |
 | `HWIRE_EHDRVALUE` | Invalid header field value |
 | `HWIRE_EHDRLEN` | The header section is incomplete upon exhausting the remaining `maxlen` budget |
-| `HWIRE_EKEYLEN` | Key length exceeds `ctx->key_lc.size` |
 | `HWIRE_ECALLBACK` | Callback returned non-zero |
 
 ---
@@ -1185,8 +1172,8 @@ arrays, and the query decode buffer. The header table enables CI indexing; the
 query table uses the smaller exact-only index. Set `app.ctx.uctx` to `&app` so
 callbacks can use this request state. Header slices reference `input`; decoded
 query slices reference `app.query_storage`. Keep the request state and input
-alive while using the tables. The parser's optional `key_lc`
-buffer is left disabled because the table supplies case-insensitive lookup.
+alive while using the tables. The parser preserves field names, and the header
+table supplies case-insensitive lookup.
 For a header block, use the same header callback with `hwire_parse_headers`.
 
 An insertion failure stops the callback with `HWIRE_ECALLBACK`. The example

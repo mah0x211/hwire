@@ -10,10 +10,7 @@
 void test_parse_request_valid(void)
 {
     TEST_START("test_parse_request_valid");
-
-    char key_storage[TEST_KEY_SIZE];
     hwire_ctx_t cb = {
-        .key_lc = {.buf = key_storage, .size = sizeof(key_storage), .len = 0},
         .request_cb = mock_request_cb,
         .header_cb  = mock_header_cb
     };
@@ -34,10 +31,7 @@ void test_parse_request_valid(void)
 void test_parse_request_cb_fail(void)
 {
     TEST_START("test_parse_request_cb_fail");
-
-    char key_storage[TEST_KEY_SIZE];
     hwire_ctx_t cb = {
-        .key_lc = {.buf = key_storage, .size = sizeof(key_storage), .len = 0},
         .request_cb = mock_request_cb_fail,
         .header_cb  = mock_header_cb
     };
@@ -60,10 +54,7 @@ void test_parse_request_cb_fail(void)
 void test_parse_request_method_errors(void)
 {
     TEST_START("test_parse_request_method_errors");
-
-    char key_storage[TEST_KEY_SIZE];
     hwire_ctx_t cb = {
-        .key_lc = {.buf = key_storage, .size = sizeof(key_storage), .len = 0},
         .request_cb = mock_request_cb,
         .header_cb  = mock_header_cb
     };
@@ -115,10 +106,7 @@ void test_parse_request_method_errors(void)
 void test_parse_request_version_errors(void)
 {
     TEST_START("test_parse_request_version_errors");
-
-    char key_storage[TEST_KEY_SIZE];
     hwire_ctx_t cb = {
-        .key_lc = {.buf = key_storage, .size = sizeof(key_storage), .len = 0},
         .request_cb = mock_request_cb,
         .header_cb  = mock_header_cb
     };
@@ -149,10 +137,7 @@ void test_parse_request_version_errors(void)
 void test_parse_request_uri_errors(void)
 {
     TEST_START("test_parse_request_uri_errors");
-
-    char key_storage[TEST_KEY_SIZE];
     hwire_ctx_t cb = {
-        .key_lc = {.buf = key_storage, .size = sizeof(key_storage), .len = 0},
         .request_cb = mock_request_cb,
         .header_cb  = mock_header_cb
     };
@@ -192,10 +177,7 @@ void test_parse_request_uri_errors(void)
 void test_parse_request_eol_errors(void)
 {
     TEST_START("test_parse_request_eol_errors");
-
-    char key_storage[TEST_KEY_SIZE];
     hwire_ctx_t cb = {
-        .key_lc = {.buf = key_storage, .size = sizeof(key_storage), .len = 0},
         .request_cb = mock_request_cb,
         .header_cb  = mock_header_cb
     };
@@ -244,10 +226,7 @@ void test_parse_request_eol_errors(void)
 void test_parse_request_header_errors(void)
 {
     TEST_START("test_parse_request_header_errors");
-
-    char key_storage[TEST_KEY_SIZE];
     hwire_ctx_t cb = {
-        .key_lc = {.buf = key_storage, .size = sizeof(key_storage), .len = 0},
         .request_cb = mock_request_cb,
         .header_cb  = mock_header_cb
     };
@@ -275,10 +254,7 @@ void test_parse_request_header_errors(void)
 void test_parse_request_uri_forms(void)
 {
     TEST_START("test_parse_request_uri_forms");
-
-    char key_storage[TEST_KEY_SIZE];
     hwire_ctx_t cb = {
-        .key_lc = {.buf = key_storage, .size = sizeof(key_storage), .len = 0},
         .request_cb = mock_request_cb,
         .header_cb  = mock_header_cb
     };
@@ -319,10 +295,7 @@ void test_parse_request_uri_forms(void)
 void test_parse_request_uri_invalid_chars(void)
 {
     TEST_START("test_parse_request_uri_invalid_chars");
-
-    char key_storage[TEST_KEY_SIZE];
     hwire_ctx_t cb = {
-        .key_lc = {.buf = key_storage, .size = sizeof(key_storage), .len = 0},
         .request_cb = mock_request_cb,
         .header_cb  = mock_header_cb
     };
@@ -375,10 +348,7 @@ void test_parse_request_uri_invalid_chars(void)
 void test_parse_request_lf_eol(void)
 {
     TEST_START("test_parse_request_lf_eol");
-
-    char key_storage[TEST_KEY_SIZE];
     hwire_ctx_t cb = {
-        .key_lc = {.buf = key_storage, .size = sizeof(key_storage), .len = 0},
         .request_cb = mock_request_cb,
         .header_cb  = mock_header_cb
     };
@@ -403,10 +373,7 @@ void test_parse_request_lf_eol(void)
 void test_parse_request_uri_chars(void)
 {
     TEST_START("test_parse_request_uri_chars");
-
-    char key_storage[TEST_KEY_SIZE];
     hwire_ctx_t cb = {
-        .key_lc = {.buf = key_storage, .size = sizeof(key_storage), .len = 0},
         .request_cb = mock_request_cb,
         .header_cb  = mock_header_cb
     };
@@ -498,7 +465,6 @@ typedef struct {
     size_t name_len;
     const char *value;
     size_t value_len;
-    const char *key_lc_str;
     const char *buf;
     size_t buf_len;
     int called;
@@ -532,15 +498,6 @@ static int verify_req_header_content_cb(hwire_ctx_t *ctx,
                 header->value.ptr);
         e->failed = 1;
     }
-    if (e->key_lc_str != NULL) {
-        size_t lc_len = strlen(e->key_lc_str);
-        if (ctx->key_lc.len != lc_len ||
-            strncmp(ctx->key_lc.buf, e->key_lc_str, lc_len) != 0) {
-            fprintf(stderr, "key_lc: expected '%s', got '%.*s'\n",
-                    e->key_lc_str, (int)ctx->key_lc.len, ctx->key_lc.buf);
-            e->failed = 1;
-        }
-    }
     return 0;
 }
 
@@ -548,13 +505,10 @@ static int verify_req_header_content_cb(hwire_ctx_t *ctx,
  * Covers: exact content of parsed method, URI, HTTP version, and header
  * fields. MUST: method.ptr/len, uri.ptr/len, version MUST match the input.
  * MUST: header key.ptr/len and value.ptr/len MUST match the input bytes.
- * MUST: key_lc.buf MUST contain the lowercase header name.
  */
 void test_parse_request_content_verification(void)
 {
     TEST_START("test_parse_request_content_verification");
-
-    char key_storage[TEST_KEY_SIZE];
 
     /* Case 1: GET / HTTP/1.1 */
     {
@@ -562,7 +516,6 @@ void test_parse_request_content_verification(void)
                                     0,     0, 0,   0};
         hwire_ctx_t cb           = {
                       .uctx       = &exp,
-                      .key_lc     = {.buf = key_storage, .size = sizeof(key_storage)},
                       .request_cb = verify_request_content_cb,
                       .header_cb  = mock_header_cb
         };
@@ -582,7 +535,6 @@ void test_parse_request_content_verification(void)
                                     0,      0, 0,           0};
         hwire_ctx_t cb           = {
                       .uctx       = &exp,
-                      .key_lc     = {.buf = key_storage, .size = sizeof(key_storage)},
                       .request_cb = verify_request_content_cb,
                       .header_cb  = mock_header_cb
         };
@@ -596,13 +548,16 @@ void test_parse_request_content_verification(void)
         ASSERT_EQ(exp.failed, 0);
     }
 
-    /* Case 3: header content + key_lc verification */
+    /* Case 3: header content */
     {
         req_hdr_content_expect_t exp = {
-            "Content-Type", 12, "text/html", 9, "content-type", 0, 0, 0, 0};
+            .name = "Content-Type",
+            .name_len = 12,
+            .value = "text/html",
+            .value_len = 9
+        };
         hwire_ctx_t cb = {
             .uctx       = &exp,
-            .key_lc     = {.buf = key_storage, .size = sizeof(key_storage)},
             .request_cb = mock_request_cb,
             .header_cb  = verify_req_header_content_cb
         };
@@ -627,10 +582,7 @@ void test_parse_request_content_verification(void)
 void test_parse_request_maxlen_cumulative(void)
 {
     TEST_START("test_parse_request_maxlen_cumulative");
-
-    char key_storage[TEST_KEY_SIZE];
     hwire_ctx_t cb = {
-        .key_lc = {.buf = key_storage, .size = sizeof(key_storage), .len = 0},
         .request_cb = mock_request_cb,
         .header_cb  = mock_header_cb
     };

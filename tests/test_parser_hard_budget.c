@@ -17,9 +17,7 @@
 
 static int parse_request(const char *buf, size_t len, size_t maxlen)
 {
-    char key_storage[TEST_KEY_SIZE] = {0};
     hwire_ctx_t ctx                 = {
-        .key_lc = {.buf = key_storage, .size = sizeof(key_storage), .len = 0},
         .request_cb = mock_request_cb,
         .header_cb  = mock_header_cb
     };
@@ -30,9 +28,7 @@ static int parse_request(const char *buf, size_t len, size_t maxlen)
 
 static int parse_response(const char *buf, size_t len, size_t maxlen)
 {
-    char key_storage[TEST_KEY_SIZE] = {0};
     hwire_ctx_t ctx                 = {
-        .key_lc = {.buf = key_storage, .size = sizeof(key_storage), .len = 0},
         .response_cb = mock_response_cb,
         .header_cb   = mock_header_cb
     };
@@ -43,9 +39,7 @@ static int parse_response(const char *buf, size_t len, size_t maxlen)
 
 static int parse_headers(const char *buf, size_t len, size_t maxlen)
 {
-    char key_storage[TEST_KEY_SIZE] = {0};
     hwire_ctx_t ctx                 = {
-        .key_lc = {.buf = key_storage, .size = sizeof(key_storage), .len = 0},
         .header_cb = mock_header_cb
     };
     size_t pos = 0;
@@ -55,7 +49,7 @@ static int parse_headers(const char *buf, size_t len, size_t maxlen)
 
 static int parse_parameters(const char *buf, size_t len, size_t maxlen)
 {
-    hwire_ctx_t ctx = {.key_lc = {0}, .param_cb = mock_param_cb};
+    hwire_ctx_t ctx = {.param_cb = mock_param_cb};
     size_t pos      = 0;
 
     return hwire_parse_parameters(&ctx, buf, len, &pos, maxlen, 0);

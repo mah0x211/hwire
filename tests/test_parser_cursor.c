@@ -140,10 +140,8 @@ void test_parameter_cursor(void)
                                        .count   = 1,
                                        .calls   = 0,
                                        .failed  = 0};
-    char key_storage[TEST_KEY_SIZE] = {0};
     hwire_ctx_t ctx                 = {
         .uctx     = &expect,
-        .key_lc   = {.buf = key_storage, .size = sizeof(key_storage), .len = 0},
         .param_cb = capture_parameter_cb
     };
     size_t pos = start;
@@ -246,10 +244,8 @@ void test_header_cursor(void)
         .calls   = 0,
         .failed  = 0
     };
-    char key_storage[TEST_KEY_SIZE] = {0};
     hwire_ctx_t ctx                 = {
         .uctx   = &expect,
-        .key_lc = {.buf = key_storage, .size = sizeof(key_storage), .len = 0},
         .header_cb = capture_header_cb
     };
     size_t pos = 0;
@@ -331,10 +327,8 @@ void test_request_cursor(void)
         .calls   = 0,
         .failed  = 0
     };
-    char key_storage[TEST_KEY_SIZE] = {0};
     hwire_ctx_t ctx                 = {
         .uctx   = &expect,
-        .key_lc = {.buf = key_storage, .size = sizeof(key_storage), .len = 0},
         .request_cb = capture_request_cb,
         .header_cb  = mock_header_cb
     };
@@ -406,10 +400,8 @@ void test_response_cursor(void)
         .calls   = 0,
         .failed  = 0
     };
-    char key_storage[TEST_KEY_SIZE] = {0};
     hwire_ctx_t ctx                 = {
         .uctx   = &expect,
-        .key_lc = {.buf = key_storage, .size = sizeof(key_storage), .len = 0},
         .response_cb = capture_response_cb,
         .header_cb   = mock_header_cb
     };

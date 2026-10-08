@@ -25,7 +25,6 @@ static void test_empty_parameters(void)
         {";a=b; \t\n",             1},
     };
     char buf[128];
-    char key_storage[TEST_KEY_SIZE];
 
     for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
         int n = snprintf(buf, sizeof(buf), "xx%s", cases[i].input);
@@ -40,7 +39,6 @@ static void test_empty_parameters(void)
                 test_capacity_t storage = {.capacity = 2};
                 hwire_ctx_t ctx = {
                     .uctx = &storage,
-                    .key_lc = {.buf = key_storage, .size = sizeof(key_storage)},
                     .param_cb = capacity_pair_cb,
                 };
                 size_t pos = 2;
@@ -69,14 +67,12 @@ static void test_empty_parameter_boundaries(void)
     const char *buf = "xx; \t; a=b; \t\r\n";
     size_t len = strlen(buf);
     size_t end = (size_t)(strchr(buf, '\r') - buf);
-    char key_storage[TEST_KEY_SIZE];
 
     for (int skip = 0; skip <= 1; skip++) {
         for (size_t budget = 0; budget <= end - 2; budget++) {
             test_capacity_t storage = {.capacity = 2};
             hwire_ctx_t ctx = {
                 .uctx = &storage,
-                .key_lc = {.buf = key_storage, .size = sizeof(key_storage)},
                 .param_cb = capacity_pair_cb,
             };
             size_t pos = 2;
@@ -88,7 +84,6 @@ static void test_empty_parameter_boundaries(void)
         test_capacity_t storage = {.capacity = 2};
         hwire_ctx_t ctx = {
             .uctx = &storage,
-            .key_lc = {.buf = key_storage, .size = sizeof(key_storage)},
             .param_cb = capacity_pair_cb,
         };
         size_t pos = 2;
@@ -118,14 +113,12 @@ static void test_nonempty_parameter_errors(void)
         {";;a=\"b",   HWIRE_EAGAIN},
         {";;a=\"b\\", HWIRE_EAGAIN},
     };
-    char key_storage[TEST_KEY_SIZE];
 
     for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
         for (int skip = 0; skip <= 1; skip++) {
             test_capacity_t storage = {.capacity = 2};
             hwire_ctx_t ctx = {
                 .uctx = &storage,
-                .key_lc = {.buf = key_storage, .size = sizeof(key_storage)},
                 .param_cb = capacity_pair_cb,
             };
             size_t pos = 0;
