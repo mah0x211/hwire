@@ -74,6 +74,10 @@ make production  # native request/header storage and lookup
 
 Detailed configurations and results are in [Parsers](bench/parsers/README.md),
 [Hashmaps](bench/hashmaps/README.md) and [Production](bench/production/README.md).
+Manual [benchmark Actions](https://github.com/mah0x211/hwire/actions/workflows/benchmark.yml)
+publish reports in the run Summary and downloadable artifacts. See
+[manual execution](bench/README.md#manual-github-actions); published results below
+are updated at selected milestones.
 
 ### Parser-only benchmark
 
