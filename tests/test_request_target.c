@@ -436,6 +436,76 @@ void test_request_target_ip_literals(void)
     TEST_END();
 }
 
+static void test_request_target_ipv6_trailing_colon(void)
+{
+    TEST_START("test_request_target_ipv6_trailing_colon");
+
+    static const struct {
+        const char *literal;
+        int expected;
+    } cases[] = {
+        {"::",                       HWIRE_OK},
+        {"::1",                      HWIRE_OK},
+        {"1::",                      HWIRE_OK},
+        {"2001:db8::",                HWIRE_OK},
+        {"1:2:3:4:5:6:7::",           HWIRE_OK},
+        {"::1:2:3:4:5:6:7",           HWIRE_OK},
+        {"1:2:3:4:5:6:7:8",           HWIRE_OK},
+        {"::ffff:192.0.2.1",          HWIRE_OK},
+        {"::1:",                     HWIRE_EURI},
+        {"2001:db8::1:",              HWIRE_EURI},
+        {"1::2:",                    HWIRE_EURI},
+        {"::1:2:3:4:5:6:7:",          HWIRE_EURI},
+        {"1:2:3:4:5:6:7:",           HWIRE_EURI},
+        {"1:2:3:4:5:6:7:8:",         HWIRE_EURI},
+        {"1:2:3:4:5:6:7:8::",        HWIRE_EURI},
+        {"::ffff:192.0.2.1:",         HWIRE_EURI},
+    };
+    static const struct {
+        const char *prefix;
+        const char *suffix;
+    } forms[] = {
+        {"CONNECT ", ":443"},
+        {"GET http://", ":443/"},
+    };
+    char buf[160];
+
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        for (size_t j = 0; j < sizeof(forms) / sizeof(forms[0]); j++) {
+            int n = snprintf(buf, sizeof(buf), "xxx%s[%s]%s HTTP/1.1\r\n\r\n",
+                             forms[j].prefix, cases[i].literal, forms[j].suffix);
+            ASSERT(n > 0);
+            ASSERT((size_t)n < sizeof(buf));
+            size_t len = (size_t)n;
+            size_t pos = 3;
+            ASSERT_EQ(parse_request_from(buf, len, &pos, 1024),
+                      cases[i].expected);
+            ASSERT_EQ(request_called, cases[i].expected == HWIRE_OK);
+            ASSERT_EQ(pos, cases[i].expected == HWIRE_OK ? len : 3);
+
+            /* Before ']', a trailing ':' may still become a valid group. */
+            if (strcmp(cases[i].literal, "::1:") == 0 ||
+                strcmp(cases[i].literal, "2001:db8::1:") == 0) {
+                const char *end = strchr(buf, ']');
+                ASSERT(end != NULL);
+                size_t prefix = (size_t)(end - buf);
+                pos = 3;
+                ASSERT_EQ(parse_request_from(buf, prefix, &pos, 1024),
+                          HWIRE_EAGAIN);
+                ASSERT_EQ(pos, 3);
+                ASSERT_EQ(request_called, 0);
+                pos = 3;
+                ASSERT_EQ(parse_request_from(buf, len, &pos, prefix - 3),
+                          HWIRE_ELEN);
+                ASSERT_EQ(pos, 3);
+                ASSERT_EQ(request_called, 0);
+            }
+        }
+    }
+
+    TEST_END();
+}
+
 void test_request_target_ip_literal_differential(void)
 {
     TEST_START("test_request_target_ip_literal_differential");
@@ -591,6 +661,7 @@ int main(void)
     test_request_target_percent_encoding();
     test_request_target_regname_bytes();
     test_request_target_ip_literals();
+    test_request_target_ipv6_trailing_colon();
     test_request_target_ip_literal_differential();
     test_request_target_guard_page();
     test_request_target_fragmentation_and_maxlen();
