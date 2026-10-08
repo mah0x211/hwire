@@ -31,7 +31,7 @@ endif
 FLAGS_scalar = -DHWIRE_NO_SIMD -DFUZZ_EXPECT_SCALAR
 FLAGS_siphash = $(FLAGS_native) -DHWIRE_NO_AES
 
-.PHONY: all build run replay coverage coverage-report clean
+.PHONY: all build run replay coverage coverage-report check-report clean
 all: run
 build run replay:
 	@set -eu; \
@@ -62,7 +62,7 @@ build run replay:
 	      mkdir -p "$$dir/corpus"; cp seeds/$$target/* "$$dir/corpus/"; \
 	      echo "=== $$target / $$variant: $(FUZZ_SECONDS) seconds ==="; \
 	      status=0; \
-	      LLVM_PROFILE_FILE="$$dir/%m.profraw" "$$dir/fuzz" "$$dir/corpus" -max_total_time=$(FUZZ_SECONDS) -timeout=2 -max_len=8192 -rss_limit_mb=512 -artifact_prefix="$$dir/artifacts/" >"$$dir/run.log" 2>&1 || status=$$?; \
+	      LLVM_PROFILE_FILE="$$dir/%m.profraw" "$$dir/fuzz" "$$dir/corpus" -max_total_time=$(FUZZ_SECONDS) -timeout=2 -max_len=8192 -rss_limit_mb=512 -print_final_stats=1 -artifact_prefix="$$dir/artifacts/" >"$$dir/run.log" 2>&1 || status=$$?; \
 	      printf '%s\n' "$$status" >"$$dir/exit-code"; \
 	      tail -n 12 "$$dir/run.log"; \
 	      if [ $$status -ne 0 ]; then echo "FAILED: $$target / $$variant (exit $$status)" >&2; exit $$status; fi; \
@@ -71,9 +71,12 @@ build run replay:
 	  done; \
 	done
 # Keep coverage binaries and profiles separate from ordinary fuzz runs.
-coverage:
+coverage: check-report
 	@status=0; $(MAKE) run FUZZ_COVERAGE=1 OUT='$(OUT)/coverage' || status=$$?; \
 	$(PYTHON) coverage.py '$(OUT)/coverage' || exit $$?; exit $$status
+
+check-report:
+	$(PYTHON) -m unittest test_coverage.py
 
 coverage-report:
 	$(PYTHON) coverage.py '$(OUT)/coverage'
