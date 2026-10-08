@@ -81,7 +81,9 @@ jobs:
 
     - name: Install Clang and libFuzzer (Ubuntu)
       if: runner.os == 'Linux'
-      run: sudo apt-get update && sudo apt-get install -y clang libclang-rt-dev
+      run: |
+        sudo apt-get update && sudo apt-get install -y clang libclang-rt-dev llvm
+        echo "/usr/bin" >> "$GITHUB_PATH"
 
     - name: Set Up LLVM (macOS)
       if: runner.os == 'macOS'
@@ -91,7 +93,15 @@ jobs:
         echo "SDKROOT=$(xcrun --show-sdk-path)" >> "$GITHUB_ENV"
 
     - name: Run Bounded Fuzzing
-      run: make fuzz FUZZ_SECONDS=30
+      run: make fuzz-coverage FUZZ_SECONDS=30
+
+    - name: Upload Fuzz Coverage Report
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: fuzz-coverage-${{ matrix.os }}
+        path: tests/fuzz/out/coverage/report/
+        if-no-files-found: ignore
 
     - name: Upload Fuzz Failure Inputs and Logs
       if: failure()
@@ -101,4 +111,6 @@ jobs:
         path: |
           tests/fuzz/out/**/artifacts/*
           tests/fuzz/out/**/run.log
+          tests/fuzz/out/**/build.log
+          tests/fuzz/out/**/coverage-replay.log
         if-no-files-found: ignore

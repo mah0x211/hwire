@@ -131,3 +131,7 @@ clean:
 .PHONY: fuzz
 fuzz:
 	$(MAKE) -C tests/fuzz run
+
+.PHONY: fuzz-coverage
+fuzz-coverage:
+	$(MAKE) -C tests/fuzz coverage

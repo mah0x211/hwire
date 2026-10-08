@@ -1,7 +1,7 @@
 #include "check.h"
 #include "hwire_table.h"
 
-enum { SEGMENTS = 4, CAPACITY = 32, KEYS = 16, KEY_BYTES = 16, MAX_OPS = 128 };
+enum { SEGMENTS = 4, CAPACITY = 32, KEYS = 16, KEY_BYTES = 256, MAX_OPS = 128 };
 typedef struct {
     hwire_table_t table;
     hwire_kv_pair_t entries[CAPACITY];

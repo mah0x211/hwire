@@ -21,13 +21,13 @@ From the repository root:
 
 ```sh
 make fuzz FUZZ_SECONDS=5
+make fuzz-coverage FUZZ_SECONDS=5
 make fuzz FUZZ_SECONDS=10 FUZZ_TARGETS=messages FUZZ_VARIANTS=native
 ```
 
-FUZZ_SECONDS must be an integer from 1 to 86400; zero is rejected because
+`FUZZ_SECONDS` must be an integer from 1 to 86400; zero is rejected because
 libFuzzer interprets it as unlimited. The duration applies to each target/variant,
-excluding compilation. libFuzzer
-checks its time limit between inputs, so a run can exceed it slightly. Each input
+excluding compilation. libFuzzer checks its time limit between inputs, so a run can exceed it slightly. Each input
 has a two-second timeout, inputs are limited to 8 KiB, and RSS is limited to
 512 MiB. ASan quarantine defaults to 32 MiB to keep allocator bookkeeping within
 that limit; checks remain enabled. `ASAN_OPTIONS` and `UBSAN_OPTIONS` can be
@@ -78,17 +78,36 @@ tests when fixing a bug; do not commit the entire generated corpus.
   reset or invalid-push checks. A linear model verifies results and insertion
   order independently of the implementation hash/index. Capacities range from
   1 to 32, with up to four segments, all comparison modes and 2N/4N/8N slots.
-  Keys include case variants, empty and embedded-NUL keys plus input-derived bytes.
+  Keys include case variants, empty and embedded-NUL keys plus input-derived
+  keys up to 255 bytes, exercising short and long AES hashing paths.
   Linked segments, cross-segment duplicates and repeated unlink/relink are covered.
   Each input is limited to 128 operations to bound reference-model work.
 
 Harnesses respect pointer/lifetime requirements. Only documented error contracts
 are asserted, and iterators are recreated after link, unlink or reset.
 
+## Coverage reports
+
+`make fuzz-coverage` runs coverage-instrumented fuzz builds and replays each
+build's generated corpus with fresh profiles. It produces a source coverage
+summary, LLVM JSON/profiles and HTML under `out/coverage/report/`. Open
+`<parser-or-table>-<variant>/html/index.html` to inspect uncovered lines and branches.
+Parser totals combine the messages and values harnesses for the same build;
+table builds are reported separately. Only targets that completed successfully
+are included, and the summary identifies partial runs and reporting failures.
+
+To regenerate reports without repeating fuzzing, run `make coverage-report` in
+this directory. Python 3 and matching `llvm-profdata` / `llvm-cov` are required;
+`LLVM_PROFDATA` and `LLVM_COV` can override the tool paths. These reports exclude
+ordinary unit-test profiles and are not uploaded to Codecov. Percentages are
+informational because short fuzz runs vary; no fixed coverage gate is applied.
+
 ## CI
 
 The test workflow runs separate Ubuntu and macOS jobs, in parallel with the
 ordinary tests. Each target/variant runs for 30 seconds. The default search budget
 is five minutes on x86-64 and four minutes on ARM64, with a ten-minute job timeout
-including setup and compilation. A failure stops that job and uploads its logs
-and failure inputs as an artifact. No network services or credentials are needed.
+including setup, compilation and reporting. Coverage is displayed in the GitHub
+Actions job summary, with HTML and detailed data in a fuzz-coverage artifact. A failure stops that job and uploads its logs
+and failure inputs as an additional artifact. No network services or credentials
+are needed.
