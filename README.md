@@ -898,7 +898,7 @@ for (;;) {
 ```
 
 > **Note:** `hwire_parse_parameters` does not consume the byte following the
-> parameter list. It can return `HWIRE_EAGAIN` after a prefix such as `;` or
+> parameter list. It can return `HWIRE_EAGAIN` after a prefix such as `;name=` or
 > `name=` when more input can still fit within `maxlen`.
 
 ---
