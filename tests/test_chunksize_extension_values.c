@@ -17,7 +17,7 @@ static int capture_extension(hwire_ctx_t *ctx, hwire_chunksize_ext_t *ext)
 }
 
 /* RFC 9112 section 7.1.1 permits an empty quoted-string extension value. */
-void test_chunksize_empty_quoted_extension_value(void)
+static void test_chunksize_empty_quoted_extension_value(void)
 {
     TEST_START("test_chunksize_empty_quoted_extension_value");
 
@@ -43,7 +43,7 @@ void test_chunksize_empty_quoted_extension_value(void)
  * that the required value is empty. The invalid extension must not be
  * delivered.
  */
-void test_chunksize_rejects_empty_token_extension_values(void)
+static void test_chunksize_rejects_empty_token_extension_values(void)
 {
     TEST_START("test_chunksize_rejects_empty_token_extension_values");
 
@@ -73,7 +73,7 @@ void test_chunksize_rejects_empty_token_extension_values(void)
 }
 
 /* Input ending after '=' or its BWS remains incomplete until maxlen is used. */
-void test_chunksize_empty_token_extension_value_fragments(void)
+static void test_chunksize_empty_token_extension_value_fragments(void)
 {
     TEST_START("test_chunksize_empty_token_extension_value_fragments");
 

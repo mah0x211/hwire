@@ -5,10 +5,10 @@
 
 enum {
     /* Duplicate-next and duplicate-tail each occupy N references. */
-    INDEX_NEXT_COUNT_FACTOR = 1u,
-    INDEX_TAIL_COUNT_FACTOR = 1u,
-    INDEX_CHAIN_COUNT_FACTOR =
-        INDEX_NEXT_COUNT_FACTOR + INDEX_TAIL_COUNT_FACTOR,
+    INDEX_NEXT_COUNT_FACTOR  = 1u,
+    INDEX_TAIL_COUNT_FACTOR  = 1u,
+    INDEX_CHAIN_COUNT_FACTOR = INDEX_NEXT_COUNT_FACTOR +
+        INDEX_TAIL_COUNT_FACTOR,
 
     /* Both comparison modes have independent index regions. */
     INDEX_BOTH_COUNT_FACTOR = 2u
@@ -559,13 +559,13 @@ typedef void (*update_iter_fn)(hwire_table_iter_t *iter,
 /** Probe each segment with one hash and update the cursor on a match. */
 static inline const hwire_kv_pair_t *
 select_by_index(const hwire_table_t *table, const char *key, size_t keylen,
-                uint64_t hash, find_slot_fn find_slot, hwire_table_iter_t *iter,
-                update_iter_fn update_iter)
+                uint64_t hash, find_slot_fn lookup_slot,
+                hwire_table_iter_t *iter, update_iter_fn update_iter)
 {
     for (; table; table = table->next) {
         uint16_t head;
 
-        (void)find_slot(table, key, keylen, hash, &head);
+        (void)lookup_slot(table, key, keylen, hash, &head);
         if (head != EMPTY) {
             uint16_t index = (uint16_t)(head - 1u);
             if (iter) {
@@ -581,12 +581,12 @@ select_by_index(const hwire_table_t *table, const char *key, size_t keylen,
 static inline const hwire_kv_pair_t *
 get_key(const hwire_table_t *table, const char *key, size_t keylen,
         hwire_table_mode_t mode, compute_bytes_hash_fn compute_bytes_hash,
-        find_slot_fn find_slot, hwire_table_iter_t *iter,
+        find_slot_fn lookup_slot, hwire_table_iter_t *iter,
         update_iter_fn update_iter)
 {
     if (table->len && table->mode & mode) {
         uint64_t hash = compute_bytes_hash(&table->key, key, keylen);
-        return select_by_index(table, key, keylen, hash, find_slot, iter,
+        return select_by_index(table, key, keylen, hash, lookup_slot, iter,
                                update_iter);
     }
     return NULL;
@@ -655,7 +655,7 @@ static inline void update_next_iter_ci(hwire_table_iter_t *iter,
 static inline const hwire_kv_pair_t *find_next_duplicate(
     hwire_table_iter_t *iter, uint64_t hash, hwire_table_mode_t mode,
     compute_bytes_hash_fn compute_bytes_hash, get_next_index_fn get_next_index,
-    find_slot_fn find_slot, update_iter_fn update_iter)
+    find_slot_fn lookup_slot, update_iter_fn update_iter)
 {
     if (iter->table && iter->table->mode & mode) {
         const hwire_table_t *table = iter->table;
@@ -677,7 +677,7 @@ static inline const hwire_kv_pair_t *find_next_duplicate(
 
             for (table = table->next; table; table = table->next) {
                 uint16_t head;
-                (void)find_slot(table, key.ptr, key.len, hash, &head);
+                (void)lookup_slot(table, key.ptr, key.len, hash, &head);
                 if (head != EMPTY) {
                     uint16_t index = (uint16_t)(head - 1u);
                     update_iter(iter, table, index, hash);

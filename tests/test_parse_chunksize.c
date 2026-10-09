@@ -12,7 +12,7 @@
  * HWIRE_EEXTNAME MUST reject: chunk-size exceeding uint32_t range →
  * HWIRE_ERANGE. Caller-owned extension limits stop parsing with HWIRE_ECALLBACK.
  */
-void test_parse_chunksize_valid(void)
+static void test_parse_chunksize_valid(void)
 {
     TEST_START("test_parse_chunksize_valid");
 
@@ -150,7 +150,7 @@ void test_parse_chunksize_valid(void)
  * MUST: non-zero return from chunksize_cb MUST cause hwire_parse_chunksize() to
  * return HWIRE_ECALLBACK.
  */
-void test_parse_chunksize_callback_errors(void)
+static void test_parse_chunksize_callback_errors(void)
 {
     TEST_START("test_parse_chunksize_callback_errors");
 
@@ -173,7 +173,7 @@ void test_parse_chunksize_callback_errors(void)
  * Covers: RFC 9112 §2.2  line termination
  * MUST reject: CR not followed by LF → HWIRE_EEOL.
  */
-void test_parse_chunksize_crlf_errors(void)
+static void test_parse_chunksize_crlf_errors(void)
 {
     TEST_START("test_parse_chunksize_crlf_errors");
 
@@ -198,7 +198,7 @@ void test_parse_chunksize_crlf_errors(void)
  * MUST: non-zero return from chunksize_ext_cb MUST cause
  * hwire_parse_chunksize() to return HWIRE_ECALLBACK.
  */
-void test_parse_chunksize_ext_callback_errors(void)
+static void test_parse_chunksize_ext_callback_errors(void)
 {
     TEST_START("test_parse_chunksize_ext_callback_errors");
 
@@ -231,7 +231,7 @@ void test_parse_chunksize_ext_callback_errors(void)
  * reject: invalid character inside quoted-string extension value →
  * HWIRE_EEXTVAL.
  */
-void test_parse_chunksize_ext_value_errors(void)
+static void test_parse_chunksize_ext_value_errors(void)
 {
     TEST_START("test_parse_chunksize_ext_value_errors");
 
@@ -334,7 +334,7 @@ static int verify_chunksize_ext_content_cb(hwire_ctx_t *ctx,
  * the hex digits. MUST: ext.key.ptr/len and ext.value.ptr/len MUST reference
  * the original input bytes.
  */
-void test_parse_chunksize_content_verification(void)
+static void test_parse_chunksize_content_verification(void)
 {
     TEST_START("test_parse_chunksize_content_verification");
 
@@ -418,7 +418,7 @@ void test_parse_chunksize_content_verification(void)
 }
 
 /* Both intermediate and final extension callbacks enforce storage capacity. */
-void test_parse_chunksize_capacity_limit(void)
+static void test_parse_chunksize_capacity_limit(void)
 {
     TEST_START("test_parse_chunksize_capacity_limit");
     static const struct {

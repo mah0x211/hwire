@@ -46,7 +46,7 @@ static int parse_response_message(const char *buf, size_t len, size_t maxlen,
  * MUST: leading CRLF/LF bytes and the terminating empty header line count
  * toward the cumulative message maxlen.
  */
-void test_leading_empty_lines_count_toward_maxlen(void)
+static void test_leading_empty_lines_count_toward_maxlen(void)
 {
     TEST_START("test_leading_empty_lines_count_toward_maxlen");
 
@@ -89,7 +89,7 @@ void test_leading_empty_lines_count_toward_maxlen(void)
  * exhausts maxlen, the parser returns HWIRE_ELEN without examining a later
  * byte.
  */
-void test_leading_empty_lines_incomplete_boundaries(void)
+static void test_leading_empty_lines_incomplete_boundaries(void)
 {
     TEST_START("test_leading_empty_lines_incomplete_boundaries");
 
@@ -164,7 +164,7 @@ static void assert_guarded_prefix(parse_message_fn parse, int final_byte)
  * MUST: the leading-prefix loop and CRLF lookahead do not read the byte at
  * maxlen, even when len advertises that byte as available.
  */
-void test_leading_empty_lines_guard_page(void)
+static void test_leading_empty_lines_guard_page(void)
 {
     TEST_START("test_leading_empty_lines_guard_page");
 

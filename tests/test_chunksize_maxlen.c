@@ -30,7 +30,7 @@ static int parse_chunksize(const char *buf, size_t len, size_t maxlen,
  * wire length equals maxlen succeeds; an incomplete line returns EAGAIN when
  * input ends before maxlen, and ELEN when it consumes the available budget.
  */
-void test_chunksize_maxlen_boundaries(void)
+static void test_chunksize_maxlen_boundaries(void)
 {
     TEST_START("test_chunksize_maxlen_boundaries");
 
@@ -95,7 +95,7 @@ void test_chunksize_maxlen_boundaries(void)
  * beyond maxlen are not examined and therefore cannot replace ELEN with a
  * syntax error.
  */
-void test_chunksize_maxlen_error_precedence(void)
+static void test_chunksize_maxlen_error_precedence(void)
 {
     TEST_START("test_chunksize_maxlen_error_precedence");
 
@@ -148,7 +148,7 @@ static void assert_guarded_budget(const unsigned char *pattern,
  * even when len advertises more input. The byte immediately after the budget
  * is an inaccessible guard page, so an out-of-budget read terminates the test.
  */
-void test_chunksize_maxlen_guard_page(void)
+static void test_chunksize_maxlen_guard_page(void)
 {
     TEST_START("test_chunksize_maxlen_guard_page");
 

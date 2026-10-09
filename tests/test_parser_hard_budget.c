@@ -55,7 +55,7 @@ static int parse_parameters(const char *buf, size_t len, size_t maxlen)
     return hwire_parse_parameters(&ctx, buf, len, &pos, maxlen, 0);
 }
 
-void test_request_start_line_hard_budget(void)
+static void test_request_start_line_hard_budget(void)
 {
     TEST_START("test_request_start_line_hard_budget");
 
@@ -89,7 +89,7 @@ void test_request_start_line_hard_budget(void)
     TEST_END();
 }
 
-void test_response_start_line_hard_budget(void)
+static void test_response_start_line_hard_budget(void)
 {
     TEST_START("test_response_start_line_hard_budget");
 
@@ -123,7 +123,7 @@ void test_response_start_line_hard_budget(void)
     TEST_END();
 }
 
-void test_header_field_hard_budget(void)
+static void test_header_field_hard_budget(void)
 {
     TEST_START("test_header_field_hard_budget");
 
@@ -153,7 +153,7 @@ void test_header_field_hard_budget(void)
     TEST_END();
 }
 
-void test_parser_hard_budget_guard_page(void)
+static void test_parser_hard_budget_guard_page(void)
 {
     TEST_START("test_parser_hard_budget_guard_page");
 

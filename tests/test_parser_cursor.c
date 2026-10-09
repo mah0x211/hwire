@@ -96,7 +96,7 @@ static int capture_chunksize_cb(hwire_ctx_t *ctx, uint32_t size)
     return 0;
 }
 
-void test_quoted_string_cursor(void)
+static void test_quoted_string_cursor(void)
 {
     TEST_START("test_quoted_string_cursor");
 
@@ -126,7 +126,7 @@ void test_quoted_string_cursor(void)
     TEST_END();
 }
 
-void test_parameter_cursor(void)
+static void test_parameter_cursor(void)
 {
     TEST_START("test_parameter_cursor");
 
@@ -162,7 +162,7 @@ void test_parameter_cursor(void)
     TEST_END();
 }
 
-void test_chunksize_cursor(void)
+static void test_chunksize_cursor(void)
 {
     TEST_START("test_chunksize_cursor");
 
@@ -227,7 +227,7 @@ void test_chunksize_cursor(void)
     TEST_END();
 }
 
-void test_header_cursor(void)
+static void test_header_cursor(void)
 {
     TEST_START("test_header_cursor");
 
@@ -310,7 +310,7 @@ void test_header_cursor(void)
     TEST_END();
 }
 
-void test_request_cursor(void)
+static void test_request_cursor(void)
 {
     TEST_START("test_request_cursor");
 
@@ -383,7 +383,7 @@ void test_request_cursor(void)
     TEST_END();
 }
 
-void test_response_cursor(void)
+static void test_response_cursor(void)
 {
     TEST_START("test_response_cursor");
 

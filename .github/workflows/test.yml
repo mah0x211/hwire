@@ -15,22 +15,14 @@ jobs:
   test:
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-24.04, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
     - name: Checkout
       uses: actions/checkout@v4
 
-    - name: Install Test Tools (Ubuntu)
-      if: runner.os == 'Linux'
-      run: sudo apt-get install -y llvm
-
-    - name: Setup LLVM Tools (macOS)
-      if: runner.os == 'macOS'
-      run: |
-        TOOLCHAIN_BIN="$(xcrun --find llvm-profdata | xargs dirname)"
-        echo "$TOOLCHAIN_BIN" >> "$GITHUB_PATH"
-        echo "SDKROOT=$(xcrun --show-sdk-path)" >> "$GITHUB_ENV"
+    - name: Set Up LLVM
+      uses: ./.github/actions/setup-llvm
 
     - name: Run Test with Coverage
       run: make coverage
@@ -40,9 +32,7 @@ jobs:
         ASAN_OPTIONS: halt_on_error=1
         UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
       run: |
-        make test table-test OBJ_DIR=obj-sanitizers-native \
-          CFLAGS='-std=c99 -Isrc -O1 -g -Wall -Wextra -Werror $(NATIVE_TEST_FLAGS) -fno-omit-frame-pointer -fsanitize=address,undefined' \
-          LDFLAGS='-fsanitize=address,undefined'
+        make sanitizers
 
     - name: Run Parser Variants with ASan and UBSan
       env:
@@ -60,8 +50,8 @@ jobs:
             sse42) flags='-msse4.2' ;;
           esac
           make test OBJ_DIR="obj-sanitizers-$variant" \
-            CFLAGS="-std=c99 -Isrc -O1 -g -Wall -Wextra -Werror $flags -fno-omit-frame-pointer -fsanitize=address,undefined" \
-            LDFLAGS='-fsanitize=address,undefined'
+            CFLAGS="-std=c99 -Isrc $flags --config=./config/clang/sanitizers.cfg" \
+            LDFLAGS='--config=./config/clang/sanitizers.cfg'
         done
 
     - name: Upload Coverage to Codecov

@@ -8,7 +8,7 @@
  * a leading ";". MUST accept: parameters with token or quoted-string values.
  * MUST: pos MUST equal the total consumed bytes after HWIRE_OK.
  */
-void test_parse_parameters_valid(void)
+static void test_parse_parameters_valid(void)
 {
     TEST_START("test_parse_parameters_valid");
     hwire_ctx_t cb = {
@@ -59,7 +59,7 @@ void test_parse_parameters_valid(void)
  * MUST return HWIRE_ECALLBACK if param_cb returns non-zero.
  * MUST return HWIRE_ELEN if OWS exceeds maxlen.
  */
-void test_parse_parameters_invalid(void)
+static void test_parse_parameters_invalid(void)
 {
     TEST_START("test_parse_parameters_invalid");
     hwire_ctx_t cb = {
@@ -155,7 +155,7 @@ void test_parse_parameters_invalid(void)
  *   fix the phantom ';' at buf[len] causes strtchar to run with SIZE_MAX
  *   length).
  */
-void test_parse_parameters_edge_cases(void)
+static void test_parse_parameters_edge_cases(void)
 {
     TEST_START("test_parse_parameters_edge_cases");
     hwire_ctx_t cb = {
@@ -223,7 +223,7 @@ void test_parse_parameters_edge_cases(void)
     TEST_END();
 }
 
-void test_parse_parameters_numeric_boundaries(void)
+static void test_parse_parameters_numeric_boundaries(void)
 {
     TEST_START("test_parse_parameters_numeric_boundaries");
     hwire_ctx_t cb = {
@@ -262,7 +262,7 @@ void test_parse_parameters_numeric_boundaries(void)
     TEST_END();
 }
 
-void test_parse_parameters_hard_budget(void)
+static void test_parse_parameters_hard_budget(void)
 {
     TEST_START("test_parse_parameters_hard_budget");
     hwire_ctx_t cb                  = {
@@ -321,7 +321,7 @@ void test_parse_parameters_hard_budget(void)
  * skipped. MUST: parameter-name = token = 1*tchar; empty name (';' "=" value)
  * MUST reject.
  */
-void test_parse_parameters_rfc_compliance(void)
+static void test_parse_parameters_rfc_compliance(void)
 {
     TEST_START("test_parse_parameters_rfc_compliance");
     hwire_ctx_t cb = {
@@ -381,7 +381,7 @@ static int verify_param_content_cb(hwire_ctx_t *ctx, hwire_param_t *param)
  * parameter-value. MUST: key.ptr and key.len MUST point to the original input
  * bytes. MUST: value.ptr and value.len MUST point to the value token bytes.
  */
-void test_parse_parameters_content_verification(void)
+static void test_parse_parameters_content_verification(void)
 {
     TEST_START("test_parse_parameters_content_verification");
     hwire_ctx_t cb = {
@@ -451,7 +451,7 @@ static int verify_multi_param_cb(hwire_ctx_t *ctx, hwire_param_t *param)
  * MUST: each param_cb invocation receives key.ptr/len and value.ptr/len
  * referencing the correct original input bytes in order.
  */
-void test_parse_parameters_multi_content_verification(void)
+static void test_parse_parameters_multi_content_verification(void)
 {
     TEST_START("test_parse_parameters_multi_content_verification");
     multi_param_expect_t exp = {

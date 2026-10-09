@@ -5,7 +5,7 @@
  * The chunk-size callback remains required, while extensions must still be
  * parsed and validated without an extension-count limit.
  */
-void test_chunksize_optional_callback_single_extension(void)
+static void test_chunksize_optional_callback_single_extension(void)
 {
     TEST_START("test_chunksize_optional_callback_single_extension");
 
@@ -20,7 +20,7 @@ void test_chunksize_optional_callback_single_extension(void)
     TEST_END();
 }
 
-void test_chunksize_optional_callback_multiple_extensions(void)
+static void test_chunksize_optional_callback_multiple_extensions(void)
 {
     TEST_START("test_chunksize_optional_callback_multiple_extensions");
 
@@ -35,7 +35,7 @@ void test_chunksize_optional_callback_multiple_extensions(void)
     TEST_END();
 }
 
-void test_chunksize_optional_callback_unlimited(void)
+static void test_chunksize_optional_callback_unlimited(void)
 {
     TEST_START("test_chunksize_optional_callback_unlimited");
     const char *cases[] = {"1;foo\r\n", "1;foo;bar\r\n"};
@@ -49,7 +49,7 @@ void test_chunksize_optional_callback_unlimited(void)
     TEST_END();
 }
 
-void test_chunksize_optional_callback_invalid_extension(void)
+static void test_chunksize_optional_callback_invalid_extension(void)
 {
     TEST_START("test_chunksize_optional_callback_invalid_extension");
 

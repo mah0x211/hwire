@@ -8,7 +8,7 @@
  * field-vchar ) field-vchar ] field-vchar  = VCHAR / obs-text OWS = *( SP /
  * HTAB )
  */
-void test_parse_headers_valid(void)
+static void test_parse_headers_valid(void)
 {
     TEST_START("test_parse_headers_valid");
     hwire_ctx_t cb = {
@@ -85,7 +85,7 @@ void test_parse_headers_valid(void)
     TEST_END();
 }
 
-void test_parse_headers_fail(void)
+static void test_parse_headers_fail(void)
 {
     TEST_START("test_parse_headers_fail");
     hwire_ctx_t cb = {
@@ -106,7 +106,7 @@ void test_parse_headers_fail(void)
  * whitespace of the field-value.
  * MUST: trailing OWS (SP/HTAB before CRLF) MUST be stripped from field-value.
  */
-void test_parse_headers_ows_handling(void)
+static void test_parse_headers_ows_handling(void)
 {
     TEST_START("test_parse_headers_ows_handling");
     hwire_ctx_t cb = {
@@ -132,7 +132,7 @@ void test_parse_headers_ows_handling(void)
     TEST_END();
 }
 
-void test_parse_headers_cr_handling(void)
+static void test_parse_headers_cr_handling(void)
 {
     TEST_START("test_parse_headers_cr_handling");
     hwire_ctx_t cb = {
@@ -175,7 +175,7 @@ void test_parse_headers_cr_handling(void)
     TEST_END();
 }
 
-void test_parse_headers_invalid_values(void)
+static void test_parse_headers_invalid_values(void)
 {
     TEST_START("test_parse_headers_invalid_values");
     hwire_ctx_t cb = {
@@ -194,7 +194,7 @@ void test_parse_headers_invalid_values(void)
     TEST_END();
 }
 
-void test_parse_headers_key_parsing(void)
+static void test_parse_headers_key_parsing(void)
 {
     TEST_START("test_parse_headers_key_parsing");
 
@@ -226,7 +226,7 @@ void test_parse_headers_key_parsing(void)
     TEST_END();
 }
 
-void test_parse_headers_empty_and_eol(void)
+static void test_parse_headers_empty_and_eol(void)
 {
     TEST_START("test_parse_headers_empty_and_eol");
     hwire_ctx_t cb = {
@@ -257,7 +257,7 @@ void test_parse_headers_empty_and_eol(void)
     TEST_END();
 }
 
-void test_parse_headers_ows_maxlen(void)
+static void test_parse_headers_ows_maxlen(void)
 {
     TEST_START("test_parse_headers_ows_maxlen");
     hwire_ctx_t cb = {
@@ -281,7 +281,7 @@ void test_parse_headers_ows_maxlen(void)
  * boundary. The field line and the empty line terminating the block must both
  * fit within maxlen.
  */
-void test_parse_headers_hval_maxlen_boundary(void)
+static void test_parse_headers_hval_maxlen_boundary(void)
 {
     TEST_START("test_parse_headers_hval_maxlen_boundary");
     hwire_ctx_t cb = {
@@ -332,7 +332,7 @@ static int check_empty_value_cb(hwire_ctx_t *ctx, hwire_header_t *header)
  * MUST: field-value consisting entirely of OWS results in an empty value after
  * stripping.
  */
-void test_parse_headers_allows_empty_value(void)
+static void test_parse_headers_allows_empty_value(void)
 {
     TEST_START("test_parse_headers_allows_empty_value");
     hwire_ctx_t cb = {
@@ -357,7 +357,7 @@ void test_parse_headers_allows_empty_value(void)
     TEST_END();
 }
 
-void test_parse_headers_rfc_compliance(void)
+static void test_parse_headers_rfc_compliance(void)
 {
     TEST_START("test_parse_headers_rfc_compliance");
     hwire_ctx_t cb = {
@@ -409,7 +409,7 @@ void test_parse_headers_rfc_compliance(void)
  * field-value.  MUST: HTAB embedded between field-vchar characters MUST be
  * accepted as part of field-content.
  */
-void test_parse_headers_obstext(void)
+static void test_parse_headers_obstext(void)
 {
     TEST_START("test_parse_headers_obstext");
     hwire_ctx_t cb = {
@@ -454,7 +454,7 @@ static int capture_header_value_len_cb(hwire_ctx_t *ctx, hwire_header_t *header)
     return 0;
 }
 
-void test_parse_headers_ows_exact(void)
+static void test_parse_headers_ows_exact(void)
 {
     TEST_START("test_parse_headers_ows_exact");
     hwire_ctx_t cb = {
@@ -499,7 +499,7 @@ void test_parse_headers_ows_exact(void)
  * consumed.  MUST: '|' (0x7C) and '~' (0x7E) — highest valid tchar — MUST be
  * accepted in header names at boundary positions.
  */
-void test_parse_headers_simd_boundary(void)
+static void test_parse_headers_simd_boundary(void)
 {
     TEST_START("test_parse_headers_simd_boundary");
     hwire_ctx_t cb = {
@@ -565,7 +565,7 @@ void test_parse_headers_simd_boundary(void)
  * NUL-padding; correct behaviour relies on the len-bounded bounds checks fixed
  * in hwire_parse_headers (RETRY len==0 guard, IS_OWS cur<len guard).
  */
-void test_parse_headers_streaming(void)
+static void test_parse_headers_streaming(void)
 {
     TEST_START("test_parse_headers_streaming");
 
@@ -645,7 +645,7 @@ static int verify_hdr_content_cb(hwire_ctx_t *ctx, hwire_header_t *header)
  * MUST: key.ptr/len MUST reference the original input bytes.
  * MUST: value.ptr/len MUST reflect the OWS-stripped value.
  */
-void test_parse_headers_content_verification(void)
+static void test_parse_headers_content_verification(void)
 {
     TEST_START("test_parse_headers_content_verification");
 

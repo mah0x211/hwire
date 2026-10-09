@@ -30,6 +30,16 @@
 #include <string.h>
 #include <sys/types.h>
 
+// Mark intentional switch fall-through without requiring C23 attributes.
+#if defined(__has_attribute)
+# if __has_attribute(fallthrough)
+#  define FALLTHROUGH __attribute__((fallthrough))
+# endif
+#endif
+#ifndef FALLTHROUGH
+# define FALLTHROUGH ((void)0)
+#endif
+
 // ALIGNED(n): compiler-portable alignment specifier.
 // Standard alignas/`_Alignas` is preferred when available (C++11 / C11).
 // The #else branch also disables all SIMD paths by undefining the architecture
@@ -782,7 +792,7 @@ static inline size_t strvchar_sse2(const unsigned char *str, size_t len,
         _mm_set1_epi8((is_field_vchar ? 0x20 : 0x21) ^ SIMD_SIGN_FLIP);
     const __m128i del_char = _mm_set1_epi8(0x7F);
     const __m128i ht_char  = _mm_set1_epi8(0x09);
-    const __m128i allow_ht = _mm_set1_epi8(-(is_field_vchar != 0));
+    const __m128i allow_ht = _mm_set1_epi8((char)-(is_field_vchar != 0));
 
     while (pos + 16 <= len) {
         // Load 16 bytes (unaligned load)
@@ -1001,9 +1011,9 @@ static inline size_t strvchar_sse42(const unsigned char *str, size_t len,
 static inline size_t strurichar_sse42(const unsigned char *str, size_t len)
 {
     size_t pos = 0;
-    static const char ALIGNED(16) PATH_RANGES[16] =
-        "\x21\x21\x24\x24\x26\x3b\x3d\x3d"
-        "\x40\x5a\x5f\x5f\x61\x7a\x7e\x7e";
+    static const unsigned char ALIGNED(16)
+        PATH_RANGES[16] = {0x21, 0x21, 0x24, 0x24, 0x26, 0x3B, 0x3D, 0x3D,
+                           0x40, 0x5A, 0x5F, 0x5F, 0x61, 0x7A, 0x7E, 0x7E};
     const __m128i ranges =
         _mm_loadu_si128((const __m128i *)(const void *)PATH_RANGES);
 
@@ -1307,7 +1317,7 @@ static int parse_quoted_string(const unsigned char **ustr,
                     continue;
                 }
                 str--;
-                // fallthrough
+                FALLTHROUGH;
 
             default:
                 // found illegal byte sequence
@@ -1787,6 +1797,7 @@ CHECK_EOL:
             // invalid end-of-line terminator
             return HWIRE_EEOL;
         }
+        FALLTHROUGH;
     case LF:
         // call extension callback for last extension
         if (klen) {
@@ -2226,9 +2237,12 @@ static int parse_query_parameter(const unsigned char **ustr,
                                  const unsigned char *tail, size_t maxlen,
                                  hwire_ctx_t *ctx)
 {
+    // The callback must preserve the caller-owned query decoding buffer.
+    assert(ctx->qrybuf.buf != NULL);
     const unsigned char *str  = *ustr;
     hwire_buf_t *qrybuf       = &ctx->qrybuf;
-    char *key                 = qrybuf->buf + qrybuf->len;
+    char *buf                 = qrybuf->buf;
+    char *key                 = buf + qrybuf->len;
     char *out                 = key;
     char *out_tail            = qrybuf->buf + qrybuf->size;
     hwire_query_param_t param = {0};
@@ -2316,7 +2330,7 @@ PARAM_END:
         return HWIRE_ECALLBACK;
     }
 
-    qrybuf->len = (size_t)(out - qrybuf->buf);
+    qrybuf->len = (size_t)(out - buf);
     *ustr       = str;
     return HWIRE_OK;
 }
@@ -2373,7 +2387,7 @@ int hwire_parse_query(hwire_ctx_t *ctx, const char *str, size_t len,
     ctx->qrybuf.len = 0;
 
 CHECK_NEXT_PARAM:
-    *pos = (size_t)(ustr - (unsigned char *)str);
+    *pos = (size_t)(ustr - (const unsigned char *)str);
     if (ustr >= tail) {
         return (*pos >= len) ? HWIRE_OK : HWIRE_ELEN;
     } else if (*ustr == '&') {
@@ -3219,7 +3233,8 @@ static int parse_status(const unsigned char **ustr, const unsigned char *head,
     }
 
     *ustr   = str + STATUS_LEN + 1;
-    *status = (str[0] - 0x30) * 100 + (str[1] - 0x30) * 10 + (str[2] - 0x30);
+    *status = (uint16_t)((str[0] - 0x30) * 100 + (str[1] - 0x30) * 10 +
+                         (str[2] - 0x30));
     return HWIRE_OK;
 
 #undef STATUS_LEN
