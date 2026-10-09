@@ -123,7 +123,7 @@ void name_context_free(void *context);
 ## Environment
 
 ```text
-date                 : 2026-10-08T07:19:59+09:00
+date                 : 2026-10-10T08:30:33+09:00
 uname                : Linux 6.8.0-142-generic x86_64
 os                   : Ubuntu 24.04.3 LTS
 cpu                  : AMD Ryzen 7 PRO 4750GE with Radeon Graphics
@@ -237,7 +237,7 @@ A callback-driven parser that exposes request/header slices to the application.
 
 - Adapter: [request.c](hwire/request.c), [response.c](hwire/response.c)
 - Library: Current sources in `../../src/`
-- Compiler: <!-- compiler:compiler -->`cc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0`<!-- /compiler -->
+- Compiler: <!-- compiler:compiler -->`gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0`<!-- /compiler -->
 - CFLAGS: <!-- flags:cflags -->`-O2 -DNDEBUG -std=c11`<!-- /flags -->
   - `nosimd`: `-DHWIRE_NO_SIMD -fno-tree-vectorize`; disables explicit parser SIMD and compiler loop/SLP vectorization.
   - `sse2`: Default x86-64 target; enables hwire's SSE2 parser path.
@@ -260,7 +260,7 @@ Measures H2O's bundled picohttpparser, which writes header slices into a caller-
 
 - Adapter: [request.c](h2o/request.c), [response.c](h2o/response.c)
 - Library: [picohttpparser bundled with H2O](https://github.com/h2o/h2o/tree/5da50541a4b6a038c9cea493f740747cf964f4a8/deps/picohttpparser), H2O revision `5da50541a4b6a038c9cea493f740747cf964f4a8`
-- Compiler: <!-- compiler:compiler -->`cc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0`<!-- /compiler -->
+- Compiler: <!-- compiler:compiler -->`gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0`<!-- /compiler -->
 - CFLAGS: <!-- flags:cflags -->`-O2 -DNDEBUG -std=c11`<!-- /flags -->
   - `nosimd`: `-fno-tree-vectorize`; uses the scalar parser path.
   - `sse42` (x86-64): `-msse4.2`; enables the SSE4.2 parser path.
@@ -279,7 +279,7 @@ A callback-driven HTTP parser used by Node.js.
 
 - Adapter: [request.c](llhttp/request.c), [response.c](llhttp/response.c)
 - Library: [llhttp 9.4.3](https://github.com/nodejs/llhttp/tree/release/v9.4.3), revision `0e815792b167a9bd8ace259b95b7da953776c288`
-- Compiler: <!-- compiler:compiler -->`cc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0`<!-- /compiler -->
+- Compiler: <!-- compiler:compiler -->`gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0`<!-- /compiler -->
 - CFLAGS: <!-- flags:cflags -->`-O2 -DNDEBUG -std=c11`<!-- /flags -->
   - `nosimd`: `-fno-tree-vectorize`; uses the scalar parser path.
   - `sse42` (x86-64): `-msse4.2`; enables generated SSE4.2 scanning paths.
@@ -300,7 +300,7 @@ The native nginx request-line, status-line and header-line parser.
 
 - Adapter: [request.c](nginx/request.c), [response.c](nginx/response.c)
 - Library: [nginx 1.31.6](https://github.com/nginx/nginx/tree/release-1.31.6), revision `45a318d05a0fd23f57ffe9579f7f0969c0fe402a`
-- Compiler: <!-- compiler:compiler -->`cc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0`<!-- /compiler -->
+- Compiler: <!-- compiler:compiler -->`gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0`<!-- /compiler -->
 - CFLAGS: <!-- flags:cflags -->`-O2 -DNDEBUG -std=c11`<!-- /flags --> `-ffunction-sections -fdata-sections`
   - `nosimd`: `-fno-tree-vectorize`; disables compiler loop/SLP vectorization.
   - `native`: `-march=native`; applies host CPU tuning.
@@ -322,7 +322,7 @@ Measures httparse, the HTTP/1 parser used by Actix Web, with header slices writt
 
 - Adapter: [request.c](actix_web/request.c), [response.c](actix_web/response.c), [parser.rs](actix_web/parser.rs)
 - Library: [httparse 1.10.1](https://crates.io/crates/httparse/1.10.1), fetched by Cargo and pinned in `Cargo.lock`
-- Compiler: <!-- compiler:actix_web -->`rustc 1.93.1 (01f6ddf75 2026-02-11)`<!-- /compiler -->; C ABI shim: <!-- compiler:compiler -->`cc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0`<!-- /compiler -->
+- Compiler: <!-- compiler:actix_web -->`rustc 1.93.1 (01f6ddf75 2026-02-11)`<!-- /compiler -->; C ABI shim: <!-- compiler:compiler -->`gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0`<!-- /compiler -->
 - CFLAGS: <!-- flags:cflags -->`-O2 -DNDEBUG -std=c11`<!-- /flags --> (C ABI shim)
   - `nosimd`: `-fno-tree-vectorize` for the C declaration files.
   - `sse42` (x86-64): `-msse4.2`.
@@ -437,25 +437,25 @@ Cookie: session=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 
 | Parser                    | Mean ± SD (ns/message) | Relative | Throughput     | RCIW  |
 | ------------------------- | ---------------------- | -------- | -------------- | ----- |
-| H2O (SSE4.2)              | 183.3 ±2.4             | 1.00×    | 5.46 M msg/s   | 1.86% |
-| H2O (native)              | 186.3 ±2.6             | 1.02×    | 5.37 M msg/s   | 1.96% |
-| hwire (native)            | 207.0 ±3.8             | 1.13×    | 4.83 M msg/s   | 2.00% |
-| hwire (SSE4.2)            | 221.8 ±3.8             | 1.21×    | 4.51 M msg/s   | 1.59% |
-| hparse (native)           | 225.4 ±1.4             | 1.23×    | 4.44 M msg/s   | 0.87% |
-| hwire (SSE2)              | 240.1 ±5.6             | 1.31×    | 4.16 M msg/s   | 1.91% |
-| Actix Web (native)        | 272.6 ±3.8             | 1.49×    | 3.67 M msg/s   | 1.92% |
-| Actix Web (scalar)        | 284.2 ±2.6             | 1.55×    | 3.52 M msg/s   | 1.27% |
-| hparse (SSE2)             | 295.4 ±1.9             | 1.61×    | 3.38 M msg/s   | 0.92% |
-| Actix Web (SSE4.2)        | 345.0 ±5.2             | 1.88×    | 2.90 M msg/s   | 1.64% |
-| H2O (scalar)              | 347.8 ±4.5             | 1.90×    | 2.87 M msg/s   | 1.42% |
-| milo (native)             | 361.0 ±46.6 †          | 1.97×    | 2.77 M msg/s   | 7.32% |
-| hwire (scalar)            | 460.0 ±2.2             | 2.51×    | 2.17 M msg/s   | 0.68% |
-| llhttp (Node.js) (native) | 558.4 ±5.1             | 3.05×    | 1.79 M msg/s   | 1.28% |
-| llhttp (Node.js) (SSE4.2) | 602.4 ±6.9             | 3.29×    | 1.66 M msg/s   | 1.60% |
-| nginx (scalar)            | 644.7 ±12.1            | 3.52×    | 1.55 M msg/s   | 1.74% |
-| nginx (native)            | 682.0 ±21.0            | 3.72×    | 1.47 M msg/s   | 1.97% |
-| llhttp (Node.js) (scalar) | 860.4 ±5.9             | 4.70×    | 1.16 M msg/s   | 0.95% |
-| hparse (scalar)           | 1034.4 ±17.0           | 5.64×    | 966.74 k msg/s | 1.80% |
+| H2O (native)              | 185.8 ±3.3             | 1.00×    | 5.38 M msg/s   | 1.94% |
+| H2O (SSE4.2)              | 189.2 ±3.9             | 1.02×    | 5.28 M msg/s   | 1.93% |
+| hwire (native)            | 208.1 ±3.7             | 1.12×    | 4.81 M msg/s   | 1.95% |
+| hwire (SSE4.2)            | 211.8 ±2.3             | 1.14×    | 4.72 M msg/s   | 1.50% |
+| hparse (native)           | 225.3 ±2.9             | 1.21×    | 4.44 M msg/s   | 1.81% |
+| hwire (SSE2)              | 234.0 ±5.6             | 1.26×    | 4.27 M msg/s   | 1.96% |
+| Actix Web (native)        | 281.4 ±8.2             | 1.51×    | 3.55 M msg/s   | 1.86% |
+| hparse (SSE2)             | 294.8 ±4.8             | 1.59×    | 3.39 M msg/s   | 1.78% |
+| Actix Web (scalar)        | 299.7 ±4.1             | 1.61×    | 3.34 M msg/s   | 1.92% |
+| H2O (scalar)              | 320.3 ±4.8             | 1.72×    | 3.12 M msg/s   | 1.66% |
+| Actix Web (SSE4.2)        | 348.8 ±4.8             | 1.88×    | 2.87 M msg/s   | 1.50% |
+| milo (native)             | 366.9 ±4.8             | 1.97×    | 2.73 M msg/s   | 1.43% |
+| hwire (scalar)            | 408.2 ±5.3             | 2.20×    | 2.45 M msg/s   | 1.81% |
+| llhttp (Node.js) (native) | 553.1 ±13.4            | 2.98×    | 1.81 M msg/s   | 1.80% |
+| llhttp (Node.js) (SSE4.2) | 588.9 ±7.9             | 3.17×    | 1.70 M msg/s   | 1.46% |
+| nginx (native)            | 636.1 ±8.3             | 3.42×    | 1.57 M msg/s   | 1.83% |
+| nginx (scalar)            | 645.6 ±11.9            | 3.47×    | 1.55 M msg/s   | 1.71% |
+| llhttp (Node.js) (scalar) | 870.2 ±17.4            | 4.68×    | 1.15 M msg/s   | 1.86% |
+| hparse (scalar)           | 1000.4 ±14.2           | 5.38×    | 999.60 k msg/s | 1.55% |
 
 
 ### S3 API Request
@@ -492,25 +492,25 @@ Connection: keep-alive
 
 | Parser                    | Mean ± SD (ns/message) | Relative | Throughput     | RCIW  |
 | ------------------------- | ---------------------- | -------- | -------------- | ----- |
-| H2O (SSE4.2)              | 195.0 ±1.5             | 1.00×    | 5.13 M msg/s   | 1.09% |
-| H2O (native)              | 197.0 ±1.8             | 1.01×    | 5.08 M msg/s   | 1.25% |
-| hwire (native)            | 216.7 ±0.9             | 1.11×    | 4.62 M msg/s   | 0.56% |
-| hwire (SSE4.2)            | 228.4 ±1.6             | 1.17×    | 4.38 M msg/s   | 1.00% |
-| hparse (native)           | 250.9 ±4.9             | 1.29×    | 3.99 M msg/s   | 1.81% |
-| hwire (SSE2)              | 257.5 ±2.3             | 1.32×    | 3.88 M msg/s   | 1.27% |
-| Actix Web (native)        | 294.7 ±3.3             | 1.51×    | 3.39 M msg/s   | 1.59% |
-| hparse (SSE2)             | 320.5 ±2.8             | 1.64×    | 3.12 M msg/s   | 1.23% |
-| Actix Web (scalar)        | 331.5 ±2.9             | 1.70×    | 3.02 M msg/s   | 1.21% |
-| milo (native)             | 360.8 ±2.2             | 1.85×    | 2.77 M msg/s   | 0.84% |
-| Actix Web (SSE4.2)        | 361.7 ±2.9             | 1.85×    | 2.77 M msg/s   | 1.12% |
-| H2O (scalar)              | 389.6 ±5.0             | 2.00×    | 2.57 M msg/s   | 1.79% |
-| hwire (scalar)            | 487.0 ±4.1             | 2.50×    | 2.05 M msg/s   | 1.19% |
-| llhttp (Node.js) (native) | 538.0 ±3.0             | 2.76×    | 1.86 M msg/s   | 0.79% |
-| llhttp (Node.js) (SSE4.2) | 568.7 ±2.1             | 2.92×    | 1.76 M msg/s   | 0.52% |
-| nginx (scalar)            | 682.1 ±74.7 †          | 3.50×    | 1.47 M msg/s   | 6.21% |
-| nginx (native)            | 703.5 ±9.2             | 3.61×    | 1.42 M msg/s   | 1.83% |
-| llhttp (Node.js) (scalar) | 833.9 ±11.9            | 4.28×    | 1.20 M msg/s   | 1.99% |
-| hparse (scalar)           | 1122.8 ±3.9            | 5.76×    | 890.65 k msg/s | 0.49% |
+| H2O (native)              | 195.6 ±1.9             | 1.00×    | 5.11 M msg/s   | 1.33% |
+| H2O (SSE4.2)              | 200.4 ±1.1             | 1.02×    | 4.99 M msg/s   | 0.74% |
+| hwire (native)            | 215.6 ±1.6             | 1.10×    | 4.64 M msg/s   | 1.06% |
+| hwire (SSE4.2)            | 218.0 ±1.3             | 1.11×    | 4.59 M msg/s   | 0.84% |
+| hparse (native)           | 251.7 ±1.8             | 1.29×    | 3.97 M msg/s   | 0.99% |
+| hwire (SSE2)              | 254.8 ±4.2             | 1.30×    | 3.92 M msg/s   | 1.81% |
+| hparse (SSE2)             | 312.6 ±1.9             | 1.60×    | 3.20 M msg/s   | 0.84% |
+| Actix Web (native)        | 316.8 ±2.9             | 1.62×    | 3.16 M msg/s   | 1.27% |
+| Actix Web (scalar)        | 326.6 ±2.7             | 1.67×    | 3.06 M msg/s   | 1.17% |
+| H2O (scalar)              | 349.8 ±4.1             | 1.79×    | 2.86 M msg/s   | 1.63% |
+| Actix Web (SSE4.2)        | 366.1 ±1.9             | 1.87×    | 2.73 M msg/s   | 0.72% |
+| milo (native)             | 391.6 ±4.9             | 2.00×    | 2.55 M msg/s   | 1.76% |
+| hwire (scalar)            | 431.2 ±3.4             | 2.20×    | 2.32 M msg/s   | 1.10% |
+| llhttp (Node.js) (native) | 533.8 ±6.2             | 2.73×    | 1.87 M msg/s   | 1.62% |
+| llhttp (Node.js) (SSE4.2) | 563.8 ±6.0             | 2.88×    | 1.77 M msg/s   | 1.50% |
+| nginx (scalar)            | 659.0 ±2.3             | 3.37×    | 1.52 M msg/s   | 0.48% |
+| nginx (native)            | 664.4 ±5.8             | 3.40×    | 1.51 M msg/s   | 1.23% |
+| llhttp (Node.js) (scalar) | 816.7 ±2.8             | 4.17×    | 1.22 M msg/s   | 0.47% |
+| hparse (scalar)           | 1082.4 ±5.9            | 5.53×    | 923.87 k msg/s | 0.76% |
 
 
 ### Browser Response
@@ -548,25 +548,25 @@ Link: </assets/app.js>; rel=preload; as=script
 
 | Parser                    | Mean ± SD (ns/message) | Relative | Throughput     | RCIW  |
 | ------------------------- | ---------------------- | -------- | -------------- | ----- |
-| H2O (native)              | 206.0 ±2.0             | 1.00×    | 4.85 M msg/s   | 1.33% |
-| H2O (SSE4.2)              | 206.2 ±1.9             | 1.00×    | 4.85 M msg/s   | 1.27% |
-| hwire (native)            | 215.6 ±0.9             | 1.05×    | 4.64 M msg/s   | 0.56% |
-| hwire (SSE2)              | 233.5 ±0.9             | 1.13×    | 4.28 M msg/s   | 0.56% |
-| hwire (SSE4.2)            | 237.4 ±1.6             | 1.15×    | 4.21 M msg/s   | 0.92% |
-| hparse (native)           | 252.0 ±1.7             | 1.22×    | 3.97 M msg/s   | 0.95% |
-| Actix Web (native)        | 288.8 ±2.7             | 1.40×    | 3.46 M msg/s   | 1.31% |
-| milo (native)             | 298.7 ±2.3             | 1.45×    | 3.35 M msg/s   | 1.09% |
-| Actix Web (scalar)        | 322.9 ±2.0             | 1.57×    | 3.10 M msg/s   | 0.87% |
-| hparse (SSE2)             | 330.3 ±1.8             | 1.60×    | 3.03 M msg/s   | 0.75% |
-| H2O (scalar)              | 374.9 ±6.1             | 1.82×    | 2.67 M msg/s   | 1.78% |
-| Actix Web (SSE4.2)        | 382.5 ±2.3             | 1.86×    | 2.61 M msg/s   | 0.85% |
-| hwire (scalar)            | 470.4 ±4.9             | 2.28×    | 2.13 M msg/s   | 1.44% |
-| llhttp (Node.js) (native) | 523.0 ±2.9             | 2.54×    | 1.91 M msg/s   | 0.76% |
-| llhttp (Node.js) (SSE4.2) | 554.7 ±2.9             | 2.69×    | 1.80 M msg/s   | 0.73% |
-| nginx (scalar)            | 592.7 ±4.5             | 2.88×    | 1.69 M msg/s   | 1.07% |
-| nginx (native)            | 641.3 ±34.8 †          | 3.11×    | 1.56 M msg/s   | 3.07% |
-| llhttp (Node.js) (scalar) | 871.4 ±7.7             | 4.23×    | 1.15 M msg/s   | 1.23% |
-| hparse (scalar)           | 1072.5 ±3.6            | 5.21×    | 932.43 k msg/s | 0.47% |
+| H2O (native)              | 203.0 ±1.4             | 1.00×    | 4.93 M msg/s   | 0.96% |
+| H2O (SSE4.2)              | 210.2 ±2.2             | 1.04×    | 4.76 M msg/s   | 1.44% |
+| hwire (native)            | 216.8 ±0.7             | 1.07×    | 4.61 M msg/s   | 0.47% |
+| hwire (SSE4.2)            | 216.9 ±12.7 †          | 1.07×    | 4.61 M msg/s   | 3.32% |
+| hwire (SSE2)              | 242.3 ±4.4             | 1.19×    | 4.13 M msg/s   | 1.97% |
+| hparse (native)           | 249.9 ±2.2             | 1.23×    | 4.00 M msg/s   | 1.26% |
+| Actix Web (native)        | 291.4 ±3.1             | 1.44×    | 3.43 M msg/s   | 1.47% |
+| milo (native)             | 305.7 ±19.3 †          | 1.51×    | 3.27 M msg/s   | 3.57% |
+| Actix Web (scalar)        | 307.2 ±3.5             | 1.51×    | 3.26 M msg/s   | 1.59% |
+| hparse (SSE2)             | 326.4 ±1.4             | 1.61×    | 3.06 M msg/s   | 0.62% |
+| H2O (scalar)              | 347.5 ±6.0             | 1.71×    | 2.88 M msg/s   | 1.89% |
+| Actix Web (SSE4.2)        | 378.5 ±3.1             | 1.86×    | 2.64 M msg/s   | 1.13% |
+| hwire (scalar)            | 399.8 ±2.2             | 1.97×    | 2.50 M msg/s   | 0.78% |
+| llhttp (Node.js) (native) | 517.4 ±3.9             | 2.55×    | 1.93 M msg/s   | 1.06% |
+| llhttp (Node.js) (SSE4.2) | 541.3 ±2.1             | 2.67×    | 1.85 M msg/s   | 0.55% |
+| nginx (scalar)            | 591.4 ±4.0             | 2.91×    | 1.69 M msg/s   | 0.95% |
+| nginx (native)            | 596.8 ±1.2             | 2.94×    | 1.68 M msg/s   | 0.29% |
+| llhttp (Node.js) (scalar) | 856.0 ±3.5             | 4.22×    | 1.17 M msg/s   | 0.58% |
+| hparse (scalar)           | 1065.5 ±4.5            | 5.25×    | 938.51 k msg/s | 0.59% |
 
 
 ### No Content Response
@@ -588,22 +588,22 @@ Connection: keep-alive
 
 | Parser                    | Mean ± SD (ns/message) | Relative | Throughput    | RCIW  |
 | ------------------------- | ---------------------- | -------- | ------------- | ----- |
-| hparse (native)           | 32.4 ±0.6              | 1.00×    | 30.85 M msg/s | 1.83% |
-| hparse (SSE2)             | 36.2 ±0.8              | 1.12×    | 27.59 M msg/s | 1.98% |
-| H2O (SSE4.2)              | 38.3 ±0.6              | 1.18×    | 26.12 M msg/s | 1.82% |
-| hwire (native)            | 41.0 ±0.4              | 1.26×    | 24.41 M msg/s | 1.51% |
-| H2O (native)              | 41.3 ±0.7              | 1.28×    | 24.19 M msg/s | 1.82% |
-| hwire (SSE2)              | 44.5 ±0.7              | 1.37×    | 22.45 M msg/s | 1.70% |
-| H2O (scalar)              | 45.0 ±0.8              | 1.39×    | 22.24 M msg/s | 1.83% |
-| Actix Web (native)        | 55.4 ±5.1 †            | 1.71×    | 18.04 M msg/s | 5.17% |
-| hwire (SSE4.2)            | 59.5 ±0.5              | 1.84×    | 16.81 M msg/s | 1.20% |
-| Actix Web (scalar)        | 60.7 ±0.7              | 1.87×    | 16.47 M msg/s | 1.65% |
-| Actix Web (SSE4.2)        | 65.5 ±1.9              | 2.02×    | 15.27 M msg/s | 1.98% |
-| milo (native)             | 69.6 ±1.4              | 2.15×    | 14.36 M msg/s | 1.88% |
-| hwire (scalar)            | 73.2 ±1.2              | 2.26×    | 13.66 M msg/s | 1.85% |
-| nginx (native)            | 86.7 ±2.0              | 2.67×    | 11.54 M msg/s | 1.92% |
-| nginx (scalar)            | 88.8 ±1.5              | 2.74×    | 11.26 M msg/s | 1.84% |
-| hparse (scalar)           | 103.6 ±0.8             | 3.20×    | 9.65 M msg/s  | 1.13% |
-| llhttp (Node.js) (native) | 122.2 ±1.2             | 3.77×    | 8.19 M msg/s  | 1.36% |
-| llhttp (Node.js) (SSE4.2) | 142.9 ±1.8             | 4.41×    | 7.00 M msg/s  | 1.71% |
-| llhttp (Node.js) (scalar) | 167.3 ±2.1             | 5.16×    | 5.98 M msg/s  | 1.77% |
+| hparse (native)           | 31.5 ±0.7              | 1.00×    | 31.74 M msg/s | 1.99% |
+| hparse (SSE2)             | 35.7 ±0.7              | 1.13×    | 28.01 M msg/s | 1.86% |
+| H2O (native)              | 38.2 ±0.8              | 1.21×    | 26.16 M msg/s | 1.88% |
+| H2O (SSE4.2)              | 39.0 ±0.5              | 1.24×    | 25.67 M msg/s | 1.52% |
+| H2O (scalar)              | 43.8 ±0.7              | 1.39×    | 22.82 M msg/s | 1.80% |
+| hwire (native)            | 44.0 ±0.6              | 1.40×    | 22.70 M msg/s | 1.78% |
+| hwire (SSE4.2)            | 44.4 ±2.3 †            | 1.41×    | 22.50 M msg/s | 2.98% |
+| hwire (SSE2)              | 45.7 ±1.7 †            | 1.45×    | 21.88 M msg/s | 2.17% |
+| hwire (scalar)            | 56.3 ±1.2              | 1.79×    | 17.76 M msg/s | 1.91% |
+| Actix Web (scalar)        | 57.7 ±0.7              | 1.83×    | 17.33 M msg/s | 1.58% |
+| Actix Web (native)        | 60.4 ±2.4 †            | 1.92×    | 16.57 M msg/s | 2.26% |
+| Actix Web (SSE4.2)        | 60.8 ±0.9              | 1.93×    | 16.44 M msg/s | 1.70% |
+| milo (native)             | 71.1 ±0.9              | 2.26×    | 14.07 M msg/s | 1.86% |
+| nginx (native)            | 79.1 ±0.6              | 2.51×    | 12.64 M msg/s | 1.02% |
+| nginx (scalar)            | 94.1 ±12.9 †           | 2.99×    | 10.63 M msg/s | 7.79% |
+| hparse (scalar)           | 104.6 ±0.9             | 3.32×    | 9.56 M msg/s  | 1.15% |
+| llhttp (Node.js) (native) | 118.7 ±1.4             | 3.77×    | 8.42 M msg/s  | 1.70% |
+| llhttp (Node.js) (SSE4.2) | 143.8 ±0.9             | 4.56×    | 6.96 M msg/s  | 0.88% |
+| llhttp (Node.js) (scalar) | 160.3 ±1.0             | 5.09×    | 6.24 M msg/s  | 0.91% |
