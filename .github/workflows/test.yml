@@ -11,53 +11,102 @@ on:
       - '**.md'
       - 'LICENSE'
 
+permissions:
+  contents: read
+
 jobs:
   test:
+    name: Clang (${{ matrix.os }}, ${{ matrix.variant }})
     strategy:
+      fail-fast: true
       matrix:
         os: [ubuntu-24.04, macos-latest]
+        variant: [scalar, sse2, sse42, neon, native]
+        exclude:
+          - os: ubuntu-24.04
+            variant: neon
+          - os: macos-latest
+            variant: sse2
+          - os: macos-latest
+            variant: sse42
     runs-on: ${{ matrix.os }}
+    env:
+      VARIANT: ${{ matrix.variant }}
     steps:
     - name: Checkout
-      uses: actions/checkout@v4
+      uses: actions/checkout@v7
 
     - name: Set Up LLVM
       uses: ./.github/actions/setup-llvm
 
-    - name: Run Test with Coverage
-      run: make coverage
-
-    - name: Run Native Tests with ASan and UBSan
-      env:
-        ASAN_OPTIONS: halt_on_error=1
-        UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+    - name: Select Build Flags
       run: |
-        make sanitizers
-
-    - name: Run Parser Variants with ASan and UBSan
-      env:
-        ASAN_OPTIONS: halt_on_error=1
-        UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
-      run: |
-        variants="scalar"
-        case "$(uname -m)" in
-          x86_64|amd64) variants="$variants sse2 sse42" ;;
+        case "$VARIANT" in
+          scalar) flags='-DHWIRE_NO_SIMD' ;;
+          sse2) flags='-msse2' ;;
+          sse42) flags='-msse4.2' ;;
+          neon) flags='-march=armv8-a' ;;
+          native)
+            case "$(uname -m)" in
+              arm64|aarch64) flags='-mcpu=native' ;;
+              x86_64|amd64) flags='-march=native' ;;
+              *) echo 'Unsupported native architecture' >&2; exit 1 ;;
+            esac
+            ;;
+          *) echo 'Unsupported variant' >&2; exit 1 ;;
         esac
-        for variant in $variants; do
-          case "$variant" in
-            scalar) flags='-DHWIRE_NO_SIMD' ;;
-            sse2) flags='-msse2' ;;
-            sse42) flags='-msse4.2' ;;
-          esac
-          make test OBJ_DIR="obj-sanitizers-$variant" \
-            CFLAGS="-std=c99 -Isrc $flags --config=./config/clang/sanitizers.cfg" \
-            LDFLAGS='--config=./config/clang/sanitizers.cfg'
-        done
+        echo "BUILD_FLAGS=$flags" >> "$GITHUB_ENV"
+
+    - name: Run Tests with Coverage
+      run: |
+        table_options=()
+        if [[ "$VARIANT" != native ]]; then
+          table_options+=(TABLE_TEST_EXES=)
+        fi
+        make -j2 coverage "${table_options[@]}" CFLAGS="-std=c99 -Isrc -O2 -g $BUILD_FLAGS" \
+          COV_FLAGS='-fprofile-instr-generate -fcoverage-mapping'
+
+    - name: Run Tests with ASan and UBSan
+      env:
+        ASAN_OPTIONS: halt_on_error=1
+        UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+      run: |
+        table_options=()
+        if [[ "$VARIANT" != native ]]; then
+          table_options+=(TABLE_TEST_EXES=)
+        fi
+        make -j2 test table-test "${table_options[@]}" OBJ_DIR=obj/sanitizers \
+          CFLAGS="-std=c99 -Isrc $BUILD_FLAGS --config=./config/clang/sanitizers.cfg" \
+          LDFLAGS='--config=./config/clang/sanitizers.cfg'
+
+    - name: Run clang-tidy
+      run: make tidy TIDY_FLAGS="$BUILD_FLAGS"
+
+    - name: Run Hardening and Pattern Initialization Tests
+      if: matrix.variant == 'native'
+      run: make -j2 hardening pattern
 
     - name: Upload Coverage to Codecov
-      uses: codecov/codecov-action@v4
+      uses: codecov/codecov-action@v7
       with:
         token: ${{ secrets.CODECOV_TOKEN }}
         flags: unittests
+        name: ${{ matrix.os }}-${{ matrix.variant }}
         disable_search: true
         files: ./coverage/coverage.info
+
+  gcc:
+    name: GCC compatibility
+    runs-on: ubuntu-24.04
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v7
+
+    - name: Set Up GCC
+      run: |
+        sudo apt-get update -qq
+        sudo apt-get install -y gcc-13
+        gcc-13 --version
+
+    - name: Run Tests
+      run: make -j2 test table-test CC=gcc-13 OBJ_DIR=obj/gcc
