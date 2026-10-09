@@ -1,22 +1,15 @@
 #!/usr/bin/env python3
-"""Publish the plain-parser results in this suite's README."""
-from contextlib import redirect_stdout
-from io import StringIO
+"""Publish this suite's saved results and environment in its README."""
 from pathlib import Path
-import re
 import report
-from report_common import update_environment
+from report_common import publish_readme
 
 
 def main():
     readme = Path(__file__).resolve().parents[1] / "README.md"
-    source = readme.read_text()
-    prefix = source.split("## Parse\n", 1)[0].rstrip()
-    prefix = update_environment(prefix, report.PLATFORM_FILE)
-    output = StringIO()
-    with redirect_stdout(output):
-        report.main(include_environment=False)
-    readme.write_text(re.sub(r"\n{4,}", "\n\n\n", prefix + "\n\n\n" + output.getvalue().lstrip().rstrip()) + "\n")
+    prefix = readme.read_text().split("## Parse\n", 1)[0]
+    publish_readme(readme, prefix, report.PLATFORM_FILE,
+                   lambda: report.main(include_environment=False))
 
 
 if __name__ == "__main__":

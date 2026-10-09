@@ -2,7 +2,7 @@
 CC ?= cc
 CARGO ?= cargo
 CFLAGS ?= -O2 -DNDEBUG -std=c11
-BIN := bin
+BIN ?= bin
 RESULTS := results
 UNAME_M := $(shell uname -m)
 ifeq ($(UNAME_M),x86_64)
@@ -41,22 +41,14 @@ POOL_TEST_LINK = -L$(BIN)/$* -lbench_pool -Wl,-rpath,@loader_path
 else
 POOL_TEST_LINK = $(BIN)/$*/objects/pool.o $(foreach symbol,malloc calloc realloc aligned_alloc posix_memalign free,-Wl,--wrap=$(symbol))
 endif
-.PHONY: all setup build run report update-readme list check clean FORCE
+.PHONY: all report update-readme list check clean FORCE
 .PRECIOUS: $(BIN)/%/implementationlist.c $(BIN)/%/config.txt
 .DEFAULT_GOAL := run
 .NOTPARALLEL:
 all: build
-setup:
-	@for p in $(IMPLEMENTATIONS); do if [ -f "$$p/fetch.sh" ]; then CARGO='$(CARGO)' sh "$$p/fetch.sh" || exit 1; fi; done
-build: $(BINS)
-run: $(BINS)
-	@mkdir -p $(RESULTS)
-	@sh ../platform.sh $(RESULTS)/platform.txt '$(CC)' '$(CFLAGS)'
-	@$(foreach p,$(IMPLEMENTATIONS),$(if $($(p)_BUILD_INFO),printf '%s\n' '$(p) build: $($(p)_BUILD_INFO)' >> $(RESULTS)/platform.txt;))
-	@printf '%s\n' 'production variants: $(foreach v,$(VARIANTS),$(v)=$(VARIANT_FLAGS_$(v)))' >> $(RESULTS)/platform.txt
-	@$(foreach p,$(IMPLEMENTATIONS),$(p)_NAME='$($(p)_NAME)' $(p)_VARIANTS='$(or $($(p)_VARIANTS),$(VARIANTS))') python3 -c 'import json, os; from pathlib import Path; Path("results/active.json").write_text(json.dumps({p+"-"+v: os.getenv(p+"_NAME") or p for p in "$(IMPLEMENTATIONS)".split() for v in "$(VARIANTS)".split() if v in os.environ[p+"_VARIANTS"].split()}))'
-	@for binary in $(BINS); do ./$$binary || exit 1; done
-	@$(MAKE) --no-print-directory report
+BENCH_ADAPTERS = $(IMPLEMENTATIONS)
+include ../shared/runner.mk
+
 report:
 	@if [ -n "$(IMPLEMENTATIONS)" ]; then python3 scripts/report.py; else echo "No implementations registered."; fi
 update-readme:
@@ -80,6 +72,6 @@ $(BIN)/%/config.txt: FORCE
 $(BIN)/%/implementationlist.c: FORCE scripts/gen_production.py ../shared/scripts/registration.py
 	@mkdir -p $(BIN)/$*
 	@$(GEN) write $@ $* $(call variant_implementations,$*)
-$(BIN)/%/bench_production: $(BIN)/%/config.txt $(BIN)/%/implementationlist.c Makefile bench_production.c ../shared/bench_stats.h ../shared/bench_timer.h ../shared/scripts/build_variant.sh shared/pool.c shared/pool.h shared/pool_darwin.c ../data/scenarios/browser_cdn.h ../data/scenarios/browser_auth.h $(DEPS) $(CONFIGS) $(FETCH) $(BUILD) | setup
+$(BIN)/%/bench_production: $(BIN)/%/config.txt $(BIN)/%/implementationlist.c Makefile ../shared/runner.mk bench_production.c ../shared/bench_stats.h ../shared/bench_timer.h ../shared/scripts/build_variant.sh shared/pool.c shared/pool.h shared/pool_darwin.c ../data/scenarios/browser_cdn.h ../data/scenarios/browser_auth.h $(DEPS) $(CONFIGS) $(FETCH) $(BUILD) | setup
 	@for p in $(call variant_implementations,$*); do if [ -f "$$p/build.sh" ]; then CARGO='$(CARGO)' sh "$$p/build.sh" '$*' || exit 1; fi; done
-	@$(foreach p,$(IMPLEMENTATIONS),$(p)_CFLAGS='$($(p)_CFLAGS)') CC='$(CC)' CFLAGS='$(CFLAGS)' SRCS='$(call variant_sources,$*)' INC='$(call variant_includes,$*)' LDLIBS='$(subst %,$*,$(call variant_libraries,$*))' DRIVER='bench_production.c' POOL='1' sh ../shared/scripts/build_variant.sh '$*' '$(VARIANT_FLAGS_$*)'
+	@$(foreach p,$(IMPLEMENTATIONS),$(p)_CFLAGS='$($(p)_CFLAGS)') CC='$(CC)' CFLAGS='$(CFLAGS)' SRCS='$(call variant_sources,$*)' INC='$(call variant_includes,$*)' LDLIBS='$(subst %,$*,$(call variant_libraries,$*))' BIN='$(BIN)' DRIVER='bench_production.c' POOL='1' sh ../shared/scripts/build_variant.sh '$*' '$(VARIANT_FLAGS_$*)'

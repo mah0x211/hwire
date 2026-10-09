@@ -4,18 +4,16 @@ import re
 import sys
 from pathlib import Path
 HASHMAPS_DIR = Path(__file__).resolve().parents[1]
-IDENT = re.compile(r"[A-Za-z][A-Za-z0-9_]*\Z")
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "shared/scripts"))
+from registration import adapter_directories, write_generated
 
 def implementation(entry):
     return [p for p in (entry / "hashmap.c", entry / "hashmap.cpp") if p.is_file()]
 
 def registered(directory=None):
     root = directory or HASHMAPS_DIR
-    for entry in sorted(root.iterdir()):
-        if not entry.is_dir() or entry.name.startswith("_"):
-            continue
-        sources = implementation(entry)
-        if len(sources) == 1 and IDENT.fullmatch(entry.name):
+    for entry in adapter_directories(root):
+        if len(implementation(entry)) == 1:
             yield entry.name
 
 def source_paths(directory=None):
@@ -67,10 +65,7 @@ def write_table(out, variant, directory=None):
                 f'{name}_measure_get, {name}_measure_get_ci}},')
     lines.extend(["static const hashmap_t maps[] = {", *rows, "};",
                   f'#define BENCH_VARIANT "{variant}"'])
-    p = Path(out)
-    content = "\n".join(lines) + "\n"
-    if not p.exists() or p.read_text() != content:
-        p.write_text(content)
+    write_generated(out, lines)
 
 def main():
     args = sys.argv[1:]

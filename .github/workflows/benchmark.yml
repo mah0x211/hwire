@@ -25,6 +25,7 @@ jobs:
       CC: gcc
       CXX: g++
       PYTHONDONTWRITEBYTECODE: '1'
+      INSTALL_DEPS: '1'
     steps:
     - name: Checkout measured revision
       uses: actions/checkout@v7
@@ -42,18 +43,7 @@ jobs:
     - name: Install build tools
       run: |
         sudo apt-get update
-        sudo apt-get install -y build-essential clang pkg-config libssl-dev curl xz-utils
-        rustup toolchain install 1.88.0 --profile minimal
-        rustup default 1.88.0
-
-    - name: Install Zig for parser targets
-      if: inputs.suite == 'all' || inputs.suite == 'parsers'
-      run: |
-        cd "$RUNNER_TEMP"
-        curl -fL --retry 2 https://ziglang.org/download/0.15.1/zig-x86_64-linux-0.15.1.tar.xz -o zig.tar.xz
-        echo 'c61c5da6edeea14ca51ecd5e4520c6f4189ef5250383db33d01848293bfafe05  zig.tar.xz' | sha256sum -c -
-        tar -xf zig.tar.xz
-        echo "$RUNNER_TEMP/zig-x86_64-linux-0.15.1" >> "$GITHUB_PATH"
+        sudo apt-get install -y build-essential clang curl
 
     - name: Measure selected revision
       env:
@@ -64,7 +54,7 @@ jobs:
           --output "$RUNNER_TEMP/benchmark-results/measured" --summary "$GITHUB_STEP_SUMMARY"
 
     - name: Measure comparison revision
-      if: inputs.compare_ref != ''
+      if: ${{ !cancelled() && inputs.compare_ref != '' }}
       env:
         BENCH_SUITE: ${{ inputs.suite }}
       run: |

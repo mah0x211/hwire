@@ -50,6 +50,9 @@ Lookup measurements use completed contexts.
 
 ### Sampling
 
+An untimed parse warms up lazy runtime and thread-local initialization before
+the request arena is activated. Per-request context initialization remains timed.
+
 Adaptive sampling uses 20–100 samples, Target RCIW 2% and approximately 1 ms
 per sample. Parse operations are timed individually; lookup samples use batches.
 Empty timer intervals are subtracted. Progress reports samples and achieved
@@ -66,8 +69,11 @@ supported. Adapters contain native processing and no timers or driver macros.
 
 ### Dependencies and build configuration
 
-Each implementation owns its `fetch.sh`, `config.mk` and dependency directory.
+Each implementation owns its `setup.sh`, `fetch.sh`, `config.mk` and dependency directory.
 
+- Optional `setup.sh check|install` prepares system dependencies before `fetch.sh`.
+  `check` reports missing dependencies without installing; `install` is invoked
+  only with `INSTALL_DEPS=1`. Return nonzero on failure.
 - Optional `fetch.sh` downloads pinned native sources and returns nonzero on
   failure. It runs before compilation; repeated setup reuses fetched revisions.
 - Optional `config.mk` provides the variables below, using paths relative to
@@ -88,6 +94,7 @@ Each implementation owns its `fetch.sh`, `config.mk` and dependency directory.
 | `<name>_NAME` | Report display name; defaults to the directory name |
 | `<name>_BUILD_INFO` | Native toolchain/build description recorded in the measurement metadata |
 | `<name>_BUILD_DEPS` | Native source/manifests that trigger rebuilding |
+| `<name>_ENV` | Space-separated `NAME=value` assignments (shell quoting supported) for this adapter’s setup, fetch, build and execution |
 
 ### Entry points
 
@@ -196,7 +203,7 @@ void name_header_query_free(void *query);
 ## Environment
 
 ```text
-date                 : 2026-10-08T10:06:50+09:00
+date                 : 2026-10-10T08:31:25+09:00
 uname                : Linux 6.8.0-142-generic x86_64
 os                   : Ubuntu 24.04.3 LTS
 cpu                  : AMD Ryzen 7 PRO 4750GE with Radeon Graphics
@@ -220,7 +227,7 @@ virtualization       : kvm
 - `curl`, `tar` and network access: Fetch pinned dependencies during initial setup.
 - OpenSSL development headers: Required when the H2O target is enabled (for example, `libssl-dev` on Debian/Ubuntu). `pkg-config` discovers nonstandard include paths; otherwise add the include path to `CFLAGS`.
 
-- libuv development headers: Required for the H2O target on macOS; include paths are discovered with `pkg-config`.
+- libuv development headers: Required for the H2O target on Linux and macOS (`libuv1-dev` on Debian/Ubuntu); include paths are discovered with `pkg-config`.
 
 Dependencies are fetched before timing. Repeated setup reuses downloaded
 revisions; each target owns its `fetch.sh` and `config.mk`.
@@ -248,6 +255,29 @@ binaries and generated registration tables live in `bin/`. These files are not
 committed. Timing binaries support `--quick` for development and `--check` for
 untimed success checks; `--quick` is not publication sampling.
 
+
+### Dependencies and failures
+
+The Makefile includes `../shared/runner.mk`, which invokes the shared
+`../shared/scripts/run.py`. Each adapter owns its optional `setup.sh`, `fetch.sh`
+and `config.mk`. The runner calls `setup.sh check` first, then runs `fetch.sh`
+only after setup succeeds.
+Use `make run INSTALL_DEPS=1` to permit installation through the adapter's
+`setup.sh install`; ordinary local runs only check dependencies. CI enables
+installation. Adapter setup may use the [shared dependency helpers](../shared/README.md); dependency
+names and toolchain requirements remain in the adapter directory.
+
+Adapters and supported build variants are built and measured independently.
+A setup, source-fetch, build or measurement failure is recorded and other targets
+continue. The report compares only successful measurements and ends with a
+Failed Benchmark Targets table containing short errors. Full logs and
+`status.json` are retained in the result directory and uploaded by Actions.
+After generating the report, the command exits nonzero if any target failed.
+
+Each `make run` replaces the suite's generated measurements, status and logs.
+Failed or partially completed measurements and older results are excluded.
+`make build` and `make setup` also continue across adapters; their statuses and
+logs are kept under `bin/status/`, without replacing saved measurements.
 
 ### Configuration
 
@@ -289,7 +319,7 @@ during parsing.
 
 - Adapter: [request.c](hwire/request.c)
 - Library: Current sources in `../../src/`
-- Compiler: <!-- compiler:compiler -->`cc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0`<!-- /compiler -->
+- Compiler: <!-- compiler:compiler -->`gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0`<!-- /compiler -->
 - CFLAGS: <!-- flags:cflags -->`-O2 -DNDEBUG -std=c11`<!-- /flags -->
   - `nosimd`: `-DHWIRE_NO_SIMD -DHWIRE_NO_AES -fno-tree-vectorize`; scalar parser and SipHash-1-3.
   - `sse2`: Default x86-64 target; SSE2 parser and SipHash-1-3.
@@ -318,7 +348,7 @@ with dedicated references for known header names.
 
 - Adapter: [request.c](nginx/request.c)
 - Library: [nginx 1.31.6](https://github.com/nginx/nginx/tree/release-1.31.6), revision `45a318d05a0fd23f57ffe9579f7f0969c0fe402a`
-- Compiler: <!-- compiler:compiler -->`cc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0`<!-- /compiler -->
+- Compiler: <!-- compiler:compiler -->`gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0`<!-- /compiler -->
 - CFLAGS: <!-- flags:cflags -->`-O2 -DNDEBUG -std=c11`<!-- /flags --> `-ffunction-sections -fdata-sections`
   - `nosimd`: `-fno-tree-vectorize`; no explicit parser SIMD path.
   - `native`: `-march=native` on x86-64; `-mcpu=native` on ARM.
@@ -349,7 +379,7 @@ H2O request/header representation.
 
 - Adapter: [request.c](h2o/request.c)
 - Library: [H2O](https://github.com/h2o/h2o/tree/5da50541a4b6a038c9cea493f740747cf964f4a8), revision `5da50541a4b6a038c9cea493f740747cf964f4a8`; uses the bundled picohttpparser
-- Compiler: <!-- compiler:compiler -->`cc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0`<!-- /compiler -->
+- Compiler: <!-- compiler:compiler -->`gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0`<!-- /compiler -->
 - CFLAGS: <!-- flags:cflags -->`-O2 -DNDEBUG -std=c11`<!-- /flags --> `-D_GNU_SOURCE -ffunction-sections -fdata-sections`
   - `nosimd`: `-fno-tree-vectorize`; baseline picohttpparser without SSE4.2.
   - `sse42` (x86-64): `-msse4.2`; enables picohttpparser's SSE4.2 path.
@@ -382,7 +412,7 @@ RequestHead and HeaderMap objects.
 
 - Adapter: [request.c](actix_web/request.c), [parser.rs](actix_web/parser.rs)
 - Library: [Actix Web](https://github.com/actix/actix-web/tree/714572c5eca7a012b771dd9a978767e7573697a8), revision `714572c5eca7a012b771dd9a978767e7573697a8`; actix-http 3.18.12; httparse 1.10.1 fetched by Cargo and pinned in `Cargo.lock`
-- Compiler: <!-- compiler:actix_web -->`rustc 1.93.1 (01f6ddf75 2026-02-11)`<!-- /compiler -->; C ABI shim: <!-- compiler:compiler -->`cc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0`<!-- /compiler -->
+- Compiler: <!-- compiler:actix_web -->`rustc 1.93.1 (01f6ddf75 2026-02-11)`<!-- /compiler -->; C ABI shim: <!-- compiler:compiler -->`gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0`<!-- /compiler -->
 - CFLAGS: <!-- flags:cflags -->`-O2 -DNDEBUG -std=c11`<!-- /flags --> (C ABI shim)
   - `native`: `-march=native` on x86-64; `-mcpu=native` on ARM.
 - RUSTFLAGS:
@@ -538,72 +568,72 @@ Parse + Post-process includes initialization, HTTP parsing and native header sto
 
 | Implementation               | Mean ± SD (ns/request) | Relative | Throughput   | RCIW  |
 | ---------------------------- | ---------------------- | -------- | ------------ | ----- |
-| hwire + hwire_table (native) | 504.84 ±6.81           | 1.00×    | 1.98 M req/s | 1.89% |
-| hwire + hwire_table (SSE4.2) | 680.74 ±7.37           | 1.35×    | 1.47 M req/s | 1.51% |
-| hwire + hwire_table (SSE2)   | 722.36 ±8.02           | 1.43×    | 1.38 M req/s | 1.55% |
-| H2O (native)                 | 767.97 ±10.64          | 1.52×    | 1.30 M req/s | 1.52% |
-| H2O (SSE4.2)                 | 831.54 ±29.34 †        | 1.65×    | 1.20 M req/s | 2.00% |
-| hwire + hwire_table (scalar) | 905.67 ±28.07          | 1.79×    | 1.10 M req/s | 1.98% |
-| H2O (scalar)                 | 980.36 ±15.50          | 1.94×    | 1.02 M req/s | 1.73% |
-| nginx (native)               | 1138.56 ±15.22         | 2.26×    | 0.88 M req/s | 1.46% |
-| nginx (scalar)               | 1204.34 ±9.90          | 2.39×    | 0.83 M req/s | 1.15% |
-| Actix Web (native)           | 1366.46 ±14.61         | 2.71×    | 0.73 M req/s | 1.50% |
-| Actix Web (scalar)           | 1461.30 ±19.46         | 2.89×    | 0.68 M req/s | 1.46% |
-| Actix Web (SSE4.2)           | 1492.34 ±22.98         | 2.96×    | 0.67 M req/s | 1.68% |
+| hwire + hwire_table (native) | 483.18 ±4.13           | 1.00×    | 2.07 M req/s | 1.19% |
+| hwire + hwire_table (SSE4.2) | 637.13 ±6.73           | 1.32×    | 1.57 M req/s | 1.48% |
+| hwire + hwire_table (SSE2)   | 740.58 ±5.91           | 1.53×    | 1.35 M req/s | 1.12% |
+| H2O (native)                 | 750.66 ±6.67           | 1.55×    | 1.33 M req/s | 1.24% |
+| H2O (SSE4.2)                 | 834.28 ±15.45          | 1.73×    | 1.20 M req/s | 1.72% |
+| hwire + hwire_table (scalar) | 888.99 ±3.17           | 1.84×    | 1.12 M req/s | 0.50% |
+| H2O (scalar)                 | 1019.38 ±13.58         | 2.11×    | 0.98 M req/s | 1.86% |
+| nginx (scalar)               | 1138.18 ±10.21         | 2.36×    | 0.88 M req/s | 1.25% |
+| nginx (native)               | 1211.02 ±13.40         | 2.51×    | 0.83 M req/s | 1.55% |
+| Actix Web (native)           | 1403.19 ±11.80         | 2.90×    | 0.71 M req/s | 1.18% |
+| Actix Web (scalar)           | 1478.04 ±15.24         | 3.06×    | 0.68 M req/s | 1.44% |
+| Actix Web (SSE4.2)           | 1527.85 ±20.73         | 3.16×    | 0.65 M req/s | 1.90% |
 
 
 ### Lookup Hit — Known Headers
 
 | Implementation                        | Mean ± SD (ns/lookup) | Relative | Throughput         | RCIW  |
 | ------------------------------------- | --------------------- | -------- | ------------------ | ----- |
-| nginx (native) (prepared)             | 2.83 ±0.03            | 1.00×    | 353.36 M lookups/s | 1.22% |
-| nginx (scalar) (prepared)             | 2.84 ±0.02            | 1.00×    | 352.11 M lookups/s | 0.96% |
-| H2O (SSE4.2) (prepared)               | 4.58 ±0.06            | 1.62×    | 218.34 M lookups/s | 1.97% |
-| H2O (native) (prepared)               | 4.73 ±0.08            | 1.67×    | 211.42 M lookups/s | 1.64% |
-| H2O (scalar) (prepared)               | 4.83 ±0.06            | 1.71×    | 207.04 M lookups/s | 1.84% |
-| Actix Web (native) (prepared)         | 6.66 ±0.04            | 2.35×    | 150.15 M lookups/s | 0.85% |
-| Actix Web (scalar) (prepared)         | 6.84 ±0.12            | 2.42×    | 146.20 M lookups/s | 1.68% |
-| Actix Web (SSE4.2) (prepared)         | 7.88 ±0.07            | 2.78×    | 126.90 M lookups/s | 1.30% |
-| H2O (SSE4.2) (string)                 | 15.06 ±0.20           | 5.32×    | 66.40 M lookups/s  | 1.45% |
-| H2O (native) (string)                 | 15.32 ±0.16           | 5.41×    | 65.27 M lookups/s  | 1.46% |
-| H2O (scalar) (string)                 | 15.48 ±0.32           | 5.47×    | 64.60 M lookups/s  | 1.67% |
-| nginx (scalar) (string)               | 15.54 ±0.08           | 5.49×    | 64.35 M lookups/s  | 0.74% |
-| nginx (native) (string)               | 15.70 ±0.20           | 5.55×    | 63.69 M lookups/s  | 1.43% |
-| hwire + hwire_table (native) (string) | 16.96 ±0.15           | 5.99×    | 58.96 M lookups/s  | 1.27% |
-| Actix Web (native) (string)           | 20.79 ±0.17           | 7.35×    | 48.10 M lookups/s  | 1.13% |
-| hwire + hwire_table (SSE2) (string)   | 21.37 ±0.14           | 7.55×    | 46.79 M lookups/s  | 0.91% |
-| Actix Web (scalar) (string)           | 21.52 ±0.23           | 7.60×    | 46.47 M lookups/s  | 1.50% |
-| hwire + hwire_table (scalar) (string) | 21.71 ±0.31           | 7.67×    | 46.06 M lookups/s  | 1.99% |
-| Actix Web (SSE4.2) (string)           | 21.84 ±0.16           | 7.72×    | 45.79 M lookups/s  | 1.00% |
-| hwire + hwire_table (SSE4.2) (string) | 22.22 ±0.10           | 7.85×    | 45.00 M lookups/s  | 0.65% |
+| nginx (scalar) (prepared)             | 2.61 ±0.02            | 1.00×    | 383.14 M lookups/s | 1.07% |
+| nginx (native) (prepared)             | 2.63 ±0.04            | 1.01×    | 380.23 M lookups/s | 1.66% |
+| H2O (native) (prepared)               | 4.33 ±0.12            | 1.66×    | 230.95 M lookups/s | 1.84% |
+| H2O (scalar) (prepared)               | 4.96 ±0.27 †          | 1.90×    | 201.61 M lookups/s | 3.04% |
+| H2O (SSE4.2) (prepared)               | 6.05 ±0.17            | 2.32×    | 165.29 M lookups/s | 1.78% |
+| Actix Web (native) (prepared)         | 6.42 ±0.03            | 2.46×    | 155.76 M lookups/s | 0.74% |
+| Actix Web (scalar) (prepared)         | 6.48 ±0.03            | 2.48×    | 154.32 M lookups/s | 0.65% |
+| Actix Web (SSE4.2) (prepared)         | 6.48 ±0.05            | 2.48×    | 154.32 M lookups/s | 1.04% |
+| H2O (native) (string)                 | 14.99 ±0.59 †         | 5.74×    | 66.71 M lookups/s  | 2.23% |
+| nginx (scalar) (string)               | 15.46 ±0.14           | 5.92×    | 64.68 M lookups/s  | 1.30% |
+| nginx (native) (string)               | 15.53 ±0.16           | 5.95×    | 64.39 M lookups/s  | 1.42% |
+| hwire + hwire_table (native) (string) | 16.82 ±0.16           | 6.44×    | 59.45 M lookups/s  | 1.36% |
+| H2O (SSE4.2) (string)                 | 17.42 ±0.89 †         | 6.67×    | 57.41 M lookups/s  | 2.88% |
+| H2O (scalar) (string)                 | 17.49 ±0.40           | 6.70×    | 57.18 M lookups/s  | 1.87% |
+| Actix Web (native) (string)           | 20.32 ±0.14           | 7.79×    | 49.21 M lookups/s  | 0.93% |
+| Actix Web (scalar) (string)           | 21.20 ±0.07           | 8.12×    | 47.17 M lookups/s  | 0.45% |
+| Actix Web (SSE4.2) (string)           | 21.27 ±0.13           | 8.15×    | 47.01 M lookups/s  | 0.85% |
+| hwire + hwire_table (SSE4.2) (string) | 21.34 ±0.18           | 8.18×    | 46.86 M lookups/s  | 1.18% |
+| hwire + hwire_table (SSE2) (string)   | 21.42 ±0.13           | 8.21×    | 46.69 M lookups/s  | 0.84% |
+| hwire + hwire_table (scalar) (string) | 21.96 ±0.18           | 8.41×    | 45.54 M lookups/s  | 1.16% |
 
 Searches Host, Accept, Cookie, User-Agent, Connection and Referer, in that order, repeated with equal frequency.
 
 
 ### Lookup Hit — Unknown Headers
 
-| Implementation                        | Mean ± SD (ns/lookup) | Relative | Throughput        | RCIW  |
-| ------------------------------------- | --------------------- | -------- | ----------------- | ----- |
-| Actix Web (native) (prepared)         | 10.32 ±0.24           | 1.00×    | 96.90 M lookups/s | 1.90% |
-| Actix Web (SSE4.2) (prepared)         | 10.35 ±0.07           | 1.00×    | 96.62 M lookups/s | 0.99% |
-| Actix Web (scalar) (prepared)         | 10.44 ±0.18           | 1.01×    | 95.79 M lookups/s | 1.62% |
-| nginx (native) (prepared)             | 10.96 ±0.32           | 1.06×    | 91.24 M lookups/s | 1.98% |
-| nginx (scalar) (prepared)             | 11.73 ±0.07           | 1.14×    | 85.25 M lookups/s | 0.81% |
-| H2O (SSE4.2) (prepared)               | 12.41 ±0.17           | 1.20×    | 80.58 M lookups/s | 1.93% |
-| H2O (native) (prepared)               | 12.82 ±0.23           | 1.24×    | 78.00 M lookups/s | 1.99% |
-| H2O (scalar) (prepared)               | 15.02 ±0.20           | 1.46×    | 66.58 M lookups/s | 1.48% |
-| hwire + hwire_table (native) (string) | 19.73 ±0.13           | 1.91×    | 50.68 M lookups/s | 0.93% |
-| H2O (native) (string)                 | 23.83 ±0.32           | 2.31×    | 41.96 M lookups/s | 1.88% |
-| hwire + hwire_table (scalar) (string) | 25.87 ±0.21           | 2.51×    | 38.65 M lookups/s | 1.12% |
-| hwire + hwire_table (SSE2) (string)   | 25.87 ±0.13           | 2.51×    | 38.65 M lookups/s | 0.72% |
-| hwire + hwire_table (SSE4.2) (string) | 25.95 ±0.19           | 2.51×    | 38.54 M lookups/s | 1.01% |
-| H2O (SSE4.2) (string)                 | 26.25 ±0.35           | 2.54×    | 38.10 M lookups/s | 1.86% |
-| H2O (scalar) (string)                 | 27.02 ±0.25           | 2.62×    | 37.01 M lookups/s | 1.32% |
-| nginx (scalar) (string)               | 27.95 ±0.23           | 2.71×    | 35.78 M lookups/s | 1.15% |
-| nginx (native) (string)               | 28.21 ±0.27           | 2.73×    | 35.45 M lookups/s | 1.33% |
-| Actix Web (native) (string)           | 52.99 ±0.47           | 5.13×    | 18.87 M lookups/s | 1.25% |
-| Actix Web (scalar) (string)           | 53.49 ±1.35           | 5.18×    | 18.70 M lookups/s | 1.88% |
-| Actix Web (SSE4.2) (string)           | 54.08 ±0.58           | 5.24×    | 18.49 M lookups/s | 1.51% |
+| Implementation                        | Mean ± SD (ns/lookup) | Relative | Throughput         | RCIW  |
+| ------------------------------------- | --------------------- | -------- | ------------------ | ----- |
+| Actix Web (native) (prepared)         | 9.83 ±0.14            | 1.00×    | 101.73 M lookups/s | 1.53% |
+| Actix Web (scalar) (prepared)         | 9.86 ±0.05            | 1.00×    | 101.42 M lookups/s | 0.77% |
+| Actix Web (SSE4.2) (prepared)         | 9.87 ±0.05            | 1.00×    | 101.32 M lookups/s | 0.69% |
+| nginx (scalar) (prepared)             | 12.05 ±0.15           | 1.23×    | 82.99 M lookups/s  | 1.79% |
+| nginx (native) (prepared)             | 12.89 ±0.10           | 1.31×    | 77.58 M lookups/s  | 1.05% |
+| H2O (native) (prepared)               | 12.98 ±0.25           | 1.32×    | 77.04 M lookups/s  | 1.79% |
+| H2O (SSE4.2) (prepared)               | 13.28 ±0.18           | 1.35×    | 75.30 M lookups/s  | 1.48% |
+| H2O (scalar) (prepared)               | 13.31 ±0.34           | 1.35×    | 75.13 M lookups/s  | 1.90% |
+| hwire + hwire_table (native) (string) | 19.51 ±0.13           | 1.98×    | 51.26 M lookups/s  | 0.96% |
+| H2O (SSE4.2) (string)                 | 25.31 ±0.24           | 2.57×    | 39.51 M lookups/s  | 1.32% |
+| hwire + hwire_table (SSE2) (string)   | 25.82 ±0.14           | 2.63×    | 38.73 M lookups/s  | 0.76% |
+| hwire + hwire_table (SSE4.2) (string) | 25.83 ±0.16           | 2.63×    | 38.71 M lookups/s  | 0.88% |
+| hwire + hwire_table (scalar) (string) | 26.57 ±0.26           | 2.70×    | 37.64 M lookups/s  | 1.37% |
+| H2O (native) (string)                 | 27.74 ±0.28           | 2.82×    | 36.05 M lookups/s  | 1.40% |
+| nginx (scalar) (string)               | 28.21 ±0.21           | 2.87×    | 35.45 M lookups/s  | 1.03% |
+| nginx (native) (string)               | 28.25 ±0.21           | 2.87×    | 35.40 M lookups/s  | 1.03% |
+| H2O (scalar) (string)                 | 29.99 ±0.42           | 3.05×    | 33.34 M lookups/s  | 1.53% |
+| Actix Web (native) (string)           | 52.09 ±0.24           | 5.30×    | 19.20 M lookups/s  | 0.65% |
+| Actix Web (scalar) (string)           | 52.96 ±0.39           | 5.39×    | 18.88 M lookups/s  | 1.03% |
+| Actix Web (SSE4.2) (string)           | 53.41 ±0.44           | 5.43×    | 18.72 M lookups/s  | 1.15% |
 
 Searches Sec-Fetch-Site, Sec-Fetch-Mode, Sec-Fetch-User, Sec-Fetch-Dest, Sec-CH-UA and Sec-CH-UA-Platform, in that order, repeated with equal frequency.
 
@@ -612,26 +642,26 @@ Searches Sec-Fetch-Site, Sec-Fetch-Mode, Sec-Fetch-User, Sec-Fetch-Dest, Sec-CH-
 
 | Implementation                        | Mean ± SD (ns/lookup) | Relative | Throughput         | RCIW  |
 | ------------------------------------- | --------------------- | -------- | ------------------ | ----- |
-| nginx (native) (prepared)             | 5.34 ±0.14            | 1.00×    | 187.27 M lookups/s | 1.91% |
-| nginx (scalar) (prepared)             | 5.61 ±0.10            | 1.05×    | 178.25 M lookups/s | 1.89% |
-| H2O (native) (prepared)               | 7.67 ±0.12            | 1.44×    | 130.38 M lookups/s | 1.66% |
-| H2O (SSE4.2) (prepared)               | 7.96 ±0.10            | 1.49×    | 125.63 M lookups/s | 1.81% |
-| Actix Web (native) (prepared)         | 8.50 ±0.05            | 1.59×    | 117.65 M lookups/s | 0.88% |
-| Actix Web (scalar) (prepared)         | 8.99 ±0.18            | 1.68×    | 111.23 M lookups/s | 1.69% |
-| H2O (scalar) (prepared)               | 9.01 ±0.11            | 1.69×    | 110.99 M lookups/s | 1.35% |
-| Actix Web (SSE4.2) (prepared)         | 9.49 ±0.05            | 1.78×    | 105.37 M lookups/s | 0.77% |
-| hwire + hwire_table (native) (string) | 18.52 ±0.65           | 3.47×    | 54.00 M lookups/s  | 1.99% |
-| H2O (native) (string)                 | 19.53 ±0.17           | 3.66×    | 51.20 M lookups/s  | 1.24% |
-| H2O (SSE4.2) (string)                 | 20.47 ±0.27           | 3.83×    | 48.85 M lookups/s  | 1.42% |
-| H2O (scalar) (string)                 | 21.05 ±0.21           | 3.94×    | 47.51 M lookups/s  | 1.37% |
-| nginx (scalar) (string)               | 21.68 ±0.21           | 4.06×    | 46.13 M lookups/s  | 1.38% |
-| nginx (native) (string)               | 21.97 ±0.18           | 4.11×    | 45.52 M lookups/s  | 1.16% |
-| hwire + hwire_table (SSE2) (string)   | 23.78 ±0.21           | 4.45×    | 42.05 M lookups/s  | 1.25% |
-| hwire + hwire_table (scalar) (string) | 25.26 ±0.18           | 4.73×    | 39.59 M lookups/s  | 1.01% |
-| hwire + hwire_table (SSE4.2) (string) | 26.20 ±0.33           | 4.91×    | 38.17 M lookups/s  | 1.78% |
-| Actix Web (SSE4.2) (string)           | 36.07 ±0.25           | 6.75×    | 27.72 M lookups/s  | 0.98% |
-| Actix Web (scalar) (string)           | 36.22 ±0.39           | 6.78×    | 27.61 M lookups/s  | 1.52% |
-| Actix Web (native) (string)           | 36.47 ±0.33           | 6.83×    | 27.42 M lookups/s  | 1.27% |
+| nginx (scalar) (prepared)             | 5.21 ±0.04            | 1.00×    | 191.94 M lookups/s | 1.10% |
+| nginx (native) (prepared)             | 6.44 ±0.06            | 1.24×    | 155.28 M lookups/s | 1.18% |
+| H2O (native) (prepared)               | 7.15 ±0.20            | 1.37×    | 139.86 M lookups/s | 1.87% |
+| H2O (scalar) (prepared)               | 7.80 ±0.14            | 1.50×    | 128.21 M lookups/s | 1.90% |
+| H2O (SSE4.2) (prepared)               | 7.82 ±0.21            | 1.50×    | 127.88 M lookups/s | 1.99% |
+| Actix Web (scalar) (prepared)         | 8.34 ±0.04            | 1.60×    | 119.90 M lookups/s | 0.72% |
+| Actix Web (native) (prepared)         | 8.42 ±0.04            | 1.62×    | 118.76 M lookups/s | 0.71% |
+| Actix Web (SSE4.2) (prepared)         | 9.05 ±0.10            | 1.74×    | 110.50 M lookups/s | 1.51% |
+| hwire + hwire_table (native) (string) | 18.09 ±0.10           | 3.47×    | 55.28 M lookups/s  | 0.76% |
+| H2O (SSE4.2) (string)                 | 20.23 ±0.26           | 3.88×    | 49.43 M lookups/s  | 1.80% |
+| nginx (native) (string)               | 21.77 ±0.18           | 4.18×    | 45.93 M lookups/s  | 1.13% |
+| nginx (scalar) (string)               | 21.85 ±0.21           | 4.19×    | 45.77 M lookups/s  | 1.38% |
+| H2O (scalar) (string)                 | 23.64 ±0.41           | 4.54×    | 42.30 M lookups/s  | 1.63% |
+| hwire + hwire_table (SSE2) (string)   | 23.73 ±0.17           | 4.55×    | 42.14 M lookups/s  | 1.01% |
+| hwire + hwire_table (SSE4.2) (string) | 23.75 ±0.25           | 4.56×    | 42.11 M lookups/s  | 1.46% |
+| H2O (native) (string)                 | 24.08 ±0.16           | 4.62×    | 41.53 M lookups/s  | 0.94% |
+| hwire + hwire_table (scalar) (string) | 24.41 ±0.40           | 4.69×    | 40.97 M lookups/s  | 1.81% |
+| Actix Web (scalar) (string)           | 35.39 ±0.24           | 6.79×    | 28.26 M lookups/s  | 0.97% |
+| Actix Web (SSE4.2) (string)           | 35.41 ±0.28           | 6.80×    | 28.24 M lookups/s  | 1.10% |
+| Actix Web (native) (string)           | 35.81 ±0.29           | 6.87×    | 27.93 M lookups/s  | 1.15% |
 
 Searches Host, Sec-Fetch-Site, Cookie, Sec-Fetch-Mode, Connection and Sec-CH-UA-Platform, in that order, repeated with equal frequency.
 
@@ -640,26 +670,26 @@ Searches Host, Sec-Fetch-Site, Cookie, Sec-Fetch-Mode, Connection and Sec-CH-UA-
 
 | Implementation                        | Mean ± SD (ns/lookup) | Relative | Throughput         | RCIW  |
 | ------------------------------------- | --------------------- | -------- | ------------------ | ----- |
-| Actix Web (scalar) (prepared)         | 5.73 ±0.07            | 1.00×    | 174.52 M lookups/s | 1.32% |
-| Actix Web (native) (prepared)         | 5.93 ±0.47 †          | 1.03×    | 168.63 M lookups/s | 4.45% |
-| Actix Web (SSE4.2) (prepared)         | 7.53 ±0.04            | 1.31×    | 132.80 M lookups/s | 0.64% |
-| hwire + hwire_table (native) (string) | 8.26 ±0.10            | 1.44×    | 121.07 M lookups/s | 1.72% |
-| hwire + hwire_table (SSE2) (string)   | 14.28 ±0.09           | 2.49×    | 70.03 M lookups/s  | 0.92% |
-| hwire + hwire_table (SSE4.2) (string) | 14.64 ±0.10           | 2.55×    | 68.31 M lookups/s  | 0.96% |
-| H2O (native) (prepared)               | 14.66 ±0.51           | 2.56×    | 68.21 M lookups/s  | 1.97% |
-| H2O (SSE4.2) (prepared)               | 15.03 ±0.33           | 2.62×    | 66.53 M lookups/s  | 1.80% |
-| hwire + hwire_table (scalar) (string) | 16.15 ±0.15           | 2.82×    | 61.92 M lookups/s  | 1.32% |
-| nginx (native) (prepared)             | 16.90 ±0.35           | 2.95×    | 59.17 M lookups/s  | 1.91% |
-| nginx (scalar) (prepared)             | 17.96 ±0.30           | 3.13×    | 55.68 M lookups/s  | 1.85% |
-| H2O (scalar) (prepared)               | 19.43 ±0.41           | 3.39×    | 51.47 M lookups/s  | 1.95% |
-| nginx (scalar) (string)               | 27.55 ±0.28           | 4.81×    | 36.30 M lookups/s  | 1.41% |
-| H2O (native) (string)                 | 27.77 ±0.39           | 4.85×    | 36.01 M lookups/s  | 1.94% |
-| nginx (native) (string)               | 28.77 ±0.41           | 5.02×    | 34.76 M lookups/s  | 1.55% |
-| H2O (SSE4.2) (string)                 | 30.81 ±0.52           | 5.38×    | 32.46 M lookups/s  | 1.86% |
-| H2O (scalar) (string)                 | 33.00 ±0.67           | 5.76×    | 30.30 M lookups/s  | 1.87% |
-| Actix Web (native) (string)           | 42.34 ±0.30           | 7.39×    | 23.62 M lookups/s  | 0.98% |
-| Actix Web (SSE4.2) (string)           | 45.35 ±0.33           | 7.91×    | 22.05 M lookups/s  | 1.01% |
-| Actix Web (scalar) (string)           | 46.04 ±0.68           | 8.03×    | 21.72 M lookups/s  | 1.62% |
+| Actix Web (SSE4.2) (prepared)         | 4.92 ±0.10            | 1.00×    | 203.25 M lookups/s | 1.64% |
+| Actix Web (native) (prepared)         | 5.04 ±0.04            | 1.02×    | 198.41 M lookups/s | 0.99% |
+| Actix Web (scalar) (prepared)         | 5.61 ±0.33 †          | 1.14×    | 178.25 M lookups/s | 3.33% |
+| hwire + hwire_table (native) (string) | 7.68 ±0.03            | 1.56×    | 130.21 M lookups/s | 0.52% |
+| hwire + hwire_table (SSE2) (string)   | 14.20 ±0.14           | 2.89×    | 70.42 M lookups/s  | 1.33% |
+| hwire + hwire_table (SSE4.2) (string) | 14.39 ±0.26           | 2.92×    | 69.49 M lookups/s  | 1.68% |
+| H2O (SSE4.2) (prepared)               | 14.75 ±0.95 †         | 3.00×    | 67.80 M lookups/s  | 3.66% |
+| hwire + hwire_table (scalar) (string) | 15.31 ±0.18           | 3.11×    | 65.32 M lookups/s  | 1.64% |
+| H2O (scalar) (prepared)               | 15.43 ±0.21           | 3.14×    | 64.81 M lookups/s  | 1.49% |
+| H2O (native) (prepared)               | 15.49 ±0.18           | 3.15×    | 64.56 M lookups/s  | 1.64% |
+| nginx (scalar) (prepared)             | 18.08 ±0.67 †         | 3.67×    | 55.31 M lookups/s  | 2.09% |
+| nginx (native) (prepared)             | 21.47 ±0.38           | 4.36×    | 46.58 M lookups/s  | 1.93% |
+| nginx (native) (string)               | 27.11 ±0.21           | 5.51×    | 36.89 M lookups/s  | 1.07% |
+| H2O (SSE4.2) (string)                 | 28.65 ±0.22           | 5.82×    | 34.90 M lookups/s  | 1.09% |
+| H2O (scalar) (string)                 | 31.74 ±0.28           | 6.45×    | 31.51 M lookups/s  | 1.23% |
+| nginx (scalar) (string)               | 31.87 ±0.32           | 6.48×    | 31.38 M lookups/s  | 1.41% |
+| H2O (native) (string)                 | 34.16 ±0.21           | 6.94×    | 29.27 M lookups/s  | 0.88% |
+| Actix Web (SSE4.2) (string)           | 43.13 ±1.12           | 8.77×    | 23.19 M lookups/s  | 1.78% |
+| Actix Web (native) (string)           | 44.74 ±0.30           | 9.09×    | 22.35 M lookups/s  | 0.93% |
+| Actix Web (scalar) (string)           | 44.85 ±0.61           | 9.12×    | 22.30 M lookups/s  | 1.50% |
 
 Searches Hots, Accpet, Cooxie, User-Agend, Sec-CH-UA-Platforn and Referef, in that order, repeated with equal frequency.
 
@@ -675,26 +705,26 @@ Totals use the displayed means: `Parse + Post-process mean + Q × lookup mean`. 
 
 | Implementation                        | Parse + Post-process + 1 Hit (ns) | Relative | Hit Mean ± SD (ns/lookup) | Lookups to beat baseline |
 | ------------------------------------- | --------------------------------- | -------- | ------------------------- | ------------------------ |
-| hwire + hwire_table (native) (string) | 521.80                            | 1.00×    | 16.96 ±0.15               | Baseline                 |
-| hwire + hwire_table (SSE4.2) (string) | 702.96                            | 1.35×    | 22.22 ±0.10               | No crossover             |
-| hwire + hwire_table (SSE2) (string)   | 743.73                            | 1.43×    | 21.37 ±0.14               | No crossover             |
-| H2O (native) (prepared)               | 772.70                            | 1.48×    | 4.73 ±0.08                | 22                       |
-| H2O (native) (string)                 | 783.29                            | 1.50×    | 15.32 ±0.16               | 161                      |
-| H2O (SSE4.2) (prepared) †             | 836.12                            | 1.60×    | 4.58 ±0.06                | 27                       |
-| H2O (SSE4.2) (string) †               | 846.60                            | 1.62×    | 15.06 ±0.20               | 172                      |
-| hwire + hwire_table (scalar) (string) | 927.38                            | 1.78×    | 21.71 ±0.31               | No crossover             |
-| H2O (scalar) (prepared)               | 985.19                            | 1.89×    | 4.83 ±0.06                | 40                       |
-| H2O (scalar) (string)                 | 995.84                            | 1.91×    | 15.48 ±0.32               | 322                      |
-| nginx (native) (prepared)             | 1141.39                           | 2.19×    | 2.83 ±0.03                | 45                       |
-| nginx (native) (string)               | 1154.26                           | 2.21×    | 15.70 ±0.20               | 503                      |
-| nginx (scalar) (prepared)             | 1207.18                           | 2.31×    | 2.84 ±0.02                | 50                       |
-| nginx (scalar) (string)               | 1219.88                           | 2.34×    | 15.54 ±0.08               | 493                      |
-| Actix Web (native) (prepared)         | 1373.12                           | 2.63×    | 6.66 ±0.04                | 84                       |
-| Actix Web (native) (string)           | 1387.25                           | 2.66×    | 20.79 ±0.17               | No crossover             |
-| Actix Web (scalar) (prepared)         | 1468.14                           | 2.81×    | 6.84 ±0.12                | 95                       |
-| Actix Web (scalar) (string)           | 1482.82                           | 2.84×    | 21.52 ±0.23               | No crossover             |
-| Actix Web (SSE4.2) (prepared)         | 1500.22                           | 2.88×    | 7.88 ±0.07                | 109                      |
-| Actix Web (SSE4.2) (string)           | 1514.18                           | 2.90×    | 21.84 ±0.16               | No crossover             |
+| hwire + hwire_table (native) (string) | 500.00                            | 1.00×    | 16.82 ±0.16               | Baseline                 |
+| hwire + hwire_table (SSE4.2) (string) | 658.47                            | 1.32×    | 21.34 ±0.18               | No crossover             |
+| H2O (native) (prepared)               | 754.99                            | 1.51×    | 4.33 ±0.12                | 22                       |
+| hwire + hwire_table (SSE2) (string)   | 762.00                            | 1.52×    | 21.42 ±0.13               | No crossover             |
+| H2O (native) (string) †               | 765.65                            | 1.53×    | 14.99 ±0.59               | 147                      |
+| H2O (SSE4.2) (prepared)               | 840.33                            | 1.68×    | 6.05 ±0.17                | 33                       |
+| H2O (SSE4.2) (string) †               | 851.70                            | 1.70×    | 17.42 ±0.89               | No crossover             |
+| hwire + hwire_table (scalar) (string) | 910.95                            | 1.82×    | 21.96 ±0.18               | No crossover             |
+| H2O (scalar) (prepared) †             | 1024.34                           | 2.05×    | 4.96 ±0.27                | 46                       |
+| H2O (scalar) (string)                 | 1036.87                           | 2.07×    | 17.49 ±0.40               | No crossover             |
+| nginx (scalar) (prepared)             | 1140.79                           | 2.28×    | 2.61 ±0.02                | 47                       |
+| nginx (scalar) (string)               | 1153.64                           | 2.31×    | 15.46 ±0.14               | 482                      |
+| nginx (native) (prepared)             | 1213.65                           | 2.43×    | 2.63 ±0.04                | 52                       |
+| nginx (native) (string)               | 1226.55                           | 2.45×    | 15.53 ±0.16               | 565                      |
+| Actix Web (native) (prepared)         | 1409.61                           | 2.82×    | 6.42 ±0.03                | 89                       |
+| Actix Web (native) (string)           | 1423.51                           | 2.85×    | 20.32 ±0.14               | No crossover             |
+| Actix Web (scalar) (prepared)         | 1484.52                           | 2.97×    | 6.48 ±0.03                | 97                       |
+| Actix Web (scalar) (string)           | 1499.24                           | 3.00×    | 21.20 ±0.07               | No crossover             |
+| Actix Web (SSE4.2) (prepared)         | 1534.33                           | 3.07×    | 6.48 ±0.05                | 102                      |
+| Actix Web (SSE4.2) (string)           | 1549.12                           | 3.10×    | 21.27 ±0.13               | No crossover             |
 
 Parse + Post-process + 1 lookup baseline: hwire + hwire_table (native) (string). Each Relative uses the fastest total in its column.
 No crossover: it cannot overtake under this model. The crossover is the first integer Q giving a strictly lower total.
@@ -704,26 +734,26 @@ No crossover: it cannot overtake under this model. The crossover is the first in
 
 | Implementation                        | Parse + Post-process + 1 Hit (ns) | Relative | Hit Mean ± SD (ns/lookup) | Lookups to beat baseline |
 | ------------------------------------- | --------------------------------- | -------- | ------------------------- | ------------------------ |
-| hwire + hwire_table (native) (string) | 524.57                            | 1.00×    | 19.73 ±0.13               | Baseline                 |
-| hwire + hwire_table (SSE4.2) (string) | 706.69                            | 1.35×    | 25.95 ±0.19               | No crossover             |
-| hwire + hwire_table (SSE2) (string)   | 748.23                            | 1.43×    | 25.87 ±0.13               | No crossover             |
-| H2O (native) (prepared)               | 780.79                            | 1.49×    | 12.82 ±0.23               | 39                       |
-| H2O (native) (string)                 | 791.80                            | 1.51×    | 23.83 ±0.32               | No crossover             |
-| H2O (SSE4.2) (prepared) †             | 843.95                            | 1.61×    | 12.41 ±0.17               | 45                       |
-| H2O (SSE4.2) (string) †               | 857.79                            | 1.64×    | 26.25 ±0.35               | No crossover             |
-| hwire + hwire_table (scalar) (string) | 931.54                            | 1.78×    | 25.87 ±0.21               | No crossover             |
-| H2O (scalar) (prepared)               | 995.38                            | 1.90×    | 15.02 ±0.20               | 101                      |
-| H2O (scalar) (string)                 | 1007.38                           | 1.92×    | 27.02 ±0.25               | No crossover             |
-| nginx (native) (prepared)             | 1149.52                           | 2.19×    | 10.96 ±0.32               | 73                       |
-| nginx (native) (string)               | 1166.77                           | 2.22×    | 28.21 ±0.27               | No crossover             |
-| nginx (scalar) (prepared)             | 1216.07                           | 2.32×    | 11.73 ±0.07               | 88                       |
-| nginx (scalar) (string)               | 1232.29                           | 2.35×    | 27.95 ±0.23               | No crossover             |
-| Actix Web (native) (prepared)         | 1376.78                           | 2.62×    | 10.32 ±0.24               | 92                       |
-| Actix Web (native) (string)           | 1419.45                           | 2.71×    | 52.99 ±0.47               | No crossover             |
-| Actix Web (scalar) (prepared)         | 1471.74                           | 2.81×    | 10.44 ±0.18               | 103                      |
-| Actix Web (SSE4.2) (prepared)         | 1502.69                           | 2.86×    | 10.35 ±0.07               | 106                      |
-| Actix Web (scalar) (string)           | 1514.79                           | 2.89×    | 53.49 ±1.35               | No crossover             |
-| Actix Web (SSE4.2) (string)           | 1546.42                           | 2.95×    | 54.08 ±0.58               | No crossover             |
+| hwire + hwire_table (native) (string) | 502.69                            | 1.00×    | 19.51 ±0.13               | Baseline                 |
+| hwire + hwire_table (SSE4.2) (string) | 662.96                            | 1.32×    | 25.83 ±0.16               | No crossover             |
+| H2O (native) (prepared)               | 763.64                            | 1.52×    | 12.98 ±0.25               | 41                       |
+| hwire + hwire_table (SSE2) (string)   | 766.40                            | 1.52×    | 25.82 ±0.14               | No crossover             |
+| H2O (native) (string)                 | 778.40                            | 1.55×    | 27.74 ±0.28               | No crossover             |
+| H2O (SSE4.2) (prepared)               | 847.56                            | 1.69×    | 13.28 ±0.18               | 57                       |
+| H2O (SSE4.2) (string)                 | 859.59                            | 1.71×    | 25.31 ±0.24               | No crossover             |
+| hwire + hwire_table (scalar) (string) | 915.56                            | 1.82×    | 26.57 ±0.26               | No crossover             |
+| H2O (scalar) (prepared)               | 1032.69                           | 2.05×    | 13.31 ±0.34               | 87                       |
+| H2O (scalar) (string)                 | 1049.37                           | 2.09×    | 29.99 ±0.42               | No crossover             |
+| nginx (scalar) (prepared)             | 1150.23                           | 2.29×    | 12.05 ±0.15               | 88                       |
+| nginx (scalar) (string)               | 1166.39                           | 2.32×    | 28.21 ±0.21               | No crossover             |
+| nginx (native) (prepared)             | 1223.91                           | 2.43×    | 12.89 ±0.10               | 110                      |
+| nginx (native) (string)               | 1239.27                           | 2.47×    | 28.25 ±0.21               | No crossover             |
+| Actix Web (native) (prepared)         | 1413.02                           | 2.81×    | 9.83 ±0.14                | 96                       |
+| Actix Web (native) (string)           | 1455.28                           | 2.89×    | 52.09 ±0.24               | No crossover             |
+| Actix Web (scalar) (prepared)         | 1487.90                           | 2.96×    | 9.86 ±0.05                | 104                      |
+| Actix Web (scalar) (string)           | 1531.00                           | 3.05×    | 52.96 ±0.39               | No crossover             |
+| Actix Web (SSE4.2) (prepared)         | 1537.72                           | 3.06×    | 9.87 ±0.05                | 109                      |
+| Actix Web (SSE4.2) (string)           | 1581.26                           | 3.15×    | 53.41 ±0.44               | No crossover             |
 
 Parse + Post-process + 1 lookup baseline: hwire + hwire_table (native) (string). Each Relative uses the fastest total in its column.
 No crossover: it cannot overtake under this model. The crossover is the first integer Q giving a strictly lower total.
@@ -733,26 +763,26 @@ No crossover: it cannot overtake under this model. The crossover is the first in
 
 | Implementation                        | Parse + Post-process + 1 Hit (ns) | Relative | Hit Mean ± SD (ns/lookup) | Lookups to beat baseline |
 | ------------------------------------- | --------------------------------- | -------- | ------------------------- | ------------------------ |
-| hwire + hwire_table (native) (string) | 523.36                            | 1.00×    | 18.52 ±0.65               | Baseline                 |
-| hwire + hwire_table (SSE4.2) (string) | 706.94                            | 1.35×    | 26.20 ±0.33               | No crossover             |
-| hwire + hwire_table (SSE2) (string)   | 746.14                            | 1.43×    | 23.78 ±0.21               | No crossover             |
-| H2O (native) (prepared)               | 775.64                            | 1.48×    | 7.67 ±0.12                | 25                       |
-| H2O (native) (string)                 | 787.50                            | 1.50×    | 19.53 ±0.17               | No crossover             |
-| H2O (SSE4.2) (prepared) †             | 839.50                            | 1.60×    | 7.96 ±0.10                | 31                       |
-| H2O (SSE4.2) (string) †               | 852.01                            | 1.63×    | 20.47 ±0.27               | No crossover             |
-| hwire + hwire_table (scalar) (string) | 930.93                            | 1.78×    | 25.26 ±0.18               | No crossover             |
-| H2O (scalar) (prepared)               | 989.37                            | 1.89×    | 9.01 ±0.11                | 51                       |
-| H2O (scalar) (string)                 | 1001.41                           | 1.91×    | 21.05 ±0.21               | No crossover             |
-| nginx (native) (prepared)             | 1143.90                           | 2.19×    | 5.34 ±0.14                | 49                       |
-| nginx (native) (string)               | 1160.53                           | 2.22×    | 21.97 ±0.18               | No crossover             |
-| nginx (scalar) (prepared)             | 1209.95                           | 2.31×    | 5.61 ±0.10                | 55                       |
-| nginx (scalar) (string)               | 1226.02                           | 2.34×    | 21.68 ±0.21               | No crossover             |
-| Actix Web (native) (prepared)         | 1374.96                           | 2.63×    | 8.50 ±0.05                | 86                       |
-| Actix Web (native) (string)           | 1402.93                           | 2.68×    | 36.47 ±0.33               | No crossover             |
-| Actix Web (scalar) (prepared)         | 1470.29                           | 2.81×    | 8.99 ±0.18                | 101                      |
-| Actix Web (scalar) (string)           | 1497.52                           | 2.86×    | 36.22 ±0.39               | No crossover             |
-| Actix Web (SSE4.2) (prepared)         | 1501.83                           | 2.87×    | 9.49 ±0.05                | 110                      |
-| Actix Web (SSE4.2) (string)           | 1528.41                           | 2.92×    | 36.07 ±0.25               | No crossover             |
+| hwire + hwire_table (native) (string) | 501.27                            | 1.00×    | 18.09 ±0.10               | Baseline                 |
+| hwire + hwire_table (SSE4.2) (string) | 660.88                            | 1.32×    | 23.75 ±0.25               | No crossover             |
+| H2O (native) (prepared)               | 757.81                            | 1.51×    | 7.15 ±0.20                | 25                       |
+| hwire + hwire_table (SSE2) (string)   | 764.31                            | 1.52×    | 23.73 ±0.17               | No crossover             |
+| H2O (native) (string)                 | 774.74                            | 1.55×    | 24.08 ±0.16               | No crossover             |
+| H2O (SSE4.2) (prepared)               | 842.10                            | 1.68×    | 7.82 ±0.21                | 35                       |
+| H2O (SSE4.2) (string)                 | 854.51                            | 1.70×    | 20.23 ±0.26               | No crossover             |
+| hwire + hwire_table (scalar) (string) | 913.40                            | 1.82×    | 24.41 ±0.40               | No crossover             |
+| H2O (scalar) (prepared)               | 1027.18                           | 2.05×    | 7.80 ±0.14                | 53                       |
+| H2O (scalar) (string)                 | 1043.02                           | 2.08×    | 23.64 ±0.41               | No crossover             |
+| nginx (scalar) (prepared)             | 1143.39                           | 2.28×    | 5.21 ±0.04                | 51                       |
+| nginx (scalar) (string)               | 1160.03                           | 2.31×    | 21.85 ±0.21               | No crossover             |
+| nginx (native) (prepared)             | 1217.46                           | 2.43×    | 6.44 ±0.06                | 63                       |
+| nginx (native) (string)               | 1232.79                           | 2.46×    | 21.77 ±0.18               | No crossover             |
+| Actix Web (native) (prepared)         | 1411.61                           | 2.82×    | 8.42 ±0.04                | 96                       |
+| Actix Web (native) (string)           | 1439.00                           | 2.87×    | 35.81 ±0.29               | No crossover             |
+| Actix Web (scalar) (prepared)         | 1486.38                           | 2.97×    | 8.34 ±0.04                | 103                      |
+| Actix Web (scalar) (string)           | 1513.43                           | 3.02×    | 35.39 ±0.24               | No crossover             |
+| Actix Web (SSE4.2) (prepared)         | 1536.90                           | 3.07×    | 9.05 ±0.10                | 116                      |
+| Actix Web (SSE4.2) (string)           | 1563.26                           | 3.12×    | 35.41 ±0.28               | No crossover             |
 
 Parse + Post-process + 1 lookup baseline: hwire + hwire_table (native) (string). Each Relative uses the fastest total in its column.
 No crossover: it cannot overtake under this model. The crossover is the first integer Q giving a strictly lower total.
@@ -762,26 +792,26 @@ No crossover: it cannot overtake under this model. The crossover is the first in
 
 | Implementation                        | Parse + Post-process + 1 Miss (ns) | Relative | Miss Mean ± SD (ns/lookup) | Lookups to beat baseline |
 | ------------------------------------- | ---------------------------------- | -------- | -------------------------- | ------------------------ |
-| hwire + hwire_table (native) (string) | 513.10                             | 1.00×    | 8.26 ±0.10                 | Baseline                 |
-| hwire + hwire_table (SSE4.2) (string) | 695.38                             | 1.36×    | 14.64 ±0.10                | No crossover             |
-| hwire + hwire_table (SSE2) (string)   | 736.64                             | 1.44×    | 14.28 ±0.09                | No crossover             |
-| H2O (native) (prepared)               | 782.63                             | 1.53×    | 14.66 ±0.51                | No crossover             |
-| H2O (native) (string)                 | 795.74                             | 1.55×    | 27.77 ±0.39                | No crossover             |
-| H2O (SSE4.2) (prepared) †             | 846.57                             | 1.65×    | 15.03 ±0.33                | No crossover             |
-| H2O (SSE4.2) (string) †               | 862.35                             | 1.68×    | 30.81 ±0.52                | No crossover             |
-| hwire + hwire_table (scalar) (string) | 921.82                             | 1.80×    | 16.15 ±0.15                | No crossover             |
-| H2O (scalar) (prepared)               | 999.79                             | 1.95×    | 19.43 ±0.41                | No crossover             |
-| H2O (scalar) (string)                 | 1013.36                            | 1.97×    | 33.00 ±0.67                | No crossover             |
-| nginx (native) (prepared)             | 1155.46                            | 2.25×    | 16.90 ±0.35                | No crossover             |
-| nginx (native) (string)               | 1167.33                            | 2.28×    | 28.77 ±0.41                | No crossover             |
-| nginx (scalar) (prepared)             | 1222.30                            | 2.38×    | 17.96 ±0.30                | No crossover             |
-| nginx (scalar) (string)               | 1231.89                            | 2.40×    | 27.55 ±0.28                | No crossover             |
-| Actix Web (native) (prepared) †       | 1372.39                            | 2.67×    | 5.93 ±0.47                 | 370                      |
-| Actix Web (native) (string)           | 1408.80                            | 2.75×    | 42.34 ±0.30                | No crossover             |
-| Actix Web (scalar) (prepared)         | 1467.03                            | 2.86×    | 5.73 ±0.07                 | 379                      |
-| Actix Web (SSE4.2) (prepared)         | 1499.87                            | 2.92×    | 7.53 ±0.04                 | 1353                     |
-| Actix Web (scalar) (string)           | 1507.34                            | 2.94×    | 46.04 ±0.68                | No crossover             |
-| Actix Web (SSE4.2) (string)           | 1537.69                            | 3.00×    | 45.35 ±0.33                | No crossover             |
+| hwire + hwire_table (native) (string) | 490.86                             | 1.00×    | 7.68 ±0.03                 | Baseline                 |
+| hwire + hwire_table (SSE4.2) (string) | 651.52                             | 1.33×    | 14.39 ±0.26                | No crossover             |
+| hwire + hwire_table (SSE2) (string)   | 754.78                             | 1.54×    | 14.20 ±0.14                | No crossover             |
+| H2O (native) (prepared)               | 766.15                             | 1.56×    | 15.49 ±0.18                | No crossover             |
+| H2O (native) (string)                 | 784.82                             | 1.60×    | 34.16 ±0.21                | No crossover             |
+| H2O (SSE4.2) (prepared) †             | 849.03                             | 1.73×    | 14.75 ±0.95                | No crossover             |
+| H2O (SSE4.2) (string)                 | 862.93                             | 1.76×    | 28.65 ±0.22                | No crossover             |
+| hwire + hwire_table (scalar) (string) | 904.30                             | 1.84×    | 15.31 ±0.18                | No crossover             |
+| H2O (scalar) (prepared)               | 1034.81                            | 2.11×    | 15.43 ±0.21                | No crossover             |
+| H2O (scalar) (string)                 | 1051.12                            | 2.14×    | 31.74 ±0.28                | No crossover             |
+| nginx (scalar) (prepared) †           | 1156.26                            | 2.36×    | 18.08 ±0.67                | No crossover             |
+| nginx (scalar) (string)               | 1170.05                            | 2.38×    | 31.87 ±0.32                | No crossover             |
+| nginx (native) (prepared)             | 1232.49                            | 2.51×    | 21.47 ±0.38                | No crossover             |
+| nginx (native) (string)               | 1238.13                            | 2.52×    | 27.11 ±0.21                | No crossover             |
+| Actix Web (native) (prepared)         | 1408.23                            | 2.87×    | 5.04 ±0.04                 | 349                      |
+| Actix Web (native) (string)           | 1447.93                            | 2.95×    | 44.74 ±0.30                | No crossover             |
+| Actix Web (scalar) (prepared) †       | 1483.65                            | 3.02×    | 5.61 ±0.33                 | 481                      |
+| Actix Web (scalar) (string)           | 1522.89                            | 3.10×    | 44.85 ±0.61                | No crossover             |
+| Actix Web (SSE4.2) (prepared)         | 1532.77                            | 3.12×    | 4.92 ±0.10                 | 379                      |
+| Actix Web (SSE4.2) (string)           | 1570.98                            | 3.20×    | 43.13 ±1.12                | No crossover             |
 
 Parse + Post-process + 1 lookup baseline: hwire + hwire_table (native) (string). Each Relative uses the fastest total in its column.
 No crossover: it cannot overtake under this model. The crossover is the first integer Q giving a strictly lower total.
@@ -837,18 +867,18 @@ Parse + Post-process includes initialization, HTTP parsing and native header sto
 
 | Implementation               | Mean ± SD (ns/request) | Relative | Throughput   | RCIW  |
 | ---------------------------- | ---------------------- | -------- | ------------ | ----- |
-| hwire + hwire_table (native) | 727.16 ±7.99           | 1.00×    | 1.38 M req/s | 1.54% |
-| hwire + hwire_table (SSE4.2) | 916.47 ±8.57           | 1.26×    | 1.09 M req/s | 1.31% |
-| hwire + hwire_table (SSE2)   | 937.23 ±8.05           | 1.29×    | 1.07 M req/s | 1.20% |
-| H2O (native)                 | 1007.10 ±10.52         | 1.38×    | 0.99 M req/s | 1.46% |
-| H2O (SSE4.2)                 | 1087.27 ±15.14         | 1.50×    | 0.92 M req/s | 1.95% |
-| Actix Web (native)           | 1862.25 ±19.12         | 2.56×    | 0.54 M req/s | 1.44% |
-| H2O (scalar)                 | 1884.13 ±46.70         | 2.59×    | 0.53 M req/s | 1.84% |
-| hwire + hwire_table (scalar) | 1939.20 ±15.91         | 2.67×    | 0.52 M req/s | 1.15% |
-| Actix Web (scalar)           | 2012.65 ±21.75         | 2.77×    | 0.50 M req/s | 1.51% |
-| Actix Web (SSE4.2)           | 2424.36 ±33.31         | 3.33×    | 0.41 M req/s | 1.92% |
-| nginx (native)               | 2738.09 ±14.33         | 3.77×    | 0.37 M req/s | 0.73% |
-| nginx (scalar)               | 2740.16 ±16.02         | 3.77×    | 0.36 M req/s | 0.82% |
+| hwire + hwire_table (native) | 744.61 ±17.10          | 1.00×    | 1.34 M req/s | 1.88% |
+| hwire + hwire_table (SSE4.2) | 873.35 ±7.91           | 1.17×    | 1.15 M req/s | 1.27% |
+| hwire + hwire_table (SSE2)   | 981.05 ±10.73          | 1.32×    | 1.02 M req/s | 1.53% |
+| H2O (native)                 | 1010.44 ±7.99          | 1.36×    | 0.99 M req/s | 1.11% |
+| H2O (SSE4.2)                 | 1103.99 ±21.86         | 1.48×    | 0.91 M req/s | 1.84% |
+| Actix Web (native)           | 1884.76 ±14.63         | 2.53×    | 0.53 M req/s | 1.09% |
+| H2O (scalar)                 | 1929.03 ±23.77         | 2.59×    | 0.52 M req/s | 1.72% |
+| hwire + hwire_table (scalar) | 1945.85 ±10.29         | 2.61×    | 0.51 M req/s | 0.74% |
+| Actix Web (scalar)           | 1982.31 ±18.48         | 2.66×    | 0.50 M req/s | 1.30% |
+| Actix Web (SSE4.2)           | 2470.01 ±27.95         | 3.32×    | 0.40 M req/s | 1.58% |
+| nginx (scalar)               | 2701.89 ±14.81         | 3.63×    | 0.37 M req/s | 0.77% |
+| nginx (native)               | 2777.44 ±27.65         | 3.73×    | 0.36 M req/s | 1.39% |
 
 
 ### Incomplete-input handling
@@ -875,36 +905,36 @@ The same 4201-byte request is exposed in two calls, first through byte 2100 (50%
 
 | Implementation               | Mean ± SD (ns/request) | Relative | Vs complete input | RCIW  |
 | ---------------------------- | ---------------------- | -------- | ----------------- | ----- |
-| hwire + hwire_table (native) | 1201.85 ±5.52          | 1.00×    | 1.65×             | 0.64% |
-| hwire + hwire_table (SSE4.2) | 1516.77 ±12.41         | 1.26×    | 1.66×             | 1.14% |
-| hwire + hwire_table (SSE2)   | 1558.06 ±8.90          | 1.30×    | 1.66×             | 0.80% |
-| Actix Web (native)           | 2323.57 ±11.14         | 1.93×    | 1.25×             | 0.67% |
-| H2O (native)                 | 2329.65 ±10.07         | 1.94×    | 2.31×             | 0.60% |
-| H2O (SSE4.2)                 | 2420.09 ±22.18         | 2.01×    | 2.23×             | 1.28% |
-| Actix Web (scalar)           | 2501.72 ±35.40         | 2.08×    | 1.24×             | 1.55% |
-| nginx (native)               | 2747.83 ±22.25         | 2.29×    | 1.00×             | 1.13% |
-| nginx (scalar)               | 2793.29 ±21.62         | 2.32×    | 1.02×             | 1.08% |
-| hwire + hwire_table (scalar) | 3043.77 ±20.42         | 2.53×    | 1.57×             | 0.94% |
-| Actix Web (SSE4.2)           | 3091.57 ±21.37         | 2.57×    | 1.28×             | 0.97% |
-| H2O (scalar)                 | 3652.64 ±64.51         | 3.04×    | 1.94×             | 1.93% |
+| hwire + hwire_table (native) | 1244.32 ±6.30          | 1.00×    | 1.67×             | 0.71% |
+| hwire + hwire_table (SSE4.2) | 1459.78 ±12.08         | 1.17×    | 1.67×             | 1.16% |
+| hwire + hwire_table (SSE2)   | 1623.92 ±12.03         | 1.31×    | 1.66×             | 1.04% |
+| Actix Web (native)           | 2345.45 ±17.45         | 1.88×    | 1.24×             | 1.04% |
+| H2O (native)                 | 2363.77 ±12.42         | 1.90×    | 2.34×             | 0.73% |
+| H2O (SSE4.2)                 | 2404.16 ±14.73         | 1.93×    | 2.18×             | 0.86% |
+| Actix Web (scalar)           | 2440.54 ±16.47         | 1.96×    | 1.23×             | 0.94% |
+| nginx (scalar)               | 2746.03 ±15.98         | 2.21×    | 1.02×             | 0.81% |
+| nginx (native)               | 2812.45 ±18.09         | 2.26×    | 1.01×             | 0.90% |
+| hwire + hwire_table (scalar) | 3050.02 ±13.66         | 2.45×    | 1.57×             | 0.63% |
+| Actix Web (SSE4.2)           | 3142.11 ±22.78         | 2.53×    | 1.27×             | 1.01% |
+| H2O (scalar)                 | 3700.77 ±36.41         | 2.97×    | 1.92×             | 1.38% |
 
 
 ### Split at 90% — Parse + Post-process
 
 | Implementation               | Mean ± SD (ns/request) | Relative | Vs complete input | RCIW  |
 | ---------------------------- | ---------------------- | -------- | ----------------- | ----- |
-| hwire + hwire_table (native) | 1324.80 ±11.41         | 1.00×    | 1.82×             | 1.20% |
-| H2O (native)                 | 1650.25 ±6.88          | 1.25×    | 1.64×             | 0.58% |
-| hwire + hwire_table (SSE4.2) | 1651.98 ±11.69         | 1.25×    | 1.80×             | 0.99% |
-| hwire + hwire_table (SSE2)   | 1673.81 ±10.18         | 1.26×    | 1.79×             | 0.85% |
-| H2O (SSE4.2)                 | 1740.06 ±13.60         | 1.31×    | 1.60×             | 1.09% |
-| Actix Web (native)           | 2572.93 ±18.43         | 1.94×    | 1.38×             | 1.00% |
-| nginx (native)               | 2748.90 ±17.06         | 2.07×    | 1.00×             | 0.87% |
-| Actix Web (scalar)           | 2768.18 ±22.16         | 2.09×    | 1.38×             | 1.12% |
-| nginx (scalar)               | 2789.85 ±19.19         | 2.11×    | 1.02×             | 0.96% |
-| H2O (scalar)                 | 3423.39 ±44.85         | 2.58×    | 1.82×             | 1.83% |
-| Actix Web (SSE4.2)           | 3562.11 ±26.57         | 2.69×    | 1.47×             | 1.04% |
-| hwire + hwire_table (scalar) | 3609.12 ±16.79         | 2.72×    | 1.86×             | 0.65% |
+| hwire + hwire_table (native) | 1390.34 ±4.91          | 1.00×    | 1.87×             | 0.49% |
+| hwire + hwire_table (SSE4.2) | 1592.17 ±11.01         | 1.15×    | 1.82×             | 0.97% |
+| H2O (native)                 | 1675.61 ±12.48         | 1.21×    | 1.66×             | 1.04% |
+| H2O (SSE4.2)                 | 1708.37 ±15.32         | 1.23×    | 1.55×             | 1.25% |
+| hwire + hwire_table (SSE2)   | 1761.88 ±14.14         | 1.27×    | 1.80×             | 1.12% |
+| Actix Web (native)           | 2604.67 ±77.52         | 1.87×    | 1.38×             | 1.78% |
+| Actix Web (scalar)           | 2684.09 ±18.73         | 1.93×    | 1.35×             | 0.98% |
+| nginx (scalar)               | 2751.97 ±19.37         | 1.98×    | 1.02×             | 0.98% |
+| nginx (native)               | 2816.88 ±18.81         | 2.03×    | 1.01×             | 0.93% |
+| H2O (scalar)                 | 3344.74 ±19.36         | 2.41×    | 1.73×             | 0.81% |
+| hwire + hwire_table (scalar) | 3606.07 ±11.46         | 2.59×    | 1.85×             | 0.44% |
+| Actix Web (SSE4.2)           | 3630.75 ±43.68         | 2.61×    | 1.47×             | 1.68% |
 
 
 ### First Header Lookup Cost and Break-even — 50% split
@@ -920,26 +950,26 @@ Totals use the displayed means: `Parse + Post-process mean + Q × lookup mean`. 
 
 | Implementation                        | Parse + Post-process + 1 Hit (ns) | Relative | Hit Mean ± SD (ns/lookup) | Lookups to beat baseline |
 | ------------------------------------- | --------------------------------- | -------- | ------------------------- | ------------------------ |
-| hwire + hwire_table (native) (string) | 1218.82                           | 1.00×    | 16.97 ±0.13               | Baseline                 |
-| hwire + hwire_table (SSE4.2) (string) | 1539.19                           | 1.26×    | 22.42 ±0.29               | No crossover             |
-| hwire + hwire_table (SSE2) (string)   | 1579.48                           | 1.30×    | 21.42 ±0.13               | No crossover             |
-| Actix Web (native) (prepared)         | 2330.27                           | 1.91×    | 6.70 ±0.17                | 110                      |
-| H2O (native) (prepared) †             | 2334.36                           | 1.92×    | 4.71 ±0.24                | 92                       |
-| Actix Web (native) (string)           | 2344.46                           | 1.92×    | 20.89 ±0.17               | No crossover             |
-| H2O (native) (string)                 | 2344.86                           | 1.92×    | 15.21 ±0.26               | 641                      |
-| H2O (SSE4.2) (prepared)               | 2425.53                           | 1.99×    | 5.44 ±0.06                | 106                      |
-| H2O (SSE4.2) (string)                 | 2436.01                           | 2.00×    | 15.92 ±0.28               | 1161                     |
-| Actix Web (scalar) (prepared)         | 2508.63                           | 2.06×    | 6.91 ±0.09                | 130                      |
-| Actix Web (scalar) (string)           | 2523.32                           | 2.07×    | 21.60 ±0.25               | No crossover             |
-| nginx (native) (prepared)             | 2750.65                           | 2.26×    | 2.82 ±0.02                | 110                      |
-| nginx (native) (string)               | 2763.47                           | 2.27×    | 15.64 ±0.15               | 1163                     |
-| nginx (scalar) (prepared)             | 2796.14                           | 2.29×    | 2.85 ±0.02                | 113                      |
-| nginx (scalar) (string)               | 2808.81                           | 2.30×    | 15.52 ±0.10               | 1098                     |
-| hwire + hwire_table (scalar) (string) | 3065.40                           | 2.52×    | 21.63 ±0.22               | No crossover             |
-| Actix Web (SSE4.2) (prepared)         | 3099.38                           | 2.54×    | 7.81 ±0.04                | 207                      |
-| Actix Web (SSE4.2) (string)           | 3113.25                           | 2.55×    | 21.68 ±0.14               | No crossover             |
-| H2O (scalar) (prepared)               | 3657.33                           | 3.00×    | 4.69 ±0.11                | 200                      |
-| H2O (scalar) (string)                 | 3668.03                           | 3.01×    | 15.39 ±0.32               | 1552                     |
+| hwire + hwire_table (native) (string) | 1261.21                           | 1.00×    | 16.89 ±0.07               | Baseline                 |
+| hwire + hwire_table (SSE4.2) (string) | 1481.33                           | 1.17×    | 21.55 ±0.24               | No crossover             |
+| hwire + hwire_table (SSE2) (string)   | 1645.47                           | 1.30×    | 21.55 ±0.53               | No crossover             |
+| Actix Web (native) (prepared)         | 2351.87                           | 1.86×    | 6.42 ±0.03                | 106                      |
+| Actix Web (native) (string)           | 2366.12                           | 1.88×    | 20.67 ±0.38               | No crossover             |
+| H2O (native) (prepared) †             | 2368.50                           | 1.88×    | 4.73 ±0.19                | 93                       |
+| H2O (native) (string)                 | 2378.55                           | 1.89×    | 14.78 ±0.25               | 531                      |
+| H2O (SSE4.2) (prepared)               | 2410.20                           | 1.91×    | 6.04 ±0.07                | 107                      |
+| H2O (SSE4.2) (string)                 | 2420.49                           | 1.92×    | 16.33 ±0.17               | 2072                     |
+| Actix Web (scalar) (prepared)         | 2447.07                           | 1.94×    | 6.53 ±0.03                | 116                      |
+| Actix Web (scalar) (string)           | 2461.90                           | 1.95×    | 21.36 ±0.09               | No crossover             |
+| nginx (scalar) (prepared)             | 2748.64                           | 2.18×    | 2.61 ±0.01                | 106                      |
+| nginx (scalar) (string)               | 2761.62                           | 2.19×    | 15.59 ±0.19               | 1156                     |
+| nginx (native) (prepared)             | 2815.06                           | 2.23×    | 2.61 ±0.01                | 110                      |
+| nginx (native) (string)               | 2828.01                           | 2.24×    | 15.56 ±0.11               | 1180                     |
+| hwire + hwire_table (scalar) (string) | 3072.17                           | 2.44×    | 22.15 ±0.27               | No crossover             |
+| Actix Web (SSE4.2) (prepared)         | 3148.63                           | 2.50×    | 6.52 ±0.04                | 184                      |
+| Actix Web (SSE4.2) (string)           | 3163.62                           | 2.51×    | 21.51 ±0.21               | No crossover             |
+| H2O (scalar) (prepared)               | 3705.44                           | 2.94×    | 4.67 ±0.15                | 202                      |
+| H2O (scalar) (string)                 | 3718.67                           | 2.95×    | 17.90 ±0.33               | No crossover             |
 
 Parse + Post-process + 1 lookup baseline: hwire + hwire_table (native) (string). Each Relative uses the fastest total in its column.
 No crossover: it cannot overtake under this model. The crossover is the first integer Q giving a strictly lower total.
@@ -949,26 +979,26 @@ No crossover: it cannot overtake under this model. The crossover is the first in
 
 | Implementation                        | Parse + Post-process + 1 Hit (ns) | Relative | Hit Mean ± SD (ns/lookup) | Lookups to beat baseline |
 | ------------------------------------- | --------------------------------- | -------- | ------------------------- | ------------------------ |
-| hwire + hwire_table (native) (string) | 1221.47                           | 1.00×    | 19.62 ±0.17               | Baseline                 |
-| hwire + hwire_table (SSE4.2) (string) | 1542.62                           | 1.26×    | 25.85 ±0.12               | No crossover             |
-| hwire + hwire_table (SSE2) (string)   | 1583.92                           | 1.30×    | 25.86 ±0.15               | No crossover             |
-| Actix Web (native) (prepared)         | 2333.76                           | 1.91×    | 10.19 ±0.07               | 119                      |
-| H2O (native) (prepared)               | 2341.39                           | 1.92×    | 11.74 ±0.06               | 144                      |
-| H2O (native) (string) †               | 2356.54                           | 1.93×    | 26.89 ±3.19               | No crossover             |
-| Actix Web (native) (string)           | 2378.22                           | 1.95×    | 54.65 ±0.38               | No crossover             |
-| H2O (SSE4.2) (prepared)               | 2432.64                           | 1.99×    | 12.55 ±0.41               | 173                      |
-| H2O (SSE4.2) (string)                 | 2446.40                           | 2.00×    | 26.31 ±0.20               | No crossover             |
-| Actix Web (scalar) (prepared)         | 2512.25                           | 2.06×    | 10.53 ±0.14               | 144                      |
-| Actix Web (scalar) (string)           | 2555.09                           | 2.09×    | 53.37 ±0.54               | No crossover             |
-| nginx (native) (prepared)             | 2758.61                           | 2.26×    | 10.78 ±0.20               | 175                      |
-| nginx (native) (string)               | 2777.29                           | 2.27×    | 29.46 ±0.27               | No crossover             |
-| nginx (scalar) (prepared)             | 2805.06                           | 2.30×    | 11.77 ±0.08               | 203                      |
-| nginx (scalar) (string)               | 2821.22                           | 2.31×    | 27.93 ±0.16               | No crossover             |
-| hwire + hwire_table (scalar) (string) | 3069.81                           | 2.51×    | 26.04 ±0.77               | No crossover             |
-| Actix Web (SSE4.2) (prepared)         | 3101.87                           | 2.54×    | 10.30 ±0.07               | 203                      |
-| Actix Web (SSE4.2) (string)           | 3145.10                           | 2.57×    | 53.53 ±0.25               | No crossover             |
-| H2O (scalar) (prepared)               | 3666.60                           | 3.00×    | 13.96 ±0.19               | 434                      |
-| H2O (scalar) (string)                 | 3680.11                           | 3.01×    | 27.47 ±0.27               | No crossover             |
+| hwire + hwire_table (native) (string) | 1263.85                           | 1.00×    | 19.53 ±0.10               | Baseline                 |
+| hwire + hwire_table (SSE4.2) (string) | 1485.71                           | 1.18×    | 25.93 ±0.16               | No crossover             |
+| hwire + hwire_table (SSE2) (string)   | 1649.81                           | 1.31×    | 25.89 ±0.15               | No crossover             |
+| Actix Web (native) (prepared)         | 2355.27                           | 1.86×    | 9.82 ±0.09                | 114                      |
+| H2O (native) (prepared)               | 2376.25                           | 1.88×    | 12.48 ±0.09               | 159                      |
+| H2O (native) (string)                 | 2394.68                           | 1.89×    | 30.91 ±0.10               | No crossover             |
+| Actix Web (native) (string)           | 2397.96                           | 1.90×    | 52.51 ±0.24               | No crossover             |
+| H2O (SSE4.2) (prepared)               | 2417.03                           | 1.91×    | 12.87 ±0.34               | 175                      |
+| H2O (SSE4.2) (string)                 | 2427.80                           | 1.92×    | 23.64 ±0.29               | No crossover             |
+| Actix Web (scalar) (prepared)         | 2450.38                           | 1.94×    | 9.84 ±0.07                | 124                      |
+| Actix Web (scalar) (string)           | 2493.95                           | 1.97×    | 53.41 ±0.54               | No crossover             |
+| nginx (scalar) (prepared)             | 2758.02                           | 2.18×    | 11.99 ±0.28               | 200                      |
+| nginx (scalar) (string)               | 2774.49                           | 2.20×    | 28.46 ±0.19               | No crossover             |
+| nginx (native) (prepared)             | 2825.04                           | 2.24×    | 12.59 ±0.10               | 226                      |
+| nginx (native) (string)               | 2840.77                           | 2.25×    | 28.32 ±0.30               | No crossover             |
+| hwire + hwire_table (scalar) (string) | 3076.75                           | 2.43×    | 26.73 ±0.17               | No crossover             |
+| Actix Web (SSE4.2) (prepared)         | 3152.12                           | 2.49×    | 10.01 ±0.09               | 200                      |
+| Actix Web (SSE4.2) (string)           | 3195.06                           | 2.53×    | 52.95 ±0.42               | No crossover             |
+| H2O (scalar) (prepared)               | 3713.53                           | 2.94×    | 12.76 ±0.17               | 363                      |
+| H2O (scalar) (string)                 | 3731.57                           | 2.95×    | 30.80 ±0.72               | No crossover             |
 
 Parse + Post-process + 1 lookup baseline: hwire + hwire_table (native) (string). Each Relative uses the fastest total in its column.
 No crossover: it cannot overtake under this model. The crossover is the first integer Q giving a strictly lower total.
@@ -978,26 +1008,26 @@ No crossover: it cannot overtake under this model. The crossover is the first in
 
 | Implementation                        | Parse + Post-process + 1 Hit (ns) | Relative | Hit Mean ± SD (ns/lookup) | Lookups to beat baseline |
 | ------------------------------------- | --------------------------------- | -------- | ------------------------- | ------------------------ |
-| hwire + hwire_table (native) (string) | 1220.04                           | 1.00×    | 18.19 ±0.11               | Baseline                 |
-| hwire + hwire_table (SSE4.2) (string) | 1542.48                           | 1.26×    | 25.71 ±0.23               | No crossover             |
-| hwire + hwire_table (SSE2) (string)   | 1581.74                           | 1.30×    | 23.68 ±0.14               | No crossover             |
-| Actix Web (native) (prepared)         | 2332.09                           | 1.91×    | 8.52 ±0.06                | 117                      |
-| H2O (native) (prepared)               | 2337.29                           | 1.92×    | 7.64 ±0.08                | 107                      |
-| H2O (native) (string)                 | 2348.90                           | 1.93×    | 19.25 ±0.19               | No crossover             |
-| Actix Web (native) (string)           | 2360.72                           | 1.93×    | 37.15 ±0.51               | No crossover             |
-| H2O (SSE4.2) (prepared)               | 2428.76                           | 1.99×    | 8.67 ±0.21                | 128                      |
-| H2O (SSE4.2) (string) †               | 2440.71                           | 2.00×    | 20.62 ±1.08               | No crossover             |
-| Actix Web (scalar) (prepared)         | 2510.44                           | 2.06×    | 8.72 ±0.17                | 138                      |
-| Actix Web (scalar) (string)           | 2537.95                           | 2.08×    | 36.23 ±0.59               | No crossover             |
-| nginx (native) (prepared)             | 2753.17                           | 2.26×    | 5.34 ±0.11                | 121                      |
-| nginx (native) (string)               | 2770.04                           | 2.27×    | 22.21 ±0.21               | No crossover             |
-| nginx (scalar) (prepared)             | 2799.02                           | 2.29×    | 5.73 ±0.09                | 128                      |
-| nginx (scalar) (string)               | 2814.99                           | 2.31×    | 21.70 ±0.46               | No crossover             |
-| hwire + hwire_table (scalar) (string) | 3068.99                           | 2.52×    | 25.22 ±0.35               | No crossover             |
-| Actix Web (SSE4.2) (prepared)         | 3101.05                           | 2.54×    | 9.48 ±0.08                | 217                      |
-| Actix Web (SSE4.2) (string)           | 3127.56                           | 2.56×    | 35.99 ±0.27               | No crossover             |
-| H2O (scalar) (prepared)               | 3660.69                           | 3.00×    | 8.05 ±0.10                | 242                      |
-| H2O (scalar) (string)                 | 3673.09                           | 3.01×    | 20.45 ±0.19               | No crossover             |
+| hwire + hwire_table (native) (string) | 1262.49                           | 1.00×    | 18.17 ±0.36               | Baseline                 |
+| hwire + hwire_table (SSE4.2) (string) | 1483.65                           | 1.18×    | 23.87 ±0.22               | No crossover             |
+| hwire + hwire_table (SSE2) (string)   | 1647.66                           | 1.31×    | 23.74 ±0.17               | No crossover             |
+| Actix Web (native) (prepared)         | 2353.89                           | 1.86×    | 8.44 ±0.07                | 114                      |
+| H2O (native) (prepared)               | 2371.24                           | 1.88×    | 7.47 ±0.09                | 105                      |
+| Actix Web (native) (string)           | 2381.03                           | 1.89×    | 35.58 ±0.25               | No crossover             |
+| H2O (native) (string)                 | 2387.99                           | 1.89×    | 24.22 ±0.12               | No crossover             |
+| H2O (SSE4.2) (prepared)               | 2412.04                           | 1.91×    | 7.88 ±0.17                | 113                      |
+| H2O (SSE4.2) (string)                 | 2423.49                           | 1.92×    | 19.33 ±0.49               | No crossover             |
+| Actix Web (scalar) (prepared)         | 2448.88                           | 1.94×    | 8.34 ±0.06                | 122                      |
+| Actix Web (scalar) (string)           | 2475.90                           | 1.96×    | 35.36 ±0.26               | No crossover             |
+| nginx (scalar) (prepared)             | 2751.53                           | 2.18×    | 5.50 ±0.09                | 119                      |
+| nginx (scalar) (string)               | 2767.87                           | 2.19×    | 21.84 ±0.18               | No crossover             |
+| nginx (native) (prepared)             | 2818.87                           | 2.23×    | 6.42 ±0.08                | 134                      |
+| nginx (native) (string)               | 2834.35                           | 2.25×    | 21.90 ±0.44               | No crossover             |
+| hwire + hwire_table (scalar) (string) | 3074.69                           | 2.44×    | 24.67 ±0.48               | No crossover             |
+| Actix Web (SSE4.2) (prepared)         | 3151.18                           | 2.50×    | 9.07 ±0.10                | 209                      |
+| Actix Web (SSE4.2) (string)           | 3177.57                           | 2.52×    | 35.46 ±0.39               | No crossover             |
+| H2O (scalar) (prepared)               | 3708.35                           | 2.94×    | 7.58 ±0.12                | 232                      |
+| H2O (scalar) (string)                 | 3725.31                           | 2.95×    | 24.54 ±0.33               | No crossover             |
 
 Parse + Post-process + 1 lookup baseline: hwire + hwire_table (native) (string). Each Relative uses the fastest total in its column.
 No crossover: it cannot overtake under this model. The crossover is the first integer Q giving a strictly lower total.
@@ -1007,26 +1037,26 @@ No crossover: it cannot overtake under this model. The crossover is the first in
 
 | Implementation                        | Parse + Post-process + 1 Miss (ns) | Relative | Miss Mean ± SD (ns/lookup) | Lookups to beat baseline |
 | ------------------------------------- | ---------------------------------- | -------- | -------------------------- | ------------------------ |
-| hwire + hwire_table (native) (string) | 1210.13                            | 1.00×    | 8.28 ±0.06                 | Baseline                 |
-| hwire + hwire_table (SSE4.2) (string) | 1531.40                            | 1.27×    | 14.63 ±0.14                | No crossover             |
-| hwire + hwire_table (SSE2) (string)   | 1572.35                            | 1.30×    | 14.29 ±0.47                | No crossover             |
-| Actix Web (native) (prepared) †       | 2329.18                            | 1.92×    | 5.61 ±0.43                 | 421                      |
-| H2O (native) (prepared)               | 2344.54                            | 1.94×    | 14.89 ±0.36                | No crossover             |
-| H2O (native) (string)                 | 2357.60                            | 1.95×    | 27.95 ±0.28                | No crossover             |
-| Actix Web (native) (string)           | 2367.36                            | 1.96×    | 43.79 ±1.07                | No crossover             |
-| H2O (SSE4.2) (prepared) †             | 2435.30                            | 2.01×    | 15.21 ±0.59                | No crossover             |
-| H2O (SSE4.2) (string)                 | 2450.66                            | 2.03×    | 30.57 ±0.23                | No crossover             |
-| Actix Web (scalar) (prepared)         | 2507.48                            | 2.07×    | 5.76 ±0.13                 | 516                      |
-| Actix Web (scalar) (string)           | 2545.74                            | 2.10×    | 44.02 ±0.40                | No crossover             |
-| nginx (native) (prepared)             | 2764.73                            | 2.28×    | 16.90 ±0.47                | No crossover             |
-| nginx (native) (string)               | 2777.79                            | 2.30×    | 29.96 ±0.34                | No crossover             |
-| nginx (scalar) (prepared)             | 2810.08                            | 2.32×    | 16.79 ±0.33                | No crossover             |
-| nginx (scalar) (string)               | 2821.17                            | 2.33×    | 27.88 ±0.29                | No crossover             |
-| hwire + hwire_table (scalar) (string) | 3060.08                            | 2.53×    | 16.31 ±0.21                | No crossover             |
-| Actix Web (SSE4.2) (prepared)         | 3097.11                            | 2.56×    | 5.54 ±0.05                 | 690                      |
-| Actix Web (SSE4.2) (string)           | 3137.56                            | 2.59×    | 45.99 ±0.31                | No crossover             |
-| H2O (scalar) (prepared)               | 3672.74                            | 3.03×    | 20.10 ±0.51                | No crossover             |
-| H2O (scalar) (string)                 | 3685.74                            | 3.05×    | 33.10 ±0.44                | No crossover             |
+| hwire + hwire_table (native) (string) | 1252.12                            | 1.00×    | 7.80 ±0.15                 | Baseline                 |
+| hwire + hwire_table (SSE4.2) (string) | 1474.16                            | 1.18×    | 14.38 ±0.26                | No crossover             |
+| hwire + hwire_table (SSE2) (string)   | 1638.29                            | 1.31×    | 14.37 ±0.26                | No crossover             |
+| Actix Web (native) (prepared)         | 2350.47                            | 1.88×    | 5.02 ±0.13                 | 397                      |
+| H2O (native) (prepared)               | 2379.37                            | 1.90×    | 15.60 ±0.32                | No crossover             |
+| Actix Web (native) (string)           | 2390.84                            | 1.91×    | 45.39 ±0.34                | No crossover             |
+| H2O (native) (string)                 | 2398.11                            | 1.92×    | 34.34 ±0.20                | No crossover             |
+| H2O (SSE4.2) (prepared)               | 2419.44                            | 1.93×    | 15.28 ±0.19                | No crossover             |
+| H2O (SSE4.2) (string)                 | 2431.70                            | 1.94×    | 27.54 ±0.37                | No crossover             |
+| Actix Web (scalar) (prepared)         | 2445.97                            | 1.95×    | 5.43 ±0.08                 | 505                      |
+| Actix Web (scalar) (string)           | 2485.50                            | 1.99×    | 44.96 ±0.46                | No crossover             |
+| nginx (scalar) (prepared)             | 2763.68                            | 2.21×    | 17.65 ±0.31                | No crossover             |
+| nginx (scalar) (string)               | 2778.61                            | 2.22×    | 32.58 ±0.41                | No crossover             |
+| nginx (native) (prepared)             | 2834.04                            | 2.26×    | 21.59 ±0.50                | No crossover             |
+| nginx (native) (string)               | 2840.21                            | 2.27×    | 27.76 ±0.31                | No crossover             |
+| hwire + hwire_table (scalar) (string) | 3064.33                            | 2.45×    | 14.31 ±0.03                | No crossover             |
+| Actix Web (SSE4.2) (prepared)         | 3147.39                            | 2.51×    | 5.28 ±0.04                 | 754                      |
+| Actix Web (SSE4.2) (string)           | 3186.50                            | 2.54×    | 44.39 ±0.59                | No crossover             |
+| H2O (scalar) (prepared)               | 3716.64                            | 2.97×    | 15.87 ±0.51                | No crossover             |
+| H2O (scalar) (string)                 | 3733.22                            | 2.98×    | 32.45 ±0.30                | No crossover             |
 
 Parse + Post-process + 1 lookup baseline: hwire + hwire_table (native) (string). Each Relative uses the fastest total in its column.
 No crossover: it cannot overtake under this model. The crossover is the first integer Q giving a strictly lower total.
@@ -1045,26 +1075,26 @@ Totals use the displayed means: `Parse + Post-process mean + Q × lookup mean`. 
 
 | Implementation                        | Parse + Post-process + 1 Hit (ns) | Relative | Hit Mean ± SD (ns/lookup) | Lookups to beat baseline |
 | ------------------------------------- | --------------------------------- | -------- | ------------------------- | ------------------------ |
-| hwire + hwire_table (native) (string) | 1341.77                           | 1.00×    | 16.97 ±0.13               | Baseline                 |
-| H2O (native) (prepared) †             | 1654.96                           | 1.23×    | 4.71 ±0.24                | 27                       |
-| H2O (native) (string)                 | 1665.46                           | 1.24×    | 15.21 ±0.26               | 185                      |
-| hwire + hwire_table (SSE4.2) (string) | 1674.40                           | 1.25×    | 22.42 ±0.29               | No crossover             |
-| hwire + hwire_table (SSE2) (string)   | 1695.23                           | 1.26×    | 21.42 ±0.13               | No crossover             |
-| H2O (SSE4.2) (prepared)               | 1745.50                           | 1.30×    | 5.44 ±0.06                | 37                       |
-| H2O (SSE4.2) (string)                 | 1755.98                           | 1.31×    | 15.92 ±0.28               | 396                      |
-| Actix Web (native) (prepared)         | 2579.63                           | 1.92×    | 6.70 ±0.17                | 122                      |
-| Actix Web (native) (string)           | 2593.82                           | 1.93×    | 20.89 ±0.17               | No crossover             |
-| nginx (native) (prepared)             | 2751.72                           | 2.05×    | 2.82 ±0.02                | 101                      |
-| nginx (native) (string)               | 2764.54                           | 2.06×    | 15.64 ±0.15               | 1071                     |
-| Actix Web (scalar) (prepared)         | 2775.09                           | 2.07×    | 6.91 ±0.09                | 144                      |
-| Actix Web (scalar) (string)           | 2789.78                           | 2.08×    | 21.60 ±0.25               | No crossover             |
-| nginx (scalar) (prepared)             | 2792.70                           | 2.08×    | 2.85 ±0.02                | 104                      |
-| nginx (scalar) (string)               | 2805.37                           | 2.09×    | 15.52 ±0.10               | 1011                     |
-| H2O (scalar) (prepared)               | 3428.08                           | 2.55×    | 4.69 ±0.11                | 171                      |
-| H2O (scalar) (string)                 | 3438.78                           | 2.56×    | 15.39 ±0.32               | 1329                     |
-| Actix Web (SSE4.2) (prepared)         | 3569.92                           | 2.66×    | 7.81 ±0.04                | 245                      |
-| Actix Web (SSE4.2) (string)           | 3583.79                           | 2.67×    | 21.68 ±0.14               | No crossover             |
-| hwire + hwire_table (scalar) (string) | 3630.75                           | 2.71×    | 21.63 ±0.22               | No crossover             |
+| hwire + hwire_table (native) (string) | 1407.23                           | 1.00×    | 16.89 ±0.07               | Baseline                 |
+| hwire + hwire_table (SSE4.2) (string) | 1613.72                           | 1.15×    | 21.55 ±0.24               | No crossover             |
+| H2O (native) (prepared) †             | 1680.34                           | 1.19×    | 4.73 ±0.19                | 24                       |
+| H2O (native) (string)                 | 1690.39                           | 1.20×    | 14.78 ±0.25               | 136                      |
+| H2O (SSE4.2) (prepared)               | 1714.41                           | 1.22×    | 6.04 ±0.07                | 30                       |
+| H2O (SSE4.2) (string)                 | 1724.70                           | 1.23×    | 16.33 ±0.17               | 568                      |
+| hwire + hwire_table (SSE2) (string)   | 1783.43                           | 1.27×    | 21.55 ±0.53               | No crossover             |
+| Actix Web (native) (prepared)         | 2611.09                           | 1.86×    | 6.42 ±0.03                | 116                      |
+| Actix Web (native) (string)           | 2625.34                           | 1.87×    | 20.67 ±0.38               | No crossover             |
+| Actix Web (scalar) (prepared)         | 2690.62                           | 1.91×    | 6.53 ±0.03                | 125                      |
+| Actix Web (scalar) (string)           | 2705.45                           | 1.92×    | 21.36 ±0.09               | No crossover             |
+| nginx (scalar) (prepared)             | 2754.58                           | 1.96×    | 2.61 ±0.01                | 96                       |
+| nginx (scalar) (string)               | 2767.56                           | 1.97×    | 15.59 ±0.19               | 1048                     |
+| nginx (native) (prepared)             | 2819.49                           | 2.00×    | 2.61 ±0.01                | 100                      |
+| nginx (native) (string)               | 2832.44                           | 2.01×    | 15.56 ±0.11               | 1073                     |
+| H2O (scalar) (prepared)               | 3349.41                           | 2.38×    | 4.67 ±0.15                | 160                      |
+| H2O (scalar) (string)                 | 3362.64                           | 2.39×    | 17.90 ±0.33               | No crossover             |
+| hwire + hwire_table (scalar) (string) | 3628.22                           | 2.58×    | 22.15 ±0.27               | No crossover             |
+| Actix Web (SSE4.2) (prepared)         | 3637.27                           | 2.58×    | 6.52 ±0.04                | 217                      |
+| Actix Web (SSE4.2) (string)           | 3652.26                           | 2.60×    | 21.51 ±0.21               | No crossover             |
 
 Parse + Post-process + 1 lookup baseline: hwire + hwire_table (native) (string). Each Relative uses the fastest total in its column.
 No crossover: it cannot overtake under this model. The crossover is the first integer Q giving a strictly lower total.
@@ -1074,26 +1104,26 @@ No crossover: it cannot overtake under this model. The crossover is the first in
 
 | Implementation                        | Parse + Post-process + 1 Hit (ns) | Relative | Hit Mean ± SD (ns/lookup) | Lookups to beat baseline |
 | ------------------------------------- | --------------------------------- | -------- | ------------------------- | ------------------------ |
-| hwire + hwire_table (native) (string) | 1344.42                           | 1.00×    | 19.62 ±0.17               | Baseline                 |
-| H2O (native) (prepared)               | 1661.99                           | 1.24×    | 11.74 ±0.06               | 42                       |
-| H2O (native) (string) †               | 1677.14                           | 1.25×    | 26.89 ±3.19               | No crossover             |
-| hwire + hwire_table (SSE4.2) (string) | 1677.83                           | 1.25×    | 25.85 ±0.12               | No crossover             |
-| hwire + hwire_table (SSE2) (string)   | 1699.67                           | 1.26×    | 25.86 ±0.15               | No crossover             |
-| H2O (SSE4.2) (prepared)               | 1752.61                           | 1.30×    | 12.55 ±0.41               | 59                       |
-| H2O (SSE4.2) (string)                 | 1766.37                           | 1.31×    | 26.31 ±0.20               | No crossover             |
-| Actix Web (native) (prepared)         | 2583.12                           | 1.92×    | 10.19 ±0.07               | 133                      |
-| Actix Web (native) (string)           | 2627.58                           | 1.95×    | 54.65 ±0.38               | No crossover             |
-| nginx (native) (prepared)             | 2759.68                           | 2.05×    | 10.78 ±0.20               | 162                      |
-| nginx (native) (string)               | 2778.36                           | 2.07×    | 29.46 ±0.27               | No crossover             |
-| Actix Web (scalar) (prepared)         | 2778.71                           | 2.07×    | 10.53 ±0.14               | 159                      |
-| nginx (scalar) (prepared)             | 2801.62                           | 2.08×    | 11.77 ±0.08               | 187                      |
-| nginx (scalar) (string)               | 2817.78                           | 2.10×    | 27.93 ±0.16               | No crossover             |
-| Actix Web (scalar) (string)           | 2821.55                           | 2.10×    | 53.37 ±0.54               | No crossover             |
-| H2O (scalar) (prepared)               | 3437.35                           | 2.56×    | 13.96 ±0.19               | 371                      |
-| H2O (scalar) (string)                 | 3450.86                           | 2.57×    | 27.47 ±0.27               | No crossover             |
-| Actix Web (SSE4.2) (prepared)         | 3572.41                           | 2.66×    | 10.30 ±0.07               | 241                      |
-| Actix Web (SSE4.2) (string)           | 3615.64                           | 2.69×    | 53.53 ±0.25               | No crossover             |
-| hwire + hwire_table (scalar) (string) | 3635.16                           | 2.70×    | 26.04 ±0.77               | No crossover             |
+| hwire + hwire_table (native) (string) | 1409.87                           | 1.00×    | 19.53 ±0.10               | Baseline                 |
+| hwire + hwire_table (SSE4.2) (string) | 1618.10                           | 1.15×    | 25.93 ±0.16               | No crossover             |
+| H2O (native) (prepared)               | 1688.09                           | 1.20×    | 12.48 ±0.09               | 41                       |
+| H2O (native) (string)                 | 1706.52                           | 1.21×    | 30.91 ±0.10               | No crossover             |
+| H2O (SSE4.2) (prepared)               | 1721.24                           | 1.22×    | 12.87 ±0.34               | 48                       |
+| H2O (SSE4.2) (string)                 | 1732.01                           | 1.23×    | 23.64 ±0.29               | No crossover             |
+| hwire + hwire_table (SSE2) (string)   | 1787.77                           | 1.27×    | 25.89 ±0.15               | No crossover             |
+| Actix Web (native) (prepared)         | 2614.49                           | 1.85×    | 9.82 ±0.09                | 126                      |
+| Actix Web (native) (string)           | 2657.18                           | 1.88×    | 52.51 ±0.24               | No crossover             |
+| Actix Web (scalar) (prepared)         | 2693.93                           | 1.91×    | 9.84 ±0.07                | 134                      |
+| Actix Web (scalar) (string)           | 2737.50                           | 1.94×    | 53.41 ±0.54               | No crossover             |
+| nginx (scalar) (prepared)             | 2763.96                           | 1.96×    | 11.99 ±0.28               | 181                      |
+| nginx (scalar) (string)               | 2780.43                           | 1.97×    | 28.46 ±0.19               | No crossover             |
+| nginx (native) (prepared)             | 2829.47                           | 2.01×    | 12.59 ±0.10               | 206                      |
+| nginx (native) (string)               | 2845.20                           | 2.02×    | 28.32 ±0.30               | No crossover             |
+| H2O (scalar) (prepared)               | 3357.50                           | 2.38×    | 12.76 ±0.17               | 289                      |
+| H2O (scalar) (string)                 | 3375.54                           | 2.39×    | 30.80 ±0.72               | No crossover             |
+| hwire + hwire_table (scalar) (string) | 3632.80                           | 2.58×    | 26.73 ±0.17               | No crossover             |
+| Actix Web (SSE4.2) (prepared)         | 3640.76                           | 2.58×    | 10.01 ±0.09               | 236                      |
+| Actix Web (SSE4.2) (string)           | 3683.70                           | 2.61×    | 52.95 ±0.42               | No crossover             |
 
 Parse + Post-process + 1 lookup baseline: hwire + hwire_table (native) (string). Each Relative uses the fastest total in its column.
 No crossover: it cannot overtake under this model. The crossover is the first integer Q giving a strictly lower total.
@@ -1103,26 +1133,26 @@ No crossover: it cannot overtake under this model. The crossover is the first in
 
 | Implementation                        | Parse + Post-process + 1 Hit (ns) | Relative | Hit Mean ± SD (ns/lookup) | Lookups to beat baseline |
 | ------------------------------------- | --------------------------------- | -------- | ------------------------- | ------------------------ |
-| hwire + hwire_table (native) (string) | 1342.99                           | 1.00×    | 18.19 ±0.11               | Baseline                 |
-| H2O (native) (prepared)               | 1657.89                           | 1.23×    | 7.64 ±0.08                | 31                       |
-| H2O (native) (string)                 | 1669.50                           | 1.24×    | 19.25 ±0.19               | No crossover             |
-| hwire + hwire_table (SSE4.2) (string) | 1677.69                           | 1.25×    | 25.71 ±0.23               | No crossover             |
-| hwire + hwire_table (SSE2) (string)   | 1697.49                           | 1.26×    | 23.68 ±0.14               | No crossover             |
-| H2O (SSE4.2) (prepared)               | 1748.73                           | 1.30×    | 8.67 ±0.21                | 44                       |
-| H2O (SSE4.2) (string) †               | 1760.68                           | 1.31×    | 20.62 ±1.08               | No crossover             |
-| Actix Web (native) (prepared)         | 2581.45                           | 1.92×    | 8.52 ±0.06                | 130                      |
-| Actix Web (native) (string)           | 2610.08                           | 1.94×    | 37.15 ±0.51               | No crossover             |
-| nginx (native) (prepared)             | 2754.24                           | 2.05×    | 5.34 ±0.11                | 111                      |
-| nginx (native) (string)               | 2771.11                           | 2.06×    | 22.21 ±0.21               | No crossover             |
-| Actix Web (scalar) (prepared)         | 2776.90                           | 2.07×    | 8.72 ±0.17                | 153                      |
-| nginx (scalar) (prepared)             | 2795.58                           | 2.08×    | 5.73 ±0.09                | 118                      |
-| Actix Web (scalar) (string)           | 2804.41                           | 2.09×    | 36.23 ±0.59               | No crossover             |
-| nginx (scalar) (string)               | 2811.55                           | 2.09×    | 21.70 ±0.46               | No crossover             |
-| H2O (scalar) (prepared)               | 3431.44                           | 2.56×    | 8.05 ±0.10                | 207                      |
-| H2O (scalar) (string)                 | 3443.84                           | 2.56×    | 20.45 ±0.19               | No crossover             |
-| Actix Web (SSE4.2) (prepared)         | 3571.59                           | 2.66×    | 9.48 ±0.08                | 257                      |
-| Actix Web (SSE4.2) (string)           | 3598.10                           | 2.68×    | 35.99 ±0.27               | No crossover             |
-| hwire + hwire_table (scalar) (string) | 3634.34                           | 2.71×    | 25.22 ±0.35               | No crossover             |
+| hwire + hwire_table (native) (string) | 1408.51                           | 1.00×    | 18.17 ±0.36               | Baseline                 |
+| hwire + hwire_table (SSE4.2) (string) | 1616.04                           | 1.15×    | 23.87 ±0.22               | No crossover             |
+| H2O (native) (prepared)               | 1683.08                           | 1.19×    | 7.47 ±0.09                | 27                       |
+| H2O (native) (string)                 | 1699.83                           | 1.21×    | 24.22 ±0.12               | No crossover             |
+| H2O (SSE4.2) (prepared)               | 1716.25                           | 1.22×    | 7.88 ±0.17                | 31                       |
+| H2O (SSE4.2) (string)                 | 1727.70                           | 1.23×    | 19.33 ±0.49               | No crossover             |
+| hwire + hwire_table (SSE2) (string)   | 1785.62                           | 1.27×    | 23.74 ±0.17               | No crossover             |
+| Actix Web (native) (prepared)         | 2613.11                           | 1.86×    | 8.44 ±0.07                | 125                      |
+| Actix Web (native) (string)           | 2640.25                           | 1.87×    | 35.58 ±0.25               | No crossover             |
+| Actix Web (scalar) (prepared)         | 2692.43                           | 1.91×    | 8.34 ±0.06                | 132                      |
+| Actix Web (scalar) (string)           | 2719.45                           | 1.93×    | 35.36 ±0.26               | No crossover             |
+| nginx (scalar) (prepared)             | 2757.47                           | 1.96×    | 5.50 ±0.09                | 108                      |
+| nginx (scalar) (string)               | 2773.81                           | 1.97×    | 21.84 ±0.18               | No crossover             |
+| nginx (native) (prepared)             | 2823.30                           | 2.00×    | 6.42 ±0.08                | 122                      |
+| nginx (native) (string)               | 2838.78                           | 2.02×    | 21.90 ±0.44               | No crossover             |
+| H2O (scalar) (prepared)               | 3352.32                           | 2.38×    | 7.58 ±0.12                | 185                      |
+| H2O (scalar) (string)                 | 3369.28                           | 2.39×    | 24.54 ±0.33               | No crossover             |
+| hwire + hwire_table (scalar) (string) | 3630.74                           | 2.58×    | 24.67 ±0.48               | No crossover             |
+| Actix Web (SSE4.2) (prepared)         | 3639.82                           | 2.58×    | 9.07 ±0.10                | 247                      |
+| Actix Web (SSE4.2) (string)           | 3666.21                           | 2.60×    | 35.46 ±0.39               | No crossover             |
 
 Parse + Post-process + 1 lookup baseline: hwire + hwire_table (native) (string). Each Relative uses the fastest total in its column.
 No crossover: it cannot overtake under this model. The crossover is the first integer Q giving a strictly lower total.
@@ -1132,26 +1162,26 @@ No crossover: it cannot overtake under this model. The crossover is the first in
 
 | Implementation                        | Parse + Post-process + 1 Miss (ns) | Relative | Miss Mean ± SD (ns/lookup) | Lookups to beat baseline |
 | ------------------------------------- | ---------------------------------- | -------- | -------------------------- | ------------------------ |
-| hwire + hwire_table (native) (string) | 1333.08                            | 1.00×    | 8.28 ±0.06                 | Baseline                 |
-| H2O (native) (prepared)               | 1665.14                            | 1.25×    | 14.89 ±0.36                | No crossover             |
-| hwire + hwire_table (SSE4.2) (string) | 1666.61                            | 1.25×    | 14.63 ±0.14                | No crossover             |
-| H2O (native) (string)                 | 1678.20                            | 1.26×    | 27.95 ±0.28                | No crossover             |
-| hwire + hwire_table (SSE2) (string)   | 1688.10                            | 1.27×    | 14.29 ±0.47                | No crossover             |
-| H2O (SSE4.2) (prepared) †             | 1755.27                            | 1.32×    | 15.21 ±0.59                | No crossover             |
-| H2O (SSE4.2) (string)                 | 1770.63                            | 1.33×    | 30.57 ±0.23                | No crossover             |
-| Actix Web (native) (prepared) †       | 2578.54                            | 1.93×    | 5.61 ±0.43                 | 468                      |
-| Actix Web (native) (string)           | 2616.72                            | 1.96×    | 43.79 ±1.07                | No crossover             |
-| nginx (native) (prepared)             | 2765.80                            | 2.07×    | 16.90 ±0.47                | No crossover             |
-| Actix Web (scalar) (prepared)         | 2773.94                            | 2.08×    | 5.76 ±0.13                 | 573                      |
-| nginx (native) (string)               | 2778.86                            | 2.08×    | 29.96 ±0.34                | No crossover             |
-| nginx (scalar) (prepared)             | 2806.64                            | 2.11×    | 16.79 ±0.33                | No crossover             |
-| Actix Web (scalar) (string)           | 2812.20                            | 2.11×    | 44.02 ±0.40                | No crossover             |
-| nginx (scalar) (string)               | 2817.73                            | 2.11×    | 27.88 ±0.29                | No crossover             |
-| H2O (scalar) (prepared)               | 3443.49                            | 2.58×    | 20.10 ±0.51                | No crossover             |
-| H2O (scalar) (string)                 | 3456.49                            | 2.59×    | 33.10 ±0.44                | No crossover             |
-| Actix Web (SSE4.2) (prepared)         | 3567.65                            | 2.68×    | 5.54 ±0.05                 | 817                      |
-| Actix Web (SSE4.2) (string)           | 3608.10                            | 2.71×    | 45.99 ±0.31                | No crossover             |
-| hwire + hwire_table (scalar) (string) | 3625.43                            | 2.72×    | 16.31 ±0.21                | No crossover             |
+| hwire + hwire_table (native) (string) | 1398.14                            | 1.00×    | 7.80 ±0.15                 | Baseline                 |
+| hwire + hwire_table (SSE4.2) (string) | 1606.55                            | 1.15×    | 14.38 ±0.26                | No crossover             |
+| H2O (native) (prepared)               | 1691.21                            | 1.21×    | 15.60 ±0.32                | No crossover             |
+| H2O (native) (string)                 | 1709.95                            | 1.22×    | 34.34 ±0.20                | No crossover             |
+| H2O (SSE4.2) (prepared)               | 1723.65                            | 1.23×    | 15.28 ±0.19                | No crossover             |
+| H2O (SSE4.2) (string)                 | 1735.91                            | 1.24×    | 27.54 ±0.37                | No crossover             |
+| hwire + hwire_table (SSE2) (string)   | 1776.25                            | 1.27×    | 14.37 ±0.26                | No crossover             |
+| Actix Web (native) (prepared)         | 2609.69                            | 1.87×    | 5.02 ±0.13                 | 437                      |
+| Actix Web (native) (string)           | 2650.06                            | 1.90×    | 45.39 ±0.34                | No crossover             |
+| Actix Web (scalar) (prepared)         | 2689.52                            | 1.92×    | 5.43 ±0.08                 | 546                      |
+| Actix Web (scalar) (string)           | 2729.05                            | 1.95×    | 44.96 ±0.46                | No crossover             |
+| nginx (scalar) (prepared)             | 2769.62                            | 1.98×    | 17.65 ±0.31                | No crossover             |
+| nginx (scalar) (string)               | 2784.55                            | 1.99×    | 32.58 ±0.41                | No crossover             |
+| nginx (native) (prepared)             | 2838.47                            | 2.03×    | 21.59 ±0.50                | No crossover             |
+| nginx (native) (string)               | 2844.64                            | 2.03×    | 27.76 ±0.31                | No crossover             |
+| H2O (scalar) (prepared)               | 3360.61                            | 2.40×    | 15.87 ±0.51                | No crossover             |
+| H2O (scalar) (string)                 | 3377.19                            | 2.42×    | 32.45 ±0.30                | No crossover             |
+| hwire + hwire_table (scalar) (string) | 3620.38                            | 2.59×    | 14.31 ±0.03                | No crossover             |
+| Actix Web (SSE4.2) (prepared)         | 3636.03                            | 2.60×    | 5.28 ±0.04                 | 890                      |
+| Actix Web (SSE4.2) (string)           | 3675.14                            | 2.63×    | 44.39 ±0.59                | No crossover             |
 
 Parse + Post-process + 1 lookup baseline: hwire + hwire_table (native) (string). Each Relative uses the fastest total in its column.
 No crossover: it cannot overtake under this model. The crossover is the first integer Q giving a strictly lower total.

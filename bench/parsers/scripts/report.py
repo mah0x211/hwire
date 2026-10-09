@@ -13,7 +13,7 @@ import json
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "shared/scripts"))
-from report_common import environment, render, message_section
+from report_common import report_failures, environment, render, message_section
 
 RESULTS_DIR = Path(__file__).resolve().parents[1] / "results"
 PLATFORM_FILE = RESULTS_DIR / "platform.txt"
@@ -69,6 +69,8 @@ def main(include_environment=True) -> None:
 
     data = load_results(RESULTS_DIR)
     if not data:
+        if report_failures(RESULTS_DIR):
+            return
         sys.exit(f"no result files in {RESULTS_DIR} (run `make run` first)")
 
     if include_environment:
@@ -97,7 +99,7 @@ def main(include_environment=True) -> None:
                          f"{100*entry['rciw']:.2f}%"])
         render(None, ["Parser", "Mean ± SD (ns/message)", "Relative", "Throughput", "RCIW"], rows)
 
-
+    report_failures(RESULTS_DIR)
 
 
 if __name__ == "__main__":

@@ -3,8 +3,8 @@ h2o_CPPFLAGS := -Ih2o/deps/deps/picohttpparser -Ih2o/deps/include -Ih2o/deps/dep
 # OpenSSL headers may live outside the compiler search path on macOS.
 h2o_CPPFLAGS += $(shell pkg-config --cflags openssl 2>/dev/null)
 h2o_CFLAGS := -D_GNU_SOURCE -ffunction-sections -fdata-sections
-ifeq ($(shell uname -s),Darwin)
 h2o_CPPFLAGS += $(shell pkg-config --cflags libuv 2>/dev/null)
+ifeq ($(shell uname -s),Darwin)
 h2o_LDLIBS := -Wl,-dead_strip
 else
 h2o_LDLIBS := -Wl,--gc-sections

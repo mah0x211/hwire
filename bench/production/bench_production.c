@@ -109,7 +109,9 @@ static int bench_store_scenario(FILE *out, const implementations_t *parser,
     uint64_t start;
     double elapsed;
 
-    if (check_only) {
+    /* Initialize lazy runtime/TLS storage before activating the request arena.
+     * Such storage must outlive a request, unlike the timed header context. */
+    {
         unsigned char input[fixture->len + 1];
         memcpy(input, fixture->data, fixture->len);
         void *context = NULL;
@@ -122,7 +124,9 @@ static int bench_store_scenario(FILE *out, const implementations_t *parser,
             return -1;
         }
         parser->context_free(context);
-        return 0;
+        if (check_only) {
+            return 0;
+        }
     }
     start = now_ns();
     if (bench_store(parser, split_at, fixture, HEADER_CAPACITY,

@@ -5,7 +5,7 @@ import json
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "shared/scripts"))
-from report_common import render, message_section, environment
+from report_common import report_failures, render, message_section, environment
 
 RESULTS_DIR = Path(__file__).resolve().parents[1] / "results"
 
@@ -110,6 +110,8 @@ def lookup_comparison(group, operation, parse_operation="parse"):
 def main(include_environment=True):
     data = load_results(RESULTS_DIR)
     if not data:
+        if report_failures(RESULTS_DIR):
+            return
         sys.exit("no HTTP storage results (run make)")
     if include_environment:
         environment(RESULTS_DIR / "platform.txt")
@@ -194,6 +196,8 @@ cost of each retry strategy for this fixture. Authentication is not performed.
             for operation, title, _ in cases:
                 total_table(lookup_comparison(group, operation, parse_operation),
                             operation, title, scenario=scenario if has_split else None)
+
+    report_failures(RESULTS_DIR)
 
 
 if __name__ == "__main__":

@@ -46,16 +46,16 @@ class ActionsBenchmarkTests(unittest.TestCase):
             (directory / "Makefile").write_text(
                 "run:\n\t@mkdir results\n\t@echo partial > results/sample.txt\n"
                 "\t@echo 'measurement failed' >&2\n\t@exit 7\n"
-                "report:\n\t@echo 'must not render'\n")
+                "report:\n\t@echo 'successful targets and failures'\n")
             output, summary = root / "output", root / "summary.md"
             with contextlib.redirect_stdout(io.StringIO()):
                 code = run_suite(root / "source", "parsers", output, summary)
             self.assertNotEqual(code, 0)
             self.assertIn("failed", summary.read_text())
-            self.assertNotIn("must not render", summary.read_text())
+            self.assertIn("successful targets and failures", summary.read_text())
             self.assertIn("measurement failed", (output / "run.log").read_text())
             self.assertTrue((output / "results/sample.txt").exists())
-            self.assertFalse((output / "report.md").exists())
+            self.assertTrue((output / "report.md").exists())
 
     def test_failed_report_is_not_published_as_a_success(self):
         with tempfile.TemporaryDirectory() as tmp:

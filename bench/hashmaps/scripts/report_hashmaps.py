@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "shared/scripts"))
-from report_common import environment, update_environment
+from report_common import environment, publish_readme, report_failures, render as render_table
 
 ROOT = Path(__file__).resolve().parents[1]
 RESULTS_DIR = ROOT / "results/storage"
@@ -44,12 +44,8 @@ def load_results(directory):
     return rows
 
 def table(headers, rows):
-    values = [list(map(str, headers)), *[list(map(str, row)) for row in rows]]
-    widths = [max(3, max(map(len, column))) for column in zip(*values)]
-    values.insert(1, ["-" * width for width in widths])
-    for row in values:
-        print("| " + " | ".join(value.ljust(width)
-                                 for value, width in zip(row, widths)) + " |")
+    render_table(None, list(map(str, headers)),
+                 [list(map(str, row)) for row in rows])
     print()
 
 def render_memory(rows, count, scenario):
@@ -188,11 +184,6 @@ def main():
     args = parser.parse_args()
     rows = load_results(args.directory)
     if args.write_readme:
-        import contextlib
-        import io
-        out = io.StringIO()
-        with contextlib.redirect_stdout(out):
-            render(rows)
         readme = ROOT / "README.md"
         text = readme.read_text()
         prefix, _, previous = text.partition("# Benchmark\n")
@@ -201,11 +192,12 @@ def main():
                           r"|Case-Sensitive .*|Case-Insensitive .*)$",
                           previous, re.MULTILINE)
         introduction = previous[:match.start()] if match else "\n"
-        text = (prefix + "# Benchmark\n" + introduction.rstrip() +
-                "\n\n" + out.getvalue()).rstrip() + "\n"
-        readme.write_text(update_environment(text, args.directory / "platform.txt"))
+        prefix += "# Benchmark\n" + introduction.rstrip()
+        publish_readme(readme, prefix, args.directory / "platform.txt",
+                       lambda: render(rows))
     else:
         environment(args.directory / "platform.txt")
         render(rows)
+        report_failures(args.directory)
 if __name__ == "__main__":
     main()

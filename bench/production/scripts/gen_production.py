@@ -4,7 +4,7 @@ import sys
 import re
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "shared/scripts"))
-from registration import registered
+from registration import registered, write_generated
 
 ROOT = Path(__file__).resolve().parents[1]
 SUFFIX = "_with_store"
@@ -51,10 +51,7 @@ def write_table(out, variant, directory=None, implementations=None):
         lines.append("{ " + ", ".join(fields) + " },")
     lines.append("};")
     lines.append(f'#define BENCH_VARIANT "{variant}"')
-    content = "\n".join(lines) + "\n"
-    path = Path(out)
-    if not path.exists() or path.read_text() != content:
-        path.write_text(content)
+    write_generated(out, lines)
 
 
 if __name__ == "__main__":

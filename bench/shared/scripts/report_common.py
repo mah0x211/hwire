@@ -85,3 +85,36 @@ def message_section(name, level=3):
     print(f"<details>\n<summary>Message ({len(message.encode('ascii'))} bytes)</summary>\n")
     print("```http\n" + message.replace("\r\n", "\n") + "```\n")
     print("</details>")
+
+
+def report_failures(directory):
+    """Render failed adapter/variant attempts, retaining full logs separately."""
+    import json
+    path = directory / "status.json"
+    if not path.is_file():
+        return False
+    failures = [row for row in json.loads(path.read_text()) if row["exit_code"]]
+    if not failures:
+        return False
+    rows = []
+    for row in failures:
+        error = " ".join(row["error"].split())
+        error = error.replace("|", "\\|").replace("<", "&lt;").replace(">", "&gt;")
+        rows.append([row["adapter"], row["variant"], row["phase"],
+                     str(row["exit_code"]), error[:240]])
+    render("Failed Benchmark Targets", ["Adapter", "Build", "Phase", "Exit", "Error"], rows, level=2)
+    print("Failed targets are excluded from the comparison tables. Complete logs are retained under `logs/` in the result directory.\n")
+    return True
+
+
+def publish_readme(path, prefix, platform, render_results, separator="\n\n\n"):
+    """Replace a suite's report and refresh its existing environment markers."""
+    from contextlib import redirect_stdout
+    from io import StringIO
+    import re
+    output = StringIO()
+    with redirect_stdout(output):
+        render_results()
+    text = prefix.rstrip() + separator + output.getvalue().strip()
+    text = update_environment(text, platform)
+    path.write_text(re.sub(r"\n{4,}", "\n\n\n", text).rstrip() + "\n")
