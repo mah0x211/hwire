@@ -358,3 +358,62 @@ The Clang matrix combines Ubuntu scalar/SSE2/SSE4.2/native and macOS scalar/NEON
 4. Update compiler profiles and `.clang-tidy`, run affected tests and architecture paths, and update **Used in** only when the workflow actually selects the option.
 
 Reference inventories: [Clang diagnostics](https://clang.llvm.org/docs/DiagnosticsReference.html), [Clang driver/configuration options](https://clang.llvm.org/docs/UsersManual.html), [GCC 13 warning options](https://gcc.gnu.org/onlinedocs/gcc-13.3.0/gcc/Warning-Options.html), [GCC instrumentation options](https://gcc.gnu.org/onlinedocs/gcc-13.3.0/gcc/Instrumentation-Options.html), [clang-tidy checks](https://clang.llvm.org/extra/clang-tidy/checks/list.html), [glibc fortification](https://sourceware.org/glibc/manual/latest/html_node/Source-Fortification.html).
+
+
+## Releases
+
+The manual [release workflow](.github/workflows/release.yml) accepts a CalVer
+`YYYY.MM.SEQUENCE` version without the `v` prefix. Run it on `master`:
+
+```sh
+gh workflow run release.yml --ref master -f version=2026.10.0
+```
+
+The workflow fixes the source commit at dispatch time, exports its tracked
+files, and stamps `src/hwire.h` in that snapshot. It runs parser and table
+tests with LLVM 23 and packages only `src/`, `LICENSE`, and `README.md` in
+`hwire-<version>.tar.gz`. It then creates a draft release with the archive,
+download instructions, and automatically generated PR changelog. The draft
+specifies `v<version>` and the full source commit SHA; no tag is created yet.
+Release runs are serialized and existing tags are rejected. If an interrupted
+run leaves a draft, inspect and complete it or delete it before retrying.
+
+Review the draft, add API compatibility and migration notes where needed,
+and publish only after reviewing the final release body:
+
+```sh
+gh release edit v2026.10.0 --notes-file release-notes.md
+gh release edit v2026.10.0 --draft=false --latest
+```
+
+GitHub creates the tag at the fixed source commit when the draft is published.
+Repository headers remain development versions, including the sources
+referenced by the tag. The attached archive contains the stamped version;
+GitHub's automatic **Source code** archives do not.
+
+### Tag Cleanup
+
+The [release cleanup workflow](.github/workflows/release-cleanup.yml) handles
+`release.unpublished` and `release.deleted`: converting a published release
+to a draft or deleting it also removes its CalVer tag. An unpublished release
+keeps its fixed target commit SHA, so publishing it again recreates the tag
+at that commit. Deleting a draft does not trigger this workflow; a newly
+created draft has no tag to clean up.
+
+Cleanup only targets `vYYYY.MM.SEQUENCE` tags, tolerates an already absent tag,
+and preserves a tag if its release has been published again before cleanup
+runs. API failures are reported rather than ignored. Cleanup and release
+creation share the same concurrency group with `queue: max`, so pending
+runs are queued instead of replacing earlier pending runs (up to GitHub's
+100-run queue limit).
+
+Publish, unpublish, and delete through the GitHub UI or an authenticated local
+`gh` command. Operations performed with a workflow `GITHUB_TOKEN` do not
+trigger another workflow, so automated unpublishing/deletion must perform
+its own tag cleanup.
+
+With immutable releases enabled, published assets and tags cannot be changed,
+and the release cannot be converted back to a draft. After deleting an immutable
+release, its tag can be removed, but its name cannot be reused. Increment the
+CalVer sequence for a corrected release. Tag protection rules must permit the
+cleanup workflow to delete release tags.

@@ -30,6 +30,12 @@
 #include <stddef.h>
 #include <stdint.h>
 
+/** @brief CalVer release version, or "development" for repository sources. */
+#define HWIRE_VERSION "development"
+
+/** @brief One for development sources; zero for versioned release archives. */
+#define HWIRE_VERSION_IS_DEVELOPMENT 1
+
 #ifdef __cplusplus
 extern "C" {
 #endif

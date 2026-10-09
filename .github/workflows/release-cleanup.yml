@@ -1,0 +1,51 @@
+name: release cleanup
+
+on:
+  release:
+    types: [unpublished, deleted]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  queue: max
+  cancel-in-progress: false
+
+jobs:
+  delete-tag:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Delete corresponding CalVer tag
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const tag = context.payload.release.tag_name;
+            if (!/^v[0-9]{4}\.(0[1-9]|1[0-2])\.(0|[1-9][0-9]*)$/.test(tag)) {
+              core.info(`Skipping non-CalVer tag: ${tag}`);
+              return;
+            }
+            const { owner, repo } = context.repo;
+            try {
+              const { data } = await github.rest.repos.getReleaseByTag({ owner, repo, tag });
+              if (!data.draft) {
+                core.info(`Keeping tag for a currently published release: ${tag}`);
+                return;
+              }
+            } catch (error) {
+              if (error.status !== 404) {
+                throw error;
+              }
+            }
+            const ref = `tags/${tag}`;
+            try {
+              await github.rest.git.getRef({ owner, repo, ref });
+            } catch (error) {
+              if (error.status !== 404) {
+                throw error;
+              }
+              core.info(`Tag already absent: ${tag}`);
+              return;
+            }
+            await github.rest.git.deleteRef({ owner, repo, ref });
+            core.info(`Deleted tag: ${tag}`);

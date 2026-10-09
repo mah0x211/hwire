@@ -1,0 +1,95 @@
+name: release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'CalVer version (YYYY.MM.SEQUENCE, e.g. 2026.10.0)'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  queue: max
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        shell: bash
+    env:
+      VERSION: ${{ inputs.version }}
+    steps:
+      - name: Require master
+        run: |
+          if [[ "$GITHUB_REF" != refs/heads/master ]]; then
+            echo 'Release from master only.' >&2
+            exit 1
+          fi
+
+      - name: Checkout release commit
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Prepare versioned source
+        run: |
+          stage="$RUNNER_TEMP/release"
+          mkdir -p "$stage/source"
+          git archive "$GITHUB_SHA" | tar -x -C "$stage/source"
+          python3 .github/scripts/stamp-version.py "$VERSION" "$stage/source"
+          tag="v$VERSION"
+          if git show-ref --verify --quiet "refs/tags/$tag"; then
+            echo "Tag already exists: $tag" >&2
+            exit 1
+          fi
+          mv "$stage/source" "$stage/hwire-$VERSION"
+          echo "RELEASE_ROOT=$stage/hwire-$VERSION" >> "$GITHUB_ENV"
+          echo "RELEASE_TAG=$tag" >> "$GITHUB_ENV"
+
+      - name: Set up LLVM
+        uses: ./.github/actions/setup-llvm
+
+      - name: Test versioned source
+        run: |
+          python3 -B -m unittest discover -s tests -p test_release.py
+          make -C "$RELEASE_ROOT" -j2 test table-test \
+            CFLAGS='-std=c99 -Isrc -O2 -g -march=native'
+
+      - name: Package source
+        run: |
+          make -C "$RELEASE_ROOT" clean
+          archive="hwire-$VERSION.tar.gz"
+          tar -czf "$RUNNER_TEMP/release/$archive" \
+            -C "$RUNNER_TEMP/release" \
+            "hwire-$VERSION/src" "hwire-$VERSION/LICENSE" "hwire-$VERSION/README.md"
+          echo "RELEASE_ARCHIVE=$RUNNER_TEMP/release/$archive" >> "$GITHUB_ENV"
+          cat > "$RUNNER_TEMP/release/notes.md" <<EOF
+          Download \`$archive\` below for sources stamped with version \`$VERSION\`.
+          GitHub's automatic **Source code** archives and tag checkouts retain
+          \`HWIRE_VERSION "development"\`.
+          EOF
+
+      - name: Create draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$RELEASE_TAG" "$RELEASE_ARCHIVE" \
+            --target "$GITHUB_SHA" --draft --title "$VERSION" --generate-notes \
+            --notes-file "$RUNNER_TEMP/release/notes.md"
+          {
+            echo "## Draft release: $VERSION"
+            echo
+            echo "Source commit: \`$GITHUB_SHA\`"
+            echo
+            echo 'Review the release notes and archive before publishing.'
+            echo
+            echo "[Open releases](https://github.com/$GITHUB_REPOSITORY/releases)"
+          } >> "$GITHUB_STEP_SUMMARY"
