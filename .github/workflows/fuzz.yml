@@ -18,14 +18,14 @@ jobs:
   fuzz:
     name: Fuzz (${{ matrix.os }})
     strategy:
-      fail-fast: false
+      fail-fast: true
       matrix:
         os: [ubuntu-24.04, macos-latest]
     runs-on: ${{ matrix.os }}
     timeout-minutes: ${{ github.event_name == 'workflow_dispatch' && 75 || 20 }}
     steps:
     - name: Checkout
-      uses: actions/checkout@v4
+      uses: actions/checkout@v7
 
     - name: Set Up LLVM
       uses: ./.github/actions/setup-llvm
@@ -44,7 +44,7 @@ jobs:
 
     - name: Upload Fuzz Coverage Report
       if: always()
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: fuzz-coverage-${{ matrix.os }}
         path: tests/fuzz/out/coverage/report/
@@ -52,7 +52,7 @@ jobs:
 
     - name: Upload Fuzz Logs
       if: always()
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: fuzz-logs-${{ matrix.os }}
         path: |
@@ -63,7 +63,7 @@ jobs:
 
     - name: Upload Fuzz Failure Inputs
       if: failure()
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: fuzz-failures-${{ matrix.os }}
         path: tests/fuzz/out/**/artifacts/*
