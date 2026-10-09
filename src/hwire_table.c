@@ -43,6 +43,13 @@ static inline hwire_table_index_t *get_slot_index_cs(const hwire_table_t *table)
     return table->index;
 }
 
+/** Return the secondary slots of a dual-index table. */
+static inline hwire_table_index_t *
+get_secondary_slot_index(const hwire_table_t *table)
+{
+    return table->index + get_index_count(table);
+}
+
 /** Return CI slots, sharing the default slots in CI-only mode. */
 static inline hwire_table_index_t *get_slot_index_ci(const hwire_table_t *table)
 {
@@ -68,20 +75,6 @@ static inline hwire_table_index_t *get_next_index_ci(const hwire_table_t *table)
 }
 
 typedef hwire_table_index_t *(*get_next_index_fn)(const hwire_table_t *table);
-
-/** Return duplicate-tail references after the default duplicate-next region. */
-static inline hwire_table_index_t *get_tail_index_cs(const hwire_table_t *table)
-{
-    return get_next_index_cs(table) +
-           (size_t)table->capacity * INDEX_NEXT_COUNT_FACTOR;
-}
-
-/** Return CI duplicate-tail references after the CI duplicate-next region. */
-static inline hwire_table_index_t *get_tail_index_ci(const hwire_table_t *table)
-{
-    return get_next_index_ci(table) +
-           (size_t)table->capacity * INDEX_NEXT_COUNT_FACTOR;
-}
 
 /** Fold ASCII uppercase only; preserve NUL and all non-ASCII bytes. */
 static inline unsigned char fold(unsigned char c)
@@ -450,49 +443,18 @@ typedef uint32_t (*find_slot_fn)(const hwire_table_t *table, const char *key,
                                  size_t keylen, uint64_t hash,
                                  uint16_t *head_out);
 
-/**
- * Locate the selected representatives before publishing a pair. Update each
- * duplicate chain through the representative's tail, then publish the new
- * length.
- */
-hwire_table_code_t hwire_table_push(hwire_table_t *table,
-                                    const hwire_kv_pair_t *kv)
+/** Publish a slot representative or append to its duplicate chain. */
+static inline void update_index(const hwire_table_t *table,
+                                hwire_table_index_t *slots, uint32_t pos,
+                                uint16_t head, uint16_t index)
 {
-    if (!table || !kv || (kv->key.len && !kv->key.ptr) ||
-        (kv->value.len && !kv->value.ptr)) {
-        return HWIRE_TABLE_EINVAL;
-    }
-    table = table->tail;
-    if (table->len >= table->capacity) {
-        return HWIRE_TABLE_EFULL;
-    }
-
-    /* kv is allowed to refer to an existing entry. */
-    hwire_kv_pair_t pair       = *kv;
-    hwire_table_index_t *slots = get_slot_index_cs(table);
-    hwire_table_index_t *next  = get_next_index_cs(table);
-    hwire_table_index_t *tail  = get_tail_index_cs(table);
-    uint16_t index             = table->len;
-    uint16_t ref               = (uint16_t)(index + 1u);
-    uint64_t hash              = 0;
-    uint32_t pos               = 0;
-    uint16_t head              = 0;
+    hwire_table_index_t *next = slots + get_index_slot_count(table);
+    hwire_table_index_t *tail =
+        next + (size_t)table->capacity * INDEX_NEXT_COUNT_FACTOR;
+    uint16_t ref = (uint16_t)(index + 1u);
 
     /* Unused next references remain zero from init/link. Only group
      * representatives need a tail reference. */
-    table->entries[index] = pair;
-
-    /* Select hashing and probing for the primary index. */
-    if (table->mode == HWIRE_TABLE_CASE_INSENSITIVE) {
-        hash = compute_bytes_hash_ci(&table->key, pair.key.ptr, pair.key.len);
-        pos  = find_slot_ci(table, pair.key.ptr, pair.key.len, hash, &head);
-    } else {
-        hash = compute_bytes_hash_cs(&table->key, pair.key.ptr, pair.key.len);
-        pos  = find_slot_cs(table, pair.key.ptr, pair.key.len, hash, &head);
-    }
-
-    // If the head is empty, this is the first entry in the slot; otherwise,
-    // link it to the existing chain.
     if (head == EMPTY) {
         slots[pos]  = ref;
         tail[index] = ref;
@@ -501,32 +463,77 @@ hwire_table_code_t hwire_table_push(hwire_table_t *table,
         next[tail[head_index] - 1u] = ref;
         tail[head_index]            = ref;
     }
+}
 
-    // If both case-sensitive and case-insensitive modes are enabled, update the
-    // CI index as well.
-    if (table->mode ==
-        (HWIRE_TABLE_CASE_SENSITIVE | HWIRE_TABLE_CASE_INSENSITIVE)) {
-        hwire_table_index_t *ci_slots = get_slot_index_ci(table);
-        hwire_table_index_t *ci_next  = get_next_index_ci(table);
-        hwire_table_index_t *ci_tail  = get_tail_index_ci(table);
-        uint64_t ci_hash =
-            compute_bytes_hash_ci(&table->key, pair.key.ptr, pair.key.len);
-        uint16_t ci_head = EMPTY;
-        uint32_t ci_pos =
-            find_slot_ci(table, pair.key.ptr, pair.key.len, ci_hash, &ci_head);
+/** Update the selected CI index for a pair already stored by public push. */
+static inline hwire_table_code_t push_ci(hwire_table_t *table,
+                                         const hwire_kv_pair_t *pair,
+                                         uint16_t index,
+                                         get_slot_index_fn get_slot_index)
+{
+    uint64_t hash =
+        compute_bytes_hash_ci(&table->key, pair->key.ptr, pair->key.len);
+    uint16_t head = EMPTY;
+    uint32_t pos  = find_slot(table, pair->key.ptr, pair->key.len, hash, &head,
+                              get_slot_index, equal_key_ci);
+    update_index(table, get_slot_index(table), pos, head, index);
+    return HWIRE_TABLE_OK;
+}
 
-        if (ci_head == EMPTY) {
-            ci_slots[ci_pos] = ref;
-            ci_tail[index]   = ref;
-        } else {
-            uint16_t head_index               = (uint16_t)(ci_head - 1u);
-            ci_next[ci_tail[head_index] - 1u] = ref;
-            ci_tail[head_index]               = ref;
-        }
+/** Update the default index with case-sensitive hashing and equality. */
+static inline void insert_index_cs(hwire_table_t *table,
+                                   const hwire_kv_pair_t *pair, uint16_t index)
+{
+    uint64_t hash =
+        compute_bytes_hash_cs(&table->key, pair->key.ptr, pair->key.len);
+    uint16_t head = EMPTY;
+    uint32_t pos =
+        find_slot_cs(table, pair->key.ptr, pair->key.len, hash, &head);
+    update_index(table, get_slot_index_cs(table), pos, head, index);
+}
+
+/** Store one pair, update its enabled indexes, and select the CI slot region.
+ */
+hwire_table_code_t hwire_table_push(hwire_table_t *table,
+                                    const hwire_kv_pair_t *kv)
+{
+    if (!table || !kv || (kv->key.len && !kv->key.ptr) ||
+        (kv->value.len && !kv->value.ptr)) {
+        return HWIRE_TABLE_EINVAL;
     }
 
-    table->len = (uint16_t)(index + 1u);
-    return HWIRE_TABLE_OK;
+    table = table->tail;
+    if (table->len >= table->capacity) {
+        return HWIRE_TABLE_EFULL;
+    }
+
+    hwire_kv_pair_t pair = *kv;
+    uint16_t index       = table->len;
+
+/** Store the pair in the table. */
+#define STORE_PAIR(table, index, pair)                                         \
+    do {                                                                       \
+        (table)->entries[index] = pair;                                        \
+        (table)->len            = (uint16_t)((index) + 1u);                      \
+    } while (0)
+
+    switch (table->mode) {
+    default:
+        return HWIRE_TABLE_EINVAL;
+    case HWIRE_TABLE_CASE_SENSITIVE:
+        STORE_PAIR(table, index, pair);
+        insert_index_cs(table, &pair, index);
+        return HWIRE_TABLE_OK;
+    case HWIRE_TABLE_CASE_INSENSITIVE:
+        STORE_PAIR(table, index, pair);
+        return push_ci(table, &pair, index, get_slot_index_cs);
+    case HWIRE_TABLE_CASE_SENSITIVE | HWIRE_TABLE_CASE_INSENSITIVE:
+        STORE_PAIR(table, index, pair);
+        insert_index_cs(table, &pair, index);
+        return push_ci(table, &pair, index, get_secondary_slot_index);
+    }
+
+#undef STORE_PAIR
 }
 
 /** Update the iterator for a case-sensitive entry. */
