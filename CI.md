@@ -391,29 +391,53 @@ Repository headers remain development versions, including the sources
 referenced by the tag. The attached archive contains the stamped version;
 GitHub's automatic **Source code** archives do not.
 
+### Published Release Policy
+
+Review and edit releases while they are drafts. After publication, treat the
+release as immutable: do not move it back to a draft or replace its assets.
+Publish corrections under a new version with an incremented CalVer sequence.
+To withdraw a release, delete it while it is still published:
+
+```sh
+gh release delete v2026.10.0 --yes
+```
+
+Use a new version and tag for any subsequent release, including a replacement
+for a deleted release. This policy applies whether or not GitHub's immutable
+releases setting is enabled.
+
 ### Tag Cleanup
 
-The [release cleanup workflow](.github/workflows/release-cleanup.yml) handles
-`release.unpublished` and `release.deleted`: converting a published release
-to a draft or deleting it also removes its CalVer tag. An unpublished release
-keeps its fixed target commit SHA, so publishing it again recreates the tag
-at that commit. Deleting a draft does not trigger this workflow; a newly
-created draft has no tag to clean up.
+The [release cleanup workflow](.github/workflows/release-cleanup.yml) subscribes
+to `release.deleted` and `release.unpublished`. Deleting a published release
+triggers automatic deletion of its CalVer tag; this was verified for both
+regular releases and prereleases.
+
+In verification with `gh release edit <tag> --draft=true`, both regular releases
+and prereleases returned to draft, but no `unpublished` workflow run was
+observed and their tags remained. The cause is undetermined; support for
+`unpublished` is retained, but tag cleanup must not depend on that event.
+Deleting a draft does not trigger the cleanup workflow. If a published release
+has already been returned to draft, check its tag and manually delete it if
+withdrawal is intended:
+
+```sh
+gh api --method DELETE repos/OWNER/REPO/git/refs/tags/v2026.10.0
+```
+
+A newly created, never-published draft has no tag to clean up.
 
 Cleanup only targets `vYYYY.MM.SEQUENCE` tags, tolerates an already absent tag,
-and preserves a tag if its release has been published again before cleanup
-runs. API failures are reported rather than ignored. Cleanup and release
-creation share the same concurrency group with `queue: max`, so pending
-runs are queued instead of replacing earlier pending runs (up to GitHub's
-100-run queue limit).
+and preserves a tag if its release is currently published when cleanup runs.
+API failures are reported rather than ignored. Cleanup and release creation
+share the same concurrency group with `queue: max`, so pending runs are queued
+instead of replacing earlier pending runs (up to GitHub's 100-run queue limit).
 
-Publish, unpublish, and delete through the GitHub UI or an authenticated local
-`gh` command. Operations performed with a workflow `GITHUB_TOKEN` do not
-trigger another workflow, so automated unpublishing/deletion must perform
-its own tag cleanup.
+Publish and delete through the GitHub UI or an authenticated local `gh` command.
+Operations performed with a workflow `GITHUB_TOKEN` do not trigger another
+workflow, so automated deletion must perform its own tag cleanup.
 
-With immutable releases enabled, published assets and tags cannot be changed,
-and the release cannot be converted back to a draft. After deleting an immutable
-release, its tag can be removed, but its name cannot be reused. Increment the
-CalVer sequence for a corrected release. Tag protection rules must permit the
-cleanup workflow to delete release tags.
+With immutable releases enabled, GitHub also prevents changes to published
+assets and tags and conversion back to a draft. After deleting an immutable
+release, its tag can be removed, but its name cannot be reused. Tag protection
+rules must permit the cleanup workflow to delete release tags.
