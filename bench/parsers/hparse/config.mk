@@ -7,3 +7,12 @@ hparse_VARIANTS := nosimd sse2 native
 else
 hparse_VARIANTS := nosimd neon native
 endif
+
+# Prefer an adapter-local toolchain installed by setup.sh when ZIG is unspecified.
+ifeq ($(ZIG),zig)
+ifneq ($(wildcard hparse/bin/toolchain/zig),)
+ZIG := $(abspath hparse/bin/toolchain/zig)
+endif
+endif
+
+hparse_ENV = ZIG="$(ZIG)"

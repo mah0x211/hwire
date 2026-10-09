@@ -21,12 +21,15 @@ def metadata(source):
     lines = [f"commit: {commit}", f"date: {datetime.now(timezone.utc).isoformat()}"]
     commands = [["uname", "-a"], ["lscpu"], [os.getenv("CC", "cc"), "--version"],
                 [os.getenv("CXX", "c++"), "--version"], ["make", "--version"],
-                ["python3", "--version"], ["rustc", "--version"], ["cargo", "--version"]]
-    if shutil.which("zig"):
-        commands.append(["zig", "version"])
+                ["python3", "--version"]]
     for command in commands:
         lines.append("$ " + " ".join(command))
-        lines.append(subprocess.check_output(command, text=True).strip())
+        try:
+            result = subprocess.run(command, text=True, stdout=subprocess.PIPE,
+                                    stderr=subprocess.STDOUT)
+            lines.append(result.stdout.strip())
+        except OSError as error:
+            lines.append(str(error))
     return commit, "\n".join(lines) + "\n"
 
 
@@ -50,22 +53,23 @@ def run_suite(source, suite, output, summary):
     results = directory / "results"
     if results.is_dir():
         shutil.copytree(results, output / "results")
-    if code == 0:
-        with (output / "report.md").open("w") as report, (output / "report.log").open("w") as log:
-            code = subprocess.run(["make", "--no-print-directory", "--silent", "report"],
-                                  cwd=directory, stdout=report, stderr=log).returncode
+    run_code = code
+    with (output / "report.md").open("w") as report, (output / "report.log").open("w") as log:
+        report_code = subprocess.run(["make", "--no-print-directory", "--silent", "report"],
+                                     cwd=directory, stdout=report, stderr=log).returncode
+    code = run_code or report_code
     (output / "status.txt").write_text(f"Exit status: {code}\n")
-    if code:
-        append_summary(summary, f"**{suite}: failed (exit {code})** — see the artifact logs.")
-        return code
-
     append_summary(summary, f"\n# {suite.capitalize()}\n")
     platform = results / ("storage/platform.txt" if suite == "hashmaps" else "platform.txt")
     if platform.is_file():
         append_summary(summary, "<details>\n<summary>Build configuration</summary>\n\n```text\n" +
                        platform.read_text() + "```\n\n</details>\n")
-    append_summary(summary, (output / "report.md").read_text())
-    return 0
+    report = (output / "report.md").read_text()
+    if report_code == 0 and report:
+        append_summary(summary, report)
+    if code:
+        append_summary(summary, f"**{suite}: failed (exit {code})** — see the report and artifact logs.")
+    return code
 
 
 def main():
@@ -85,11 +89,11 @@ def main():
                    "Results from different runs may use different runner hardware.\n\n"
                    "<details>\n<summary>Commit, toolchains and CPU</summary>\n\n```text\n" +
                    environment + "```\n\n</details>\n")
+    failed = False
     for suite in SUITES if args.suite == "all" else (args.suite,):
         code = run_suite(source, suite, args.output / suite, args.summary)
-        if code:
-            return code
-    return 0
+        failed |= code != 0
+    return int(failed)
 
 
 if __name__ == "__main__":

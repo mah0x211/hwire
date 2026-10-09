@@ -69,6 +69,9 @@ are generated from those directories. Export every function below, using
 Each adapter owns its dependency retrieval and build settings. Neither the
 registration script nor the Makefile needs library-specific download rules.
 
+- Optional `<name>/setup.sh check|install` checks system dependencies or installs
+  them when `INSTALL_DEPS=1`. Return nonzero on failure; `fetch.sh` runs only
+  after setup succeeds. Both scripts run from the suite directory.
 - Optional `<name>/fetch.sh` downloads a fixed upstream revision. `make setup`
   calls it with `sh` from the hashmap suite directory; use the script's directory
   to locate adapter files. Return zero on success, including when the requested
@@ -96,6 +99,7 @@ example_LDLIBS :=
 | `<name>_CFLAGS` | Additional flags for this adapter's C translation units |
 | `<name>_CXXFLAGS` | Additional flags for this adapter's C++ translation units |
 | `<name>_LDLIBS` | Additional linker flags/libraries for the timing binary |
+| `<name>_ENV` | Space-separated `NAME=value` assignments (shell quoting supported) for this adapter’s setup, fetch, build and execution |
 
 All settings are optional. Dependency source paths must remain under the
 adapter directory so that its compilation flags apply. Header files within
@@ -352,6 +356,29 @@ without timing or replacing saved results. Directory prefixes `_` disable
 adapters and their configurations, including dependencies, without changing
 the driver.
 
+
+### Dependencies and failures
+
+The Makefile includes `../shared/runner.mk`, which invokes the shared
+`../shared/scripts/run.py`. Each adapter owns its optional `setup.sh`, `fetch.sh`
+and `config.mk`. The runner calls `setup.sh check` first, then runs `fetch.sh`
+only after setup succeeds.
+Use `make run INSTALL_DEPS=1` to permit installation through the adapter's
+`setup.sh install`; ordinary local runs only check dependencies. CI enables
+installation. Adapter setup may use the [shared dependency helpers](../shared/README.md); dependency
+names and toolchain requirements remain in the adapter directory.
+
+Adapters and supported build variants are built and measured independently.
+A setup, source-fetch, build or measurement failure is recorded and other targets
+continue. The report compares only successful measurements and ends with a
+Failed Benchmark Targets table containing short errors. Full logs and
+`status.json` are retained in the result directory and uploaded by Actions.
+After generating the report, the command exits nonzero if any target failed.
+
+Each `make run` replaces the suite's generated measurements, status and logs.
+Failed or partially completed measurements and older results are excluded.
+`make build` and `make setup` also continue across adapters; their statuses and
+logs are kept under `bin/status/`, without replacing saved measurements.
 
 ### Configuration
 

@@ -4,7 +4,7 @@ CXX ?= c++
 AR ?= ar
 CFLAGS ?= -O2 -DNDEBUG -std=c11
 CXXFLAGS ?= -O2 -DNDEBUG -std=c++17
-BIN := bin
+BIN ?= bin
 RESULTS := results/storage
 UNAME_M := $(shell uname -m)
 ifneq ($(filter arm64 aarch64,$(UNAME_M)),)
@@ -25,24 +25,18 @@ INCLUDES := -I. -I../shared -Ishared -I../../src $(foreach m,$(MAPS),-I$(m))
 LIBS := $(foreach v,$(VARIANTS),$(BIN)/$(v)/libhashmaps.a)
 BINS := $(foreach v,$(VARIANTS),$(BIN)/$(v)/bench_hashmap)
 MAP_ENV = $(foreach m,$(MAPS),$(m)_CPPFLAGS='$($(m)_CPPFLAGS)' $(m)_CFLAGS='$($(m)_CFLAGS)' $(m)_CXXFLAGS='$($(m)_CXXFLAGS)')
-BUILD_ENV = $(MAP_ENV) LDLIBS='$(foreach m,$(MAPS),$($(m)_LDLIBS))' CC='$(CC)' CXX='$(CXX)' AR='$(AR)' CFLAGS='$(CFLAGS)' CXXFLAGS='$(CXXFLAGS)'
+BUILD_ENV = BIN='$(BIN)' $(MAP_ENV) LDLIBS='$(foreach m,$(MAPS),$($(m)_LDLIBS))' CC='$(CC)' CXX='$(CXX)' AR='$(AR)' CFLAGS='$(CFLAGS)' CXXFLAGS='$(CXXFLAGS)'
 .DEFAULT_GOAL := run
 .NOTPARALLEL:
-.PHONY: all setup build adapters run growth report check list clean FORCE
+.PHONY: all adapters growth report check list clean FORCE
 .PRECIOUS: $(BIN)/%/maplist.c $(BIN)/%/libhashmaps.a $(BIN)/%/config.txt
 all: build
-setup:
-	@for m in $(MAPS); do if [ -f "$$m/fetch.sh" ]; then sh "$$m/fetch.sh" || exit 1; fi; done
-build: $(BINS)
+BENCH_ADAPTERS = $(MAPS)
+BENCH_RUN_TARGETS := growth
+BENCH_ARGUMENTS = $(if $(filter growth,$@),--growth,)
+include ../shared/runner.mk
 adapters: $(LIBS)
-run growth: build
-	@mkdir -p $(RESULTS)
-	@sh ../platform.sh $(RESULTS)/platform.txt '$(CC)' '$(CFLAGS)'
-	@printf 'cxx: %s\ncxxflags: %s\n' '$(CXX)' '$(CXXFLAGS)' >> $(RESULTS)/platform.txt
-	@python3 -c 'import json; from pathlib import Path; Path("$(RESULTS)/active.json").write_text(json.dumps([name+"-"+variant for name in "$(REGISTRATIONS)".split() for variant in "$(VARIANTS)".split()]))'
-	@for b in $(BINS); do ./$$b --describe || exit 1; done >> $(RESULTS)/platform.txt
-	@for b in $(BINS); do ./$$b $(if $(filter growth,$@),--growth,) || exit 1; done
-	@$(MAKE) --no-print-directory report
+
 report:
 	@python3 scripts/report_hashmaps.py
 # Statistical helper checks only; no container/data validation benchmark path.
@@ -58,7 +52,7 @@ $(BIN)/%/config.txt: FORCE
 	@mkdir -p $(BIN)/$*
 	@printf '%s\n' '$(CC)' '$(CXX)' '$(AR)' '$(CFLAGS)' '$(CXXFLAGS)' '$(VARIANT_FLAGS_$*)' '$(SOURCES)' '$(DEPS)' '$(MAP_ENV)' '$(foreach m,$(MAPS),$($(m)_LDLIBS))' > $@.tmp
 	@if cmp -s $@.tmp $@; then rm $@.tmp; else mv $@.tmp $@; fi
-$(BIN)/%/libhashmaps.a: $(BIN)/%/config.txt Makefile scripts/build.sh shared/hashmap_hash.c shared/hashmap_hash.h shared/hashmap_key.h $(DEPS) ../../src/hwire_table.c ../../src/hwire_table.h ../../src/hwire_table_aes.h ../../src/hwire.h | setup
+$(BIN)/%/libhashmaps.a: $(BIN)/%/config.txt Makefile ../shared/runner.mk scripts/build.sh shared/hashmap_hash.c shared/hashmap_hash.h shared/hashmap_key.h $(DEPS) ../../src/hwire_table.c ../../src/hwire_table.h ../../src/hwire_table_aes.h ../../src/hwire.h | setup
 	@$(BUILD_ENV) SRCS='$(SOURCES)' INC='$(INCLUDES)' sh scripts/build.sh $* '$(VARIANT_FLAGS_$*)' adapters
 $(BIN)/%/maplist.c: FORCE scripts/gen_hashmaps.py $(DEPS)
 	@mkdir -p $(BIN)/$*

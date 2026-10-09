@@ -4,7 +4,7 @@ set -eu
 variant=$1
 extra=$2
 suite=$3
-dir="bin/$variant"
+dir="${BIN:-bin}/$variant"
 mkdir -p "$dir"
 case "$(uname -s)" in
     Darwin) dead_strip='-Wl,-dead_strip' ;;

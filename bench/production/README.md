@@ -50,6 +50,9 @@ Lookup measurements use completed contexts.
 
 ### Sampling
 
+An untimed parse warms up lazy runtime and thread-local initialization before
+the request arena is activated. Per-request context initialization remains timed.
+
 Adaptive sampling uses 20–100 samples, Target RCIW 2% and approximately 1 ms
 per sample. Parse operations are timed individually; lookup samples use batches.
 Empty timer intervals are subtracted. Progress reports samples and achieved
@@ -66,8 +69,11 @@ supported. Adapters contain native processing and no timers or driver macros.
 
 ### Dependencies and build configuration
 
-Each implementation owns its `fetch.sh`, `config.mk` and dependency directory.
+Each implementation owns its `setup.sh`, `fetch.sh`, `config.mk` and dependency directory.
 
+- Optional `setup.sh check|install` prepares system dependencies before `fetch.sh`.
+  `check` reports missing dependencies without installing; `install` is invoked
+  only with `INSTALL_DEPS=1`. Return nonzero on failure.
 - Optional `fetch.sh` downloads pinned native sources and returns nonzero on
   failure. It runs before compilation; repeated setup reuses fetched revisions.
 - Optional `config.mk` provides the variables below, using paths relative to
@@ -88,6 +94,7 @@ Each implementation owns its `fetch.sh`, `config.mk` and dependency directory.
 | `<name>_NAME` | Report display name; defaults to the directory name |
 | `<name>_BUILD_INFO` | Native toolchain/build description recorded in the measurement metadata |
 | `<name>_BUILD_DEPS` | Native source/manifests that trigger rebuilding |
+| `<name>_ENV` | Space-separated `NAME=value` assignments (shell quoting supported) for this adapter’s setup, fetch, build and execution |
 
 ### Entry points
 
@@ -220,7 +227,7 @@ virtualization       : kvm
 - `curl`, `tar` and network access: Fetch pinned dependencies during initial setup.
 - OpenSSL development headers: Required when the H2O target is enabled (for example, `libssl-dev` on Debian/Ubuntu). `pkg-config` discovers nonstandard include paths; otherwise add the include path to `CFLAGS`.
 
-- libuv development headers: Required for the H2O target on macOS; include paths are discovered with `pkg-config`.
+- libuv development headers: Required for the H2O target on Linux and macOS (`libuv1-dev` on Debian/Ubuntu); include paths are discovered with `pkg-config`.
 
 Dependencies are fetched before timing. Repeated setup reuses downloaded
 revisions; each target owns its `fetch.sh` and `config.mk`.
@@ -248,6 +255,29 @@ binaries and generated registration tables live in `bin/`. These files are not
 committed. Timing binaries support `--quick` for development and `--check` for
 untimed success checks; `--quick` is not publication sampling.
 
+
+### Dependencies and failures
+
+The Makefile includes `../shared/runner.mk`, which invokes the shared
+`../shared/scripts/run.py`. Each adapter owns its optional `setup.sh`, `fetch.sh`
+and `config.mk`. The runner calls `setup.sh check` first, then runs `fetch.sh`
+only after setup succeeds.
+Use `make run INSTALL_DEPS=1` to permit installation through the adapter's
+`setup.sh install`; ordinary local runs only check dependencies. CI enables
+installation. Adapter setup may use the [shared dependency helpers](../shared/README.md); dependency
+names and toolchain requirements remain in the adapter directory.
+
+Adapters and supported build variants are built and measured independently.
+A setup, source-fetch, build or measurement failure is recorded and other targets
+continue. The report compares only successful measurements and ends with a
+Failed Benchmark Targets table containing short errors. Full logs and
+`status.json` are retained in the result directory and uploaded by Actions.
+After generating the report, the command exits nonzero if any target failed.
+
+Each `make run` replaces the suite's generated measurements, status and logs.
+Failed or partially completed measurements and older results are excluded.
+`make build` and `make setup` also continue across adapters; their statuses and
+logs are kept under `bin/status/`, without replacing saved measurements.
 
 ### Configuration
 

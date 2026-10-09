@@ -3,7 +3,7 @@
 set -eu
 variant=$1
 extra=$2
-dir="bin/$variant"
+dir="${BIN:-bin}/$variant"
 mkdir -p "$dir/objects"
 objects=
 for src in $SRCS; do

@@ -60,8 +60,11 @@ supported. Adapters contain native processing and no timers or driver macros.
 
 ### Dependencies and build configuration
 
-Each implementation owns its `fetch.sh`, `config.mk` and dependency directory.
+Each implementation owns its `setup.sh`, `fetch.sh`, `config.mk` and dependency directory.
 
+- Optional `setup.sh check|install` prepares system dependencies before `fetch.sh`.
+  `check` reports missing dependencies without installing; `install` is invoked
+  only with `INSTALL_DEPS=1`. Return nonzero on failure.
 - Optional `fetch.sh` downloads pinned native sources and returns nonzero on
   failure. It runs before compilation; repeated setup reuses fetched revisions.
 - Optional `config.mk` provides the variables below, using paths relative to
@@ -82,6 +85,7 @@ Each implementation owns its `fetch.sh`, `config.mk` and dependency directory.
 | `<name>_BUILD_INFO` | Native toolchain/build description recorded in the measurement metadata |
 | `<name>_BUILD_DEPS` | Native source/manifests that trigger rebuilding |
 | `<name>_VARIANTS` | Supported build targets, such as `nosimd sse42 native`; only those adapters are registered, compiled and measured for each target. Defaults to the suite targets when omitted |
+| `<name>_ENV` | Space-separated `NAME=value` assignments (shell quoting supported) for this adapter’s setup, fetch, build and execution |
 
 ### Entry points
 
@@ -170,6 +174,29 @@ binaries and generated registration tables live in `bin/`. These files are not
 committed. Timing binaries support `--quick` for development and `--check` for
 untimed success checks; `--quick` is not publication sampling.
 
+
+### Dependencies and failures
+
+The Makefile includes `../shared/runner.mk`, which invokes the shared
+`../shared/scripts/run.py`. Each adapter owns its optional `setup.sh`, `fetch.sh`
+and `config.mk`. The runner calls `setup.sh check` first, then runs `fetch.sh`
+only after setup succeeds.
+Use `make run INSTALL_DEPS=1` to permit installation through the adapter's
+`setup.sh install`; ordinary local runs only check dependencies. CI enables
+installation. Adapter setup may use the [shared dependency helpers](../shared/README.md); dependency
+names and toolchain requirements remain in the adapter directory.
+
+Adapters and supported build variants are built and measured independently.
+A setup, source-fetch, build or measurement failure is recorded and other targets
+continue. The report compares only successful measurements and ends with a
+Failed Benchmark Targets table containing short errors. Full logs and
+`status.json` are retained in the result directory and uploaded by Actions.
+After generating the report, the command exits nonzero if any target failed.
+
+Each `make run` replaces the suite's generated measurements, status and logs.
+Failed or partially completed measurements and older results are excluded.
+`make build` and `make setup` also continue across adapters; their statuses and
+logs are kept under `bin/status/`, without replacing saved measurements.
 
 ### Configuration
 

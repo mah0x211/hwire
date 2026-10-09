@@ -22,6 +22,7 @@ import ast
 import re
 import sys
 from pathlib import Path
+from registration import write_generated
 
 BASE = Path(__file__).resolve().parents[2] / "data"
 NAME = re.compile(r"[a-z][a-z0-9_]*\Z")
@@ -76,10 +77,7 @@ def write_table(out: str) -> None:
             sym = f"MSG_{name.upper()}"
             lines.append(f'{{ "{prefix}_{name}", {sym}, sizeof({sym}) - 1 }},')
         lines.append("};")
-    content = "\n".join(lines) + "\n"
-    path = Path(out)
-    if not path.exists() or path.read_text() != content:
-        path.write_text(content)
+    write_generated(out, lines)
 
 
 def main() -> None:

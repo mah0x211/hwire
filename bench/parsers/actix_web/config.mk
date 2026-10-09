@@ -11,3 +11,6 @@ actix_web_VARIANTS := nosimd sse42 native
 else
 actix_web_VARIANTS := nosimd neon native
 endif
+
+# Dependency environment belongs to this adapter.
+actix_web_ENV = CARGO="$(CARGO)" $(if $(filter 1,$(INSTALL_DEPS)),RUSTUP_TOOLCHAIN=$(or $(RUSTUP_TOOLCHAIN),1.88.0),)
