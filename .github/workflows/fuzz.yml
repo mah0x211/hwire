@@ -20,25 +20,15 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-24.04, macos-latest]
     runs-on: ${{ matrix.os }}
     timeout-minutes: ${{ github.event_name == 'workflow_dispatch' && 75 || 20 }}
     steps:
     - name: Checkout
       uses: actions/checkout@v4
 
-    - name: Install Clang and libFuzzer (Ubuntu)
-      if: runner.os == 'Linux'
-      run: |
-        sudo apt-get update && sudo apt-get install -y clang libclang-rt-dev llvm
-        echo "/usr/bin" >> "$GITHUB_PATH"
-
-    - name: Set Up LLVM (macOS)
-      if: runner.os == 'macOS'
-      run: |
-        brew list llvm >/dev/null 2>&1 || brew install llvm
-        echo "$(brew --prefix llvm)/bin" >> "$GITHUB_PATH"
-        echo "SDKROOT=$(xcrun --show-sdk-path)" >> "$GITHUB_ENV"
+    - name: Set Up LLVM
+      uses: ./.github/actions/setup-llvm
 
     - name: Run Bounded Fuzzing
       env:

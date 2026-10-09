@@ -7,7 +7,7 @@
  * (case-sensitive) MUST: pos MUST equal total consumed bytes (request-line +
  * headers) after HWIRE_OK.
  */
-void test_parse_request_valid(void)
+static void test_parse_request_valid(void)
 {
     TEST_START("test_parse_request_valid");
     hwire_ctx_t cb = {
@@ -28,7 +28,7 @@ void test_parse_request_valid(void)
  * MUST: non-zero return from request_cb MUST cause hwire_parse_request() to
  * return HWIRE_ECALLBACK.
  */
-void test_parse_request_cb_fail(void)
+static void test_parse_request_cb_fail(void)
 {
     TEST_START("test_parse_request_cb_fail");
     hwire_ctx_t cb = {
@@ -51,7 +51,7 @@ void test_parse_request_cb_fail(void)
  * RFC 9112 §3.2: empty request-target (two consecutive SPs) MUST be rejected →
  * HWIRE_EURI
  */
-void test_parse_request_method_errors(void)
+static void test_parse_request_method_errors(void)
 {
     TEST_START("test_parse_request_method_errors");
     hwire_ctx_t cb = {
@@ -103,7 +103,7 @@ void test_parse_request_method_errors(void)
  * HWIRE_EVERSION. MUST reject: non-CRLF/LF character after the version string →
  * HWIRE_EVERSION.
  */
-void test_parse_request_version_errors(void)
+static void test_parse_request_version_errors(void)
 {
     TEST_START("test_parse_request_version_errors");
     hwire_ctx_t cb = {
@@ -134,7 +134,7 @@ void test_parse_request_version_errors(void)
  * parameter). MUST return HWIRE_ELEN if URI length (before SP) exceeds maxlen.
  * MUST return HWIRE_EAGAIN if SP after URI has not yet been received.
  */
-void test_parse_request_uri_errors(void)
+static void test_parse_request_uri_errors(void)
 {
     TEST_START("test_parse_request_uri_errors");
     hwire_ctx_t cb = {
@@ -174,7 +174,7 @@ void test_parse_request_uri_errors(void)
  * ignored. MUST return HWIRE_EAGAIN on incomplete input (no CRLF yet). MUST
  * reject: bare CR not followed by LF → HWIRE_EEOL.
  */
-void test_parse_request_eol_errors(void)
+static void test_parse_request_eol_errors(void)
 {
     TEST_START("test_parse_request_eol_errors");
     hwire_ctx_t cb = {
@@ -223,7 +223,7 @@ void test_parse_request_eol_errors(void)
  * hwire_parse_request(). MUST: header parsing errors MUST propagate unchanged
  * from the headers section.
  */
-void test_parse_request_header_errors(void)
+static void test_parse_request_header_errors(void)
 {
     TEST_START("test_parse_request_header_errors");
     hwire_ctx_t cb = {
@@ -251,7 +251,7 @@ void test_parse_request_header_errors(void)
  *   asterisk-form  = "*"                           — OPTIONS method
  * MUST: all four request-target forms MUST be accepted.
  */
-void test_parse_request_uri_forms(void)
+static void test_parse_request_uri_forms(void)
 {
     TEST_START("test_parse_request_uri_forms");
     hwire_ctx_t cb = {
@@ -292,7 +292,7 @@ void test_parse_request_uri_forms(void)
  * HWIRE_EURI Note: '~' (0x7E) IS a valid unreserved character (RFC 3986 §2.3)
  * and MUST be accepted.
  */
-void test_parse_request_uri_invalid_chars(void)
+static void test_parse_request_uri_invalid_chars(void)
 {
     TEST_START("test_parse_request_uri_invalid_chars");
     hwire_ctx_t cb = {
@@ -345,7 +345,7 @@ void test_parse_request_uri_invalid_chars(void)
  *   A recipient MUST recognize a single LF as a line terminator (lenient).
  * MUST accept: "GET / HTTP/1.1\n\r\n" (bare LF after version) → HWIRE_OK.
  */
-void test_parse_request_lf_eol(void)
+static void test_parse_request_lf_eol(void)
 {
     TEST_START("test_parse_request_lf_eol");
     hwire_ctx_t cb = {
@@ -370,7 +370,7 @@ void test_parse_request_lf_eol(void)
  * MUST accept: non-alpha tchar characters ('!' '#' '$' etc.) as method chars,
  *   since method = token = 1*tchar (RFC 9110 §9.1).
  */
-void test_parse_request_uri_chars(void)
+static void test_parse_request_uri_chars(void)
 {
     TEST_START("test_parse_request_uri_chars");
     hwire_ctx_t cb = {
@@ -506,7 +506,7 @@ static int verify_req_header_content_cb(hwire_ctx_t *ctx,
  * fields. MUST: method.ptr/len, uri.ptr/len, version MUST match the input.
  * MUST: header key.ptr/len and value.ptr/len MUST match the input bytes.
  */
-void test_parse_request_content_verification(void)
+static void test_parse_request_content_verification(void)
 {
     TEST_START("test_parse_request_content_verification");
 
@@ -579,7 +579,7 @@ void test_parse_request_content_verification(void)
  * bytes (request-line + header fields + terminating empty line; SP / ":" /
  * OWS / CRLF all count). maxlen == total → OK; below → error.
  */
-void test_parse_request_maxlen_cumulative(void)
+static void test_parse_request_maxlen_cumulative(void)
 {
     TEST_START("test_parse_request_maxlen_cumulative");
     hwire_ctx_t cb = {

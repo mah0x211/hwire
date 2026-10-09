@@ -8,7 +8,7 @@
  * — empty reason-phrase MUST be accepted. RFC 9112 §2.2: leading empty line
  * (CRLF) before status-line MUST be ignored.
  */
-void test_parse_response_valid(void)
+static void test_parse_response_valid(void)
 {
     TEST_START("test_parse_response_valid");
     hwire_ctx_t cb = {
@@ -74,7 +74,7 @@ void test_parse_response_valid(void)
  * MUST: non-zero return from response_cb MUST cause hwire_parse_response() to
  * return HWIRE_ECALLBACK.
  */
-void test_parse_response_cb_fail(void)
+static void test_parse_response_cb_fail(void)
 {
     TEST_START("test_parse_response_cb_fail");
     hwire_ctx_t cb = {
@@ -99,7 +99,7 @@ void test_parse_response_cb_fail(void)
  * MUST reject: reason-phrase exceeding maxlen parameter → HWIRE_ELEN
  * MUST reject: NUL byte (0x00) in reason-phrase → HWIRE_EILSEQ (not EAGAIN)
  */
-void test_parse_response_reason_phrase(void)
+static void test_parse_response_reason_phrase(void)
 {
     TEST_START("test_parse_response_reason_phrase");
     hwire_ctx_t cb = {
@@ -187,7 +187,7 @@ void test_parse_response_reason_phrase(void)
  * received. MUST reject: non-SP character after status-code (missing delimiter)
  * → HWIRE_ESTATUS.
  */
-void test_parse_response_status_errors(void)
+static void test_parse_response_status_errors(void)
 {
     TEST_START("test_parse_response_status_errors");
     hwire_ctx_t cb = {
@@ -222,7 +222,7 @@ void test_parse_response_status_errors(void)
  * incomplete status-line.
  * Header parsing errors MUST propagate unchanged from hwire_parse_headers().
  */
-void test_parse_response_edge_cases(void)
+static void test_parse_response_edge_cases(void)
 {
     TEST_START("test_parse_response_edge_cases");
     hwire_ctx_t cb = {
@@ -280,7 +280,7 @@ void test_parse_response_edge_cases(void)
  *                      obs-text      = %x80-FF  (RFC 9110 §5.5)
  * MUST accept: obs-text bytes (0x80-0xFF) in reason-phrase.
  */
-void test_parse_response_reason_obstext(void)
+static void test_parse_response_reason_obstext(void)
 {
     TEST_START("test_parse_response_reason_obstext");
     hwire_ctx_t cb = {
@@ -313,7 +313,7 @@ void test_parse_response_reason_obstext(void)
  * MUST reject: 099 (first digit '0') and 600 (first digit '6') → HWIRE_ESTATUS.
  * MUST: pos MUST equal strlen(input) after HWIRE_OK (no extra bytes consumed).
  */
-void test_parse_response_status_boundaries(void)
+static void test_parse_response_status_boundaries(void)
 {
     TEST_START("test_parse_response_status_boundaries");
     hwire_ctx_t cb = {
@@ -444,7 +444,7 @@ static int verify_rsp_header_content_cb(hwire_ctx_t *ctx,
  * and header fields. MUST: version, status, and reason.ptr/len MUST match the
  * input. MUST: header key.ptr/len and value.ptr/len MUST match the input bytes.
  */
-void test_parse_response_content_verification(void)
+static void test_parse_response_content_verification(void)
 {
     TEST_START("test_parse_response_content_verification");
 
@@ -530,7 +530,7 @@ void test_parse_response_content_verification(void)
  * bytes (status-line + header fields + terminating empty line; all delimiters
  * counted).
  */
-void test_parse_response_maxlen_cumulative(void)
+static void test_parse_response_maxlen_cumulative(void)
 {
     TEST_START("test_parse_response_maxlen_cumulative");
     hwire_ctx_t cb = {

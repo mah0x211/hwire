@@ -6,7 +6,7 @@
  * other byte is invalid.
  */
 
-void test_request_line_endings(void)
+static void test_request_line_endings(void)
 {
     TEST_START("test_request_line_endings");
 
@@ -38,7 +38,7 @@ void test_request_line_endings(void)
     TEST_END();
 }
 
-void test_response_line_endings(void)
+static void test_response_line_endings(void)
 {
     TEST_START("test_response_line_endings");
 
@@ -69,7 +69,7 @@ void test_response_line_endings(void)
     TEST_END();
 }
 
-void test_header_line_endings(void)
+static void test_header_line_endings(void)
 {
     TEST_START("test_header_line_endings");
 
@@ -100,7 +100,7 @@ void test_header_line_endings(void)
     TEST_END();
 }
 
-void test_chunksize_line_endings(void)
+static void test_chunksize_line_endings(void)
 {
     TEST_START("test_chunksize_line_endings");
 

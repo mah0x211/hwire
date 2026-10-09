@@ -21,7 +21,7 @@
  * MUST: pos MUST equal total consumed bytes (including both DQUOTE delimiters)
  * after HWIRE_OK.
  */
-void test_parse_quoted_string_valid(void)
+static void test_parse_quoted_string_valid(void)
 {
     TEST_START("test_parse_quoted_string_valid");
 
@@ -56,7 +56,7 @@ void test_parse_quoted_string_valid(void)
  * MUST reject: invalid quoted-pair target (CTL other than HTAB) → HWIRE_EILSEQ
  * MUST return HWIRE_ELEN: content exceeds maxlen
  */
-void test_parse_quoted_string_invalid(void)
+static void test_parse_quoted_string_invalid(void)
 {
     TEST_START("test_parse_quoted_string_invalid");
 
@@ -117,7 +117,7 @@ void test_parse_quoted_string_invalid(void)
  * MUST accept: obs-text (0x80-0xFF) as qdtext inside quoted-string.
  * MUST accept: empty quoted-string ("").
  */
-void test_parse_quoted_string_rfc_compliance(void)
+static void test_parse_quoted_string_rfc_compliance(void)
 {
     TEST_START("test_parse_quoted_string_rfc_compliance");
 
@@ -157,7 +157,7 @@ void test_parse_quoted_string_rfc_compliance(void)
  * MUST reject: invalid quoted-pair target (CTL other than HTAB) → HWIRE_EILSEQ
  * MUST reject: CTL character (0x01-0x1F except HTAB) as qdtext → HWIRE_EILSEQ
  */
-void test_parse_quoted_string_rfc_invalid(void)
+static void test_parse_quoted_string_rfc_invalid(void)
 {
     TEST_START("test_parse_quoted_string_rfc_invalid");
 
@@ -192,7 +192,7 @@ void test_parse_quoted_string_rfc_invalid(void)
  *       A closing DQUOTE at initial pos + maxlen - 1 MUST succeed.
  *       A quoted-string longer than maxlen MUST return HWIRE_ELEN.
  */
-void test_parse_quoted_string_content_verification(void)
+static void test_parse_quoted_string_content_verification(void)
 {
     TEST_START("test_parse_quoted_string_content_verification");
 
@@ -278,7 +278,7 @@ void test_parse_quoted_string_content_verification(void)
     TEST_END();
 }
 
-void test_parse_quoted_string_numeric_boundaries(void)
+static void test_parse_quoted_string_numeric_boundaries(void)
 {
     TEST_START("test_parse_quoted_string_numeric_boundaries");
 
@@ -316,7 +316,7 @@ void test_parse_quoted_string_numeric_boundaries(void)
     TEST_END();
 }
 
-void test_parse_quoted_string_quoted_pair_budget(void)
+static void test_parse_quoted_string_quoted_pair_budget(void)
 {
     TEST_START("test_parse_quoted_string_quoted_pair_budget");
 

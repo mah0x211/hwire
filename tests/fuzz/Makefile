@@ -13,10 +13,11 @@ FUZZ_TARGETS ?= messages values table
 FUZZ_VARIANTS ?= auto
 FUZZ_INPUT ?=
 OUT ?= out
-CFLAGS = -std=c11 -O1 -g -Wall -Wextra -Werror -I../../src -fno-omit-frame-pointer
+CFLAGS = -std=c11 -O1 -g -I../../src -fno-omit-frame-pointer
 export ASAN_OPTIONS ?= quarantine_size_mb=32:malloc_context_size=5
 export UBSAN_OPTIONS ?= halt_on_error=1:print_stacktrace=1
-SANITIZERS = -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=undefined
+QUALITY_FLAGS = --config=$(abspath ../../config/clang/warnings.cfg)
+SANITIZERS = -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=all
 
 ifeq ($(filter arm64 aarch64,$(ARCH)),)
 PARSER_VARIANTS = scalar sse2 sse42 native
@@ -59,9 +60,9 @@ build run replay:
 	      rm -f "$$dir/exit-code" "$$dir/run.log"; \
 	    fi; \
 	    if [ "$$target" = table ]; then \
-      $(CC) $(CFLAGS) $$flags -fsyntax-only ../table/test_aes.c >"$$dir/build.log" 2>&1 || { cat "$$dir/build.log"; exit 1; }; \
+      $(CC) $(QUALITY_FLAGS) $(CFLAGS) $$flags -fsyntax-only ../table/test_aes.c >"$$dir/build.log" 2>&1 || { cat "$$dir/build.log"; exit 1; }; \
     fi; \
-    $(CC) $(CFLAGS) $(COVERAGE_FLAGS) $$flags $(SANITIZERS) $$target.c $$source -o "$$dir/fuzz" >>"$$dir/build.log" 2>&1 || { cat "$$dir/build.log"; exit 1; }; \
+    $(CC) $(QUALITY_FLAGS) $(CFLAGS) $(COVERAGE_FLAGS) $$flags $(SANITIZERS) $$target.c $$source -o "$$dir/fuzz" >>"$$dir/build.log" 2>&1 || { cat "$$dir/build.log"; exit 1; }; \
 	    if [ '$@' = build ]; then continue; fi; \
 	    if [ '$@' = replay ]; then \
 	      echo "=== $$target / $$variant: replay ==="; \

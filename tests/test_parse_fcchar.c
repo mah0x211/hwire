@@ -13,7 +13,7 @@
  * MUST: returns false for NUL (0x00), DEL (0x7F), CR (0x0D), LF (0x0A),
  * and all other CTLs (0x01-0x08, 0x0B-0x0C, 0x0E-0x1F).
  */
-void test_is_fcchar(void)
+static void test_is_fcchar(void)
 {
     TEST_START("test_is_fcchar");
 
@@ -54,7 +54,7 @@ void test_is_fcchar(void)
  * MUST: hwire_is_fcchar() returns true for exactly SP (0x20), HTAB (0x09),
  * VCHAR (0x21-0x7E), and obs-text (0x80-0xFF) — 224 bytes in total.
  */
-void test_is_fcchar_all256(void)
+static void test_is_fcchar_all256(void)
 {
     TEST_START("test_is_fcchar_all256");
 
@@ -84,7 +84,7 @@ void test_is_fcchar_all256(void)
  * non-fcchar character; pos advances past consumed chars.
  * CR (0x0D) and LF (0x0A) terminate scanning.
  */
-void test_parse_fcchar_basic(void)
+static void test_parse_fcchar_basic(void)
 {
     TEST_START("test_parse_fcchar_basic");
 
@@ -121,7 +121,7 @@ void test_parse_fcchar_basic(void)
     TEST_END();
 }
 
-void test_parse_fcchar_offset_boundaries(void)
+static void test_parse_fcchar_offset_boundaries(void)
 {
     TEST_START("test_parse_fcchar_offset_boundaries");
 
@@ -144,7 +144,7 @@ void test_parse_fcchar_offset_boundaries(void)
  * hwire_parse_fcchar() MUST NOT stop at SP (0x20) or HTAB (0x09); it stops
  * only at CR, LF, NUL, DEL, or other CTLs.
  */
-void test_parse_fcchar_whitespace(void)
+static void test_parse_fcchar_whitespace(void)
 {
     TEST_START("test_parse_fcchar_whitespace");
 
@@ -187,7 +187,7 @@ void test_parse_fcchar_whitespace(void)
  * 15 and 16) MUST be accepted.
  * A non-fcchar byte MUST terminate scanning at the correct position.
  */
-void test_parse_fcchar_simd_boundary(void)
+static void test_parse_fcchar_simd_boundary(void)
 {
     TEST_START("test_parse_fcchar_simd_boundary");
 

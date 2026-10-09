@@ -9,7 +9,7 @@
  * characters. Note: '|' (0x7C) and '~' (0x7E) are valid tchar but are edge
  * cases for range-based or nibble-trick SIMD implementations.
  */
-void test_is_tchar(void)
+static void test_is_tchar(void)
 {
     TEST_START("test_is_tchar");
 
@@ -70,7 +70,7 @@ void test_is_tchar(void)
  * hwire_parse_tchar() scans a token from the input and returns its length.
  * Scanning stops at the first non-tchar character; pos advances past the token.
  */
-void test_parse_tchar(void)
+static void test_parse_tchar(void)
 {
     TEST_START("test_parse_tchar");
 
@@ -100,7 +100,7 @@ void test_parse_tchar(void)
     TEST_END();
 }
 
-void test_parse_tchar_offset_boundaries(void)
+static void test_parse_tchar_offset_boundaries(void)
 {
     TEST_START("test_parse_tchar_offset_boundaries");
 
@@ -125,7 +125,7 @@ void test_parse_tchar_offset_boundaries(void)
  *   Valid tchar: ALPHA (a-z, A-Z), DIGIT (0-9),
  *     '!' '#' '$' '%' '&' '\'' '*' '+' '-' '.' '^' '_' '`' '|' '~'
  */
-void test_is_tchar_all256(void)
+static void test_is_tchar_all256(void)
 {
     TEST_START("test_is_tchar_all256");
 
@@ -158,7 +158,7 @@ void test_is_tchar_all256(void)
  * MUST be accepted at every position including SIMD chunk boundaries.
  * A non-tchar byte MUST terminate scanning at the correct position.
  */
-void test_parse_tchar_simd_boundary(void)
+static void test_parse_tchar_simd_boundary(void)
 {
     TEST_START("test_parse_tchar_simd_boundary");
 

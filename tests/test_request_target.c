@@ -69,7 +69,7 @@ static int is_regname_byte(unsigned char c)
            c == '*' || c == '+' || c == ',' || c == ';' || c == '=';
 }
 
-void test_request_target_forms_and_components(void)
+static void test_request_target_forms_and_components(void)
 {
     TEST_START("test_request_target_forms_and_components");
 
@@ -185,7 +185,7 @@ void test_request_target_forms_and_components(void)
     TEST_END();
 }
 
-void test_request_target_method_dispatch(void)
+static void test_request_target_method_dispatch(void)
 {
     TEST_START("test_request_target_method_dispatch");
 
@@ -220,7 +220,7 @@ void test_request_target_method_dispatch(void)
     TEST_END();
 }
 
-void test_request_target_absolute_uri_grammar(void)
+static void test_request_target_absolute_uri_grammar(void)
 {
     TEST_START("test_request_target_absolute_uri_grammar");
 
@@ -287,7 +287,7 @@ void test_request_target_absolute_uri_grammar(void)
     TEST_END();
 }
 
-void test_request_target_nonzero_cursor_slices(void)
+static void test_request_target_nonzero_cursor_slices(void)
 {
     TEST_START("test_request_target_nonzero_cursor_slices");
 
@@ -321,7 +321,7 @@ void test_request_target_nonzero_cursor_slices(void)
     TEST_END();
 }
 
-void test_request_target_percent_encoding(void)
+static void test_request_target_percent_encoding(void)
 {
     TEST_START("test_request_target_percent_encoding");
 
@@ -350,7 +350,7 @@ void test_request_target_percent_encoding(void)
     TEST_END();
 }
 
-void test_request_target_regname_bytes(void)
+static void test_request_target_regname_bytes(void)
 {
     TEST_START("test_request_target_regname_bytes");
 
@@ -374,7 +374,7 @@ void test_request_target_regname_bytes(void)
     TEST_END();
 }
 
-void test_request_target_ip_literals(void)
+static void test_request_target_ip_literals(void)
 {
     TEST_START("test_request_target_ip_literals");
 
@@ -504,7 +504,7 @@ static void test_request_target_ipv6_trailing_colon(void)
     TEST_END();
 }
 
-void test_request_target_ip_literal_differential(void)
+static void test_request_target_ip_literal_differential(void)
 {
     TEST_START("test_request_target_ip_literal_differential");
 
@@ -575,7 +575,7 @@ static void assert_guarded_target(const char *prefix, unsigned char fill,
 }
 #endif
 
-void test_request_target_guard_page(void)
+static void test_request_target_guard_page(void)
 {
     TEST_START("test_request_target_guard_page");
 
@@ -591,7 +591,7 @@ void test_request_target_guard_page(void)
     TEST_END();
 }
 
-void test_request_target_fragmentation_and_maxlen(void)
+static void test_request_target_fragmentation_and_maxlen(void)
 {
     TEST_START("test_request_target_fragmentation_and_maxlen");
 

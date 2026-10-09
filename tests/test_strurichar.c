@@ -51,7 +51,7 @@ static hwire_ctx_t make_ctx(void)
  * match the whitelist: allowed bytes parse OK, disallowed bytes yield
  * HWIRE_EURI (a disallowed SP acts as the URI delimiter instead).
  */
-void test_strurichar_charset_exhaustive(void)
+static void test_strurichar_charset_exhaustive(void)
 {
     TEST_START("test_strurichar_charset_exhaustive");
     hwire_ctx_t cb = make_ctx();
@@ -90,7 +90,7 @@ void test_strurichar_charset_exhaustive(void)
                 fprintf(stderr,
                         "FAILED: byte 0x%02x at offset %zu: expected %d, "
                         "got %d\n",
-                        b, off, exp, rv);
+                        (unsigned int)b, off, exp, rv);
                 g_tests_failed++;
                 TEST_END();
                 return;
@@ -101,7 +101,7 @@ void test_strurichar_charset_exhaustive(void)
                 fprintf(stderr,
                         "FAILED: byte 0x%02x at offset %zu: uri len %zu != "
                         "%zu\n",
-                        b, off, captured_uri.len, 6 + off);
+                        (unsigned int)b, off, captured_uri.len, 6 + off);
                 g_tests_failed++;
                 TEST_END();
                 return;
@@ -117,7 +117,7 @@ void test_strurichar_charset_exhaustive(void)
  * stop exactly at the SP and report the exact request-target length
  * (covers the scalar tail, the first SIMD block, and block crossings).
  */
-void test_strurichar_length_sweep(void)
+static void test_strurichar_length_sweep(void)
 {
     TEST_START("test_strurichar_length_sweep");
     hwire_ctx_t cb = make_ctx();
@@ -155,7 +155,7 @@ void test_strurichar_length_sweep(void)
  * component grammar. A percent sign must be followed by two hexadecimal
  * digits; SP ends the target and any other disallowed byte is HWIRE_EURI.
  */
-void test_strurichar_fuzz(void)
+static void test_strurichar_fuzz(void)
 {
     TEST_START("test_strurichar_fuzz");
     hwire_ctx_t cb    = make_ctx();

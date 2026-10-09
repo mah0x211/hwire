@@ -8,14 +8,14 @@
  * (0x80-0xFF). MUST: returns false for NUL (0x00), SP (0x20), DEL (0x7F), HTAB
  * (0x09), and all CTLs.
  */
-void test_is_vchar(void)
+static void test_is_vchar(void)
 {
     TEST_START("test_is_vchar");
 
     // MUST accept: VCHAR = %x21-7E (RFC 5234 §B.1)
     for (int c = 0x21; c <= 0x7E; c++) {
         if (!hwire_is_vchar((unsigned char)c)) {
-            fprintf(stderr, "Failed vchar check for: 0x%02X\n", c);
+            fprintf(stderr, "Failed vchar check for: 0x%02X\n", (unsigned int)c);
             g_tests_failed++;
         }
     }
@@ -23,7 +23,7 @@ void test_is_vchar(void)
     // MUST accept: obs-text = %x80-FF (RFC 9110 §5.5 field-vchar)
     for (int c = 0x80; c <= 0xFF; c++) {
         if (!hwire_is_vchar((unsigned char)c)) {
-            fprintf(stderr, "Failed obs-text check for: 0x%02X\n", c);
+            fprintf(stderr, "Failed obs-text check for: 0x%02X\n", (unsigned int)c);
             g_tests_failed++;
         }
     }
@@ -45,7 +45,7 @@ void test_is_vchar(void)
  * consumed chars. Note: HTAB terminates scanning — it is valid as OWS in
  * field-value, not as field-vchar.
  */
-void test_parse_vchar(void)
+static void test_parse_vchar(void)
 {
     TEST_START("test_parse_vchar");
 
@@ -69,7 +69,7 @@ void test_parse_vchar(void)
     TEST_END();
 }
 
-void test_parse_vchar_offset_boundaries(void)
+static void test_parse_vchar_offset_boundaries(void)
 {
     TEST_START("test_parse_vchar_offset_boundaries");
 
@@ -94,7 +94,7 @@ void test_parse_vchar_offset_boundaries(void)
  * field-vchar.  MUST: tokens containing obs-text at SIMD chunk boundaries
  * (positions 15, 16, 17, 31, 32) MUST be fully consumed.
  */
-void test_parse_vchar_obstext_and_boundary(void)
+static void test_parse_vchar_obstext_and_boundary(void)
 {
     TEST_START("test_parse_vchar_obstext_and_boundary");
 
