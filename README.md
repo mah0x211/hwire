@@ -134,6 +134,30 @@ confidence intervals, header lookup and calculated total costs.
 
 ---
 
+## Releases and Versioning
+
+Releases use CalVer `YYYY.MM.SEQUENCE`, starting at sequence `0` each month
+(for example, `2026.10.0`, then `2026.10.1`). CalVer identifies the release
+date; API compatibility and migration notes are documented in each release.
+
+Download `hwire-<version>.tar.gz` from [Releases](https://github.com/mah0x211/hwire/releases)
+for versioned sources. The archive contains `src/`, `LICENSE`, and `README.md`
+for embedding the library in an application. Both hwire and hwire_table expose
+these macros through `hwire.h`:
+
+```c
+#define HWIRE_VERSION "2026.10.0"
+#define HWIRE_VERSION_IS_DEVELOPMENT 0
+```
+
+Repository sources, tag checkouts, and GitHub's automatic **Source code**
+archives instead define `HWIRE_VERSION` as `"development"` and
+`HWIRE_VERSION_IS_DEVELOPMENT` as `1`. No compiler warning is emitted.
+
+Maintainers create draft releases through the manual workflow described in
+[CI.md](https://github.com/mah0x211/hwire/blob/master/CI.md#releases).
+
+
 ## Building
 
 Copy `src/hwire.h` and `src/hwire.c` into your project and compile `hwire.c` together with your sources:
