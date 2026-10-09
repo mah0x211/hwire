@@ -1,6 +1,8 @@
 # hwire
 
+[![release](https://img.shields.io/github/v/release/mah0x211/hwire)](https://github.com/mah0x211/hwire/releases/latest)
 [![test](https://github.com/mah0x211/hwire/actions/workflows/test.yml/badge.svg)](https://github.com/mah0x211/hwire/actions/workflows/test.yml)
+[![fuzz](https://github.com/mah0x211/hwire/actions/workflows/fuzz.yml/badge.svg?branch=master)](https://github.com/mah0x211/hwire/actions/workflows/fuzz.yml)
 [![codecov](https://codecov.io/gh/mah0x211/hwire/branch/master/graph/badge.svg)](https://codecov.io/gh/mah0x211/hwire)
 
 Zero-allocation `HTTP/1.1` parser written in `C99` or later.
