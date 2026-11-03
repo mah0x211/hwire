@@ -20,7 +20,6 @@
  *  IN THE SOFTWARE.
  *
  *  src/hwire.h
- *  lua-net-http
  *  Zero-Allocation HTTP Parser
  */
 
