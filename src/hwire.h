@@ -122,16 +122,6 @@ typedef struct {
 } hwire_kv_pair_t;
 
 /**
- * @brief Generic key-value array
- *
- * Can be used for parameters, headers, extensions, etc.
- */
-typedef struct {
-    hwire_kv_pair_t *items; /**< Array (allocated by caller) */
-    uint8_t count;          /**< Number of items in the array */
-} hwire_kv_array_t;
-
-/**
  * @brief Parameter (key-value pair alias)
  */
 typedef hwire_kv_pair_t hwire_param_t;
