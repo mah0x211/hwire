@@ -82,9 +82,9 @@ static void test_chunksize_maxlen_boundaries(void)
     ASSERT_EQ(parse_chunksize("0\r", 2, 2, &pos), HWIRE_ELEN);
     ASSERT_EQ(parse_chunksize("0\r\n", 3, 2, &pos), HWIRE_ELEN);
 
-    /* LF-only termination follows the same exact-boundary rule. */
-    ASSERT_OK(parse_chunksize("0\n", 2, 2, &pos));
-    ASSERT_EQ(pos, 2);
+    /* A bare LF inside the budget is an invalid terminator; outside the
+     * budget it is not examined. */
+    ASSERT_EQ(parse_chunksize("0\n", 2, 2, &pos), HWIRE_EEOL);
     ASSERT_EQ(parse_chunksize("0\n", 2, 1, &pos), HWIRE_ELEN);
 
     TEST_END();

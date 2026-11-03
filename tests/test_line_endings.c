@@ -109,7 +109,7 @@ static void test_chunksize_line_endings(void)
         int expected;
     } cases[] = {
         {"1\r\n", HWIRE_OK    },
-        {"1\n",   HWIRE_OK    },
+        {"1\n",   HWIRE_EEOL  },
         {"1\r",   HWIRE_EAGAIN},
         {"1\rX",  HWIRE_EEOL  },
     };

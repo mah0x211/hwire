@@ -472,23 +472,24 @@ int hwire_parse_query(hwire_ctx_t *ctx, const char *str, size_t len,
  *
  * @param str String to parse (must not be NULL)
  * @param len Number of available input bytes from str[0]
- * @param pos Input: start offset, Output: position after CRLF or LF (must not
- * be NULL); unchanged on failure
+ * @param pos Input: start offset, Output: position after CRLF (must not be
+ * NULL); unchanged on failure
  * @param maxlen Maximum line length and number of input bytes examined from
  * the initial *pos; the complete line terminator must fit within this budget
  * @param ctx Parser context (must not be NULL)
- * @return HWIRE_OK on success, CRLF or LF consumed
+ * @return HWIRE_OK on success, CRLF consumed
  * @return HWIRE_EAGAIN if more data is needed before maxlen is reached
  * @return HWIRE_ELEN if the line is incomplete upon reaching maxlen, including
  * zero available bytes with maxlen equal to zero
  * @return HWIRE_ERANGE if chunk size exceeds maxsize
- * @return HWIRE_EILSEQ if byte sequence is illegal
- * @return HWIRE_EEOL if end-of-line terminator is invalid
+ * @return HWIRE_EILSEQ if byte sequence is illegal, including whitespace
+ * directly before the line terminator
+ * @return HWIRE_EEOL if end-of-line terminator is invalid, including a bare LF
  * @return HWIRE_EEXTNAME for invalid extension key
  * @return HWIRE_EEXTVAL for invalid extension value or missing EOL
  * @return HWIRE_ECALLBACK if callback returned non-zero
- * @note Line terminators match CR?LF: both CRLF and bare LF are accepted;
- * bare CR is invalid.
+ * @note The line terminator must be CRLF; bare LF and bare CR are invalid.
+ * BWS is accepted only around ";" and "=" in chunk extensions.
  * @note Item limits are enforced by callbacks using caller-owned state.
  * Nonzero callback returns stop parsing with HWIRE_ECALLBACK.
  */

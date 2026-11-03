@@ -1682,8 +1682,8 @@ static int64_t hex2size(const unsigned char **ustr, const unsigned char *tail,
  * @param str Input string containing the chunk-size line (must start at
  * chunk-size)
  * @param len Length of input string
- * @param pos Input: start offset, Output: position after CRLF or LF (must not
- * be NULL)
+ * @param pos Input: start offset, Output: position after CRLF (must not be
+ * NULL)
  * @param maxlen Maximum line length and number of input bytes examined from
  * the initial *pos
  * @param cb Callback context (must not be NULL)
@@ -1694,10 +1694,11 @@ static int64_t hex2size(const unsigned char **ustr, const unsigned char *tail,
  * @return HWIRE_EEXTNAME if extension name is empty
  * @return HWIRE_EEXTVAL if extension value is invalid
  * @return HWIRE_ECALLBACK if callback returned non-zero
- * @return HWIRE_EILSEQ if byte sequence is illegal
- * @return HWIRE_EEOL if end-of-line terminator is invalid
+ * @return HWIRE_EILSEQ if byte sequence is illegal, including whitespace
+ * directly before the line terminator
+ * @return HWIRE_EEOL if end-of-line terminator is invalid, including a bare LF
  *
- * @note This function accepts CRLF or bare LF as the line terminator.
+ * @note The line terminator must be CRLF; a bare LF or bare CR is invalid.
  * @note Extensions with no value have empty string as value (ptr="" len=0).
  * @note Item limits are enforced by callbacks using caller-owned state.
  * Nonzero callback returns stop parsing with HWIRE_ECALLBACK.
@@ -1790,15 +1791,23 @@ CHECK_EOL:
 
     // found tail
     case CR:
-        if (ustr >= tail) {
+    case LF:
+        // BWS is only permitted before ";" or "="; whitespace directly before
+        // the line terminator is outside the chunk-size line grammar.
+        // At least one HEXDIG precedes the terminator, so ustr - 2 >= head.
+        if (ustr[-2] == SP || ustr[-2] == HT) {
+            return HWIRE_EILSEQ;
+        } else if (ustr[-1] == LF) {
+            // chunked framing requires CRLF; accepting a bare LF here lets
+            // peers that disagree on chunk boundaries desynchronize.
+            return HWIRE_EEOL;
+        } else if (ustr >= tail) {
             return ((size_t)(ustr - head) >= maxlen) ? HWIRE_ELEN :
                                                        HWIRE_EAGAIN;
         } else if (*ustr++ != LF) {
             // invalid end-of-line terminator
             return HWIRE_EEOL;
         }
-        FALLTHROUGH;
-    case LF:
         // call extension callback for last extension
         if (klen) {
             hwire_chunksize_ext_t ext = {
