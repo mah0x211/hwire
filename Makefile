@@ -1,4 +1,8 @@
+# Clang is the default compiler; an explicit CC from the environment or the
+# command line takes precedence (e.g. `make test CC=gcc`).
+ifeq ($(origin CC),default)
 CC = clang
+endif
 CFLAGS = -std=c99 -Isrc -O2 -g
 # Keep diagnostics independent of CFLAGS overrides in CI and local builds.
 CONFIG_DIR := $(abspath config)
