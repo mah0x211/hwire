@@ -49,10 +49,19 @@ The following behaviors deviate from strict RFC requirements for robustness and 
 - **`CR?LF` line terminators**: although senders MUST use `CRLF`, recipients accept either `CRLF` or a bare `LF` at the request-line, status-line, header field line, and end-of-headers boundaries. A bare `CR` is rejected. Chunk-size lines are not lenient: they require `CRLF`.
 - **Leading empty lines**: empty `CRLF` or `LF` lines before a request-line are ignored. A bare `CR` is not an empty line and is rejected. RFC 9112 §2.2 permits this only for requests, so a response with leading empty lines is rejected with `HWIRE_EVERSION`.
 
+### Stricter than RFC
+
+The following inputs are rejected even though RFC 9112 lets some recipients repair them, because a parser that repairs framing-relevant syntax can disagree with other peers about message boundaries:
+
+- **`obs-fold` in responses** ([RFC 9112 §5.2](https://www.rfc-editor.org/rfc/rfc9112#section-5.2)): a user agent MUST replace each `obs-fold` with SP before interpreting the field value; hwire rejects it with `HWIRE_EHDRNAME` in responses as well as requests.
+- **Whitespace between field name and colon in responses** ([RFC 9112 §5.1](https://www.rfc-editor.org/rfc/rfc9112#section-5.1)): a proxy MUST remove such whitespace before forwarding a response; hwire rejects it with `HWIRE_EHDRNAME` in responses as well as requests.
+
 ### Partial
 
 - **request-target** ([RFC 9112](https://www.rfc-editor.org/rfc/rfc9112) §3.2 / [RFC 3986](https://www.rfc-editor.org/rfc/rfc3986) §2–3): origin-form, absolute-form, authority-form, and asterisk-form are structurally validated. URI components are returned as zero-copy slices; scheme-specific semantics, decoding, and normalization remain outside the parser.
-- **Chunked transfer encoding** ([RFC 9112](https://www.rfc-editor.org/rfc/rfc9112) §7): the chunk-size line (§7.1.1) is parsed; chunk body data and trailer fields are not handled.
+- **Chunked transfer encoding** ([RFC 9112](https://www.rfc-editor.org/rfc/rfc9112) §7): the chunk-size line (§7.1.1) is parsed; chunk body data and trailer fields are not handled. The caller is responsible for the remaining framing:
+  - **CRLF after chunk-data**: verify that exactly `CRLF` follows each chunk's data. Do not accept a bare `LF` there; the chunk-size line already requires `CRLF`, and accepting a bare `LF` after chunk-data reintroduces the same boundary ambiguity.
+  - **Trailer section**: `hwire_parse_headers` can parse trailer fields, but it accepts a bare `LF` at line boundaries (see [Lenient](#lenient)). Callers that need `CRLF`-only chunked framing must check trailer line terminators themselves.
 
 ### Out of scope
 
