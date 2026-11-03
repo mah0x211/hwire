@@ -3282,30 +3282,11 @@ int hwire_parse_response(hwire_ctx_t *ctx, const char *str, size_t len,
         tail = head + maxlen;
     }
 
-SKIP_NEXT_CRLF:
-    if (unlikely(ustr >= tail)) {
-        return ((size_t)(tail - head) >= maxlen) ? HWIRE_ELEN : HWIRE_EAGAIN;
-    }
-
-    switch (*ustr) {
-    case CR:
-        if (unlikely(tail - ustr < 2)) {
-            return ((size_t)(tail - head) >= maxlen) ? HWIRE_ELEN :
-                                                       HWIRE_EAGAIN;
-        } else if (unlikely(ustr[1] != LF)) {
-            return HWIRE_EEOL;
-        }
-        ustr += 2;
-        goto SKIP_NEXT_CRLF;
-
-    case LF:
-        ustr++;
-        goto SKIP_NEXT_CRLF;
-    }
-
     // parse version
     // status-line = HTTP-version SP status-code SP reason-phrase CRLF
     // RFC 7230 3.1.2 / RFC 9112 4: Status Line
+    // RFC 9112 2.2 permits ignoring empty lines only before a request-line,
+    // so a response must start with the HTTP-version.
     rv = parse_version(&ustr, head, tail, maxlen, &rsp.version);
     if (rv != HWIRE_OK) {
         return rv;

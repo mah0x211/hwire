@@ -47,7 +47,7 @@ The following rules from [RFC 9110](https://www.rfc-editor.org/rfc/rfc9110) and 
 The following behaviors deviate from strict RFC requirements for robustness and backward compatibility ([RFC 9112 §2.2](https://www.rfc-editor.org/rfc/rfc9112#section-2.2)):
 
 - **`CR?LF` line terminators**: although senders MUST use `CRLF`, recipients accept either `CRLF` or a bare `LF` at the request-line, status-line, header field line, and end-of-headers boundaries. A bare `CR` is rejected. Chunk-size lines are not lenient: they require `CRLF`.
-- **Leading empty lines**: empty `CRLF` or `LF` lines before a request-line or status-line are ignored. A bare `CR` is not an empty line and is rejected.
+- **Leading empty lines**: empty `CRLF` or `LF` lines before a request-line are ignored. A bare `CR` is not an empty line and is rejected. RFC 9112 §2.2 permits this only for requests, so a response with leading empty lines is rejected with `HWIRE_EVERSION`.
 
 ### Partial
 
@@ -836,10 +836,10 @@ Content-Length: 0\r\n
 - `len` — total bytes in `str`.
 - `pos` — in/out: response start offset on entry and end offset on success
   (must not be NULL). It is unchanged on failure, including `HWIRE_EAGAIN`.
-- `maxlen` — maximum total byte length from the initial `*pos` (leading
-  empty lines + status-line + header fields and the terminating empty line,
-  all delimiters included). An incomplete component at
-  the budget boundary returns its length error without examining later bytes.
+- `maxlen` — maximum total byte length from the initial `*pos` (status-line,
+  header fields and the terminating empty line, all delimiters included). An
+  incomplete component at the budget boundary returns its length error
+  without examining later bytes.
 
 **Returns**
 
@@ -848,10 +848,10 @@ Content-Length: 0\r\n
 | `HWIRE_OK` | Full response consumed including the empty line |
 | `HWIRE_EAGAIN` | Input ends before the applicable budget |
 | `HWIRE_ESTATUS` | Invalid HTTP status code |
-| `HWIRE_EVERSION` | Unsupported HTTP version |
+| `HWIRE_EVERSION` | Unsupported HTTP version, or input not starting with the HTTP-version (including leading empty lines) |
 | `HWIRE_EEOL` | Invalid end-of-line |
 | `HWIRE_EILSEQ` | Invalid character in reason phrase |
-| `HWIRE_ELEN` | Leading empty lines or the status-line are incomplete upon exhausting `maxlen` |
+| `HWIRE_ELEN` | The status-line is incomplete upon exhausting `maxlen` |
 | `HWIRE_EHDRNAME` | Invalid header field name |
 | `HWIRE_EHDRVALUE` | Invalid header field value |
 | `HWIRE_EHDRLEN` | The header section is incomplete upon exhausting the remaining `maxlen` budget |

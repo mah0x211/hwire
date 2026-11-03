@@ -46,12 +46,12 @@ static void test_response_line_endings(void)
         const char *input;
         int expected;
     } cases[] = {
-        {"HTTP/1.1 200 OK\r\n\r\n",   HWIRE_OK    },
-        {"HTTP/1.1 200 OK\n\n",       HWIRE_OK    },
-        {"\n\r\nHTTP/1.1 200 OK\n\n", HWIRE_OK    },
-        {"\r",                        HWIRE_EAGAIN},
-        {"\rHTTP/1.1 200 OK\r\n\r\n", HWIRE_EEOL  },
-        {"HTTP/1.1 200 OK\rX",        HWIRE_EEOL  },
+        {"HTTP/1.1 200 OK\r\n\r\n",   HWIRE_OK      },
+        {"HTTP/1.1 200 OK\n\n",       HWIRE_OK      },
+        {"\n\r\nHTTP/1.1 200 OK\n\n", HWIRE_EVERSION},
+        {"\r",                        HWIRE_EAGAIN  },
+        {"\rHTTP/1.1 200 OK\r\n\r\n", HWIRE_EVERSION},
+        {"HTTP/1.1 200 OK\rX",        HWIRE_EEOL    },
     };
     hwire_ctx_t ctx = {.header_cb   = mock_header_cb,
                        .response_cb = mock_response_cb};

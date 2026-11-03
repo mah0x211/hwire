@@ -5,8 +5,7 @@
  * [reason-phrase] CRLF status-code  = 3DIGIT reason-phrase = *( HTAB / SP /
  * VCHAR / obs-text ) hwire: restricts first digit of status-code to '1'-'5'
  * (informational through server error). RFC 9112 §4: reason-phrase is optional
- * — empty reason-phrase MUST be accepted. RFC 9112 §2.2: leading empty line
- * (CRLF) before status-line MUST be ignored.
+ * — empty reason-phrase MUST be accepted.
  */
 static void test_parse_response_valid(void)
 {
@@ -217,7 +216,8 @@ static void test_parse_response_status_errors(void)
 
 /*
  * Covers: RFC 9112 §2.2  line termination and leading CRLF handling.
- *   RFC 9112 §2.2: leading empty lines before the status-line MUST be ignored.
+ *   RFC 9112 §2.2 permits ignoring leading empty lines only before a
+ *   request-line; a response starting with CRLF or LF is HWIRE_EVERSION.
  * MUST return HWIRE_EAGAIN for empty input, incomplete version string, or
  * incomplete status-line.
  * Header parsing errors MUST propagate unchanged from hwire_parse_headers().
@@ -239,11 +239,31 @@ static void test_parse_response_edge_cases(void)
     rv  = hwire_parse_response(&cb, buf, 0, &pos, 1024);
     ASSERT_EQ(rv, HWIRE_EAGAIN);
 
-    /* RFC 9112 §2.2: leading CRLF before status-line MUST be ignored */
+    /* RFC 9112 §2.2: leading empty lines are not ignored for responses */
     buf = "\r\nHTTP/1.1 200 OK\r\n\r\n";
     pos = 0;
     rv  = hwire_parse_response(&cb, buf, strlen(buf), &pos, 1024);
+    ASSERT_EQ(rv, HWIRE_EVERSION);
+    ASSERT_EQ(pos, 0);
+
+    buf = "\nHTTP/1.1 200 OK\r\n\r\n";
+    pos = 0;
+    rv  = hwire_parse_response(&cb, buf, strlen(buf), &pos, 1024);
+    ASSERT_EQ(rv, HWIRE_EVERSION);
+    ASSERT_EQ(pos, 0);
+
+    buf = "\r\n\nHTTP/1.1 200 OK\r\n\r\n";
+    pos = 0;
+    rv  = hwire_parse_response(&cb, buf, strlen(buf), &pos, 1024);
+    ASSERT_EQ(rv, HWIRE_EVERSION);
+    ASSERT_EQ(pos, 0);
+
+    /* the same message without the leading empty line is accepted */
+    buf = "HTTP/1.1 200 OK\r\n\r\n";
+    pos = 0;
+    rv  = hwire_parse_response(&cb, buf, strlen(buf), &pos, 1024);
     ASSERT_OK(rv);
+    ASSERT_EQ(pos, strlen(buf));
 
     /* MUST return HWIRE_EAGAIN: version string complete but SP not yet
        received */
