@@ -21,28 +21,17 @@ typedef int (*parse_message_fn)(const char *buf, size_t len, size_t maxlen,
 static int parse_request_message(const char *buf, size_t len, size_t maxlen,
                                  size_t *pos)
 {
-    hwire_ctx_t ctx = {
-        .request_cb = mock_request_cb,
-        .header_cb  = mock_header_cb
-    };
+    hwire_ctx_t ctx = {.request_cb = mock_request_cb,
+                       .header_cb  = mock_header_cb};
 
     *pos = 0;
     return hwire_parse_request(&ctx, buf, len, pos, maxlen);
 }
 
-static int parse_response_message(const char *buf, size_t len, size_t maxlen,
-                                  size_t *pos)
-{
-    hwire_ctx_t ctx = {
-        .response_cb = mock_response_cb,
-        .header_cb   = mock_header_cb
-    };
-
-    *pos = 0;
-    return hwire_parse_response(&ctx, buf, len, pos, maxlen);
-}
-
 /*
+ * Covers: RFC 9112 §2.2 leading empty lines before a request-line.
+ * Responses do not ignore leading empty lines (see test_parse_response.c).
+ *
  * MUST: leading CRLF/LF bytes and the terminating empty header line count
  * toward the cumulative message maxlen.
  */
@@ -56,10 +45,8 @@ static void test_leading_empty_lines_count_toward_maxlen(void)
         size_t prefix_len;
         size_t counted_len;
     } cases[] = {
-        {parse_request_message,  "\r\n\nGET / HTTP/1.1\r\nHost: x\r\n\r\n", 3,
+        {parse_request_message, "\r\n\nGET / HTTP/1.1\r\nHost: x\r\n\r\n", 3,
          30},
-        {parse_response_message, "\r\n\nHTTP/1.1 200 OK\r\nA: x\r\n\r\n",   3,
-         28},
     };
 
     for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
@@ -113,20 +100,13 @@ static void test_leading_empty_lines_incomplete_boundaries(void)
         {"\r\n\n",  4, HWIRE_EAGAIN},
         {"\r\n\nG", 3, HWIRE_ELEN  },
     };
-    static const parse_message_fn parsers[] = {
-        parse_request_message,
-        parse_response_message,
-    };
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        size_t pos = 0;
 
-    for (size_t p = 0; p < sizeof(parsers) / sizeof(parsers[0]); p++) {
-        for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
-            size_t pos = 0;
-
-            ASSERT_EQ(parsers[p](cases[i].buf, strlen(cases[i].buf),
-                                 cases[i].maxlen, &pos),
-                      cases[i].expected);
-            ASSERT_EQ(pos, 0);
-        }
+        ASSERT_EQ(parse_request_message(cases[i].buf, strlen(cases[i].buf),
+                                        cases[i].maxlen, &pos),
+                  cases[i].expected);
+        ASSERT_EQ(pos, 0);
     }
 
     TEST_END();
@@ -169,15 +149,8 @@ static void test_leading_empty_lines_guard_page(void)
     TEST_START("test_leading_empty_lines_guard_page");
 
 #if defined(HWIRE_MAP_ANONYMOUS)
-    static const parse_message_fn parsers[] = {
-        parse_request_message,
-        parse_response_message,
-    };
-
-    for (size_t i = 0; i < sizeof(parsers) / sizeof(parsers[0]); i++) {
-        assert_guarded_prefix(parsers[i], '\n');
-        assert_guarded_prefix(parsers[i], '\r');
-    }
+    assert_guarded_prefix(parse_request_message, '\n');
+    assert_guarded_prefix(parse_request_message, '\r');
 #else
     fprintf(stdout, "[SKIP] anonymous mmap is unavailable\n");
 #endif

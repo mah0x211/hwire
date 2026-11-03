@@ -46,13 +46,22 @@ The following rules from [RFC 9110](https://www.rfc-editor.org/rfc/rfc9110) and 
 
 The following behaviors deviate from strict RFC requirements for robustness and backward compatibility ([RFC 9112 §2.2](https://www.rfc-editor.org/rfc/rfc9112#section-2.2)):
 
-- **`CR?LF` line terminators**: although senders MUST use `CRLF`, recipients accept either `CRLF` or a bare `LF` at every parsed line boundary — request-line, status-line, header field line, end-of-headers, and chunk-size line. A bare `CR` is rejected.
-- **Leading empty lines**: empty `CRLF` or `LF` lines before a request-line or status-line are ignored. A bare `CR` is not an empty line and is rejected.
+- **`CR?LF` line terminators**: although senders MUST use `CRLF`, recipients accept either `CRLF` or a bare `LF` at the request-line, status-line, header field line, and end-of-headers boundaries. A bare `CR` is rejected. Chunk-size lines are not lenient: they require `CRLF`.
+- **Leading empty lines**: empty `CRLF` or `LF` lines before a request-line are ignored. A bare `CR` is not an empty line and is rejected. RFC 9112 §2.2 permits this only for requests, so a response with leading empty lines is rejected with `HWIRE_EVERSION`.
+
+### Stricter than RFC
+
+The following inputs are rejected even though RFC 9112 lets some recipients repair them, because a parser that repairs framing-relevant syntax can disagree with other peers about message boundaries:
+
+- **`obs-fold` in responses** ([RFC 9112 §5.2](https://www.rfc-editor.org/rfc/rfc9112#section-5.2)): a user agent MUST replace each `obs-fold` with SP before interpreting the field value; hwire rejects it with `HWIRE_EHDRNAME` in responses as well as requests.
+- **Whitespace between field name and colon in responses** ([RFC 9112 §5.1](https://www.rfc-editor.org/rfc/rfc9112#section-5.1)): a proxy MUST remove such whitespace before forwarding a response; hwire rejects it with `HWIRE_EHDRNAME` in responses as well as requests.
 
 ### Partial
 
 - **request-target** ([RFC 9112](https://www.rfc-editor.org/rfc/rfc9112) §3.2 / [RFC 3986](https://www.rfc-editor.org/rfc/rfc3986) §2–3): origin-form, absolute-form, authority-form, and asterisk-form are structurally validated. URI components are returned as zero-copy slices; scheme-specific semantics, decoding, and normalization remain outside the parser.
-- **Chunked transfer encoding** ([RFC 9112](https://www.rfc-editor.org/rfc/rfc9112) §7): the chunk-size line (§7.1.1) is parsed; chunk body data and trailer fields are not handled.
+- **Chunked transfer encoding** ([RFC 9112](https://www.rfc-editor.org/rfc/rfc9112) §7): the chunk-size line (§7.1.1) is parsed; chunk body data and trailer fields are not handled. The caller is responsible for the remaining framing:
+  - **CRLF after chunk-data**: verify that exactly `CRLF` follows each chunk's data. Do not accept a bare `LF` there; the chunk-size line already requires `CRLF`, and accepting a bare `LF` after chunk-data reintroduces the same boundary ambiguity.
+  - **Trailer section**: `hwire_parse_headers` can parse trailer fields, but it accepts a bare `LF` at line boundaries (see [Lenient](#lenient)). Callers that need `CRLF`-only chunked framing must check trailer line terminators themselves.
 
 ### Out of scope
 
@@ -288,7 +297,7 @@ All parse functions return `hwire_code_t`. Negative values are errors.
 | `HWIRE_ELEN` | −2 | Length exceeded |
 | `HWIRE_EMETHOD` | −3 | Unknown / unimplemented HTTP method |
 | `HWIRE_EVERSION` | −4 | Unsupported HTTP version |
-| `HWIRE_EEOL` | −5 | Invalid end-of-line (expected `CR?LF`) |
+| `HWIRE_EEOL` | −5 | Invalid end-of-line (expected `CR?LF`; `CRLF` for chunk-size lines) |
 | `HWIRE_EHDRNAME` | −6 | Invalid header field name |
 | `HWIRE_EHDRVALUE` | −7 | Invalid header field value |
 | `HWIRE_EHDRLEN` | −8 | Header length exceeded `maxlen` |
@@ -636,7 +645,11 @@ chunk-size = 1*HEXDIG
 chunk-ext  = *( BWS ";" BWS chunk-ext-name [ BWS "=" BWS chunk-ext-val ] )
 ```
 
-`ctx->chunksize_cb` is called once with the parsed size; `ctx->chunksize_ext_cb` is called for each extension when set (optional). When it is `NULL`, extensions are still syntax-checked but are not delivered. Set a callback when an application extension limit is needed. On success, `*pos` is advanced past the trailing `CRLF` or `LF`.
+`ctx->chunksize_cb` is called once with the parsed size; `ctx->chunksize_ext_cb` is called for each extension when set (optional). When it is `NULL`, extensions are still syntax-checked but are not delivered. Set a callback when an application extension limit is needed. On success, `*pos` is advanced past the trailing `CRLF`.
+
+The line must end with `CRLF`; a bare `LF` is rejected with `HWIRE_EEOL`.
+`BWS` is accepted only around `;` and `=`, so whitespace directly before the
+line terminator (`2 \r\n`, `2;a \r\n`) is rejected with `HWIRE_EILSEQ`.
 
 When `=` is present, it must be followed by a non-empty token or a
 quoted-string. An empty quoted-string (`foo=""`) is valid, while an empty token
@@ -648,10 +661,10 @@ value (`foo=`) is rejected with `HWIRE_EEXTVAL`.
 - `str` — input string (must not be NULL).
 - `len` — total bytes in `str`.
 - `pos` — in/out: start offset on entry, position after the trailing `CRLF`
-  or `LF` on success (must not be NULL). It is unchanged on failure.
+  on success (must not be NULL). It is unchanged on failure.
 - `maxlen` — maximum line length and input scanning budget in bytes from the
-  initial `*pos`. The complete line, including its trailing `CRLF` or `LF`,
-  must fit within this budget. If available input ends before the budget is
+  initial `*pos`. The complete line, including its trailing `CRLF`, must fit
+  within this budget. If available input ends before the budget is
   exhausted, the parser returns `HWIRE_EAGAIN`. If the line is incomplete
   upon exhausting `maxlen`, it returns `HWIRE_ELEN` without examining later
   bytes.
@@ -660,12 +673,12 @@ value (`foo=`) is rejected with `HWIRE_EEXTVAL`.
 
 | Return | Condition |
 |--------|-----------|
-| `HWIRE_OK` | Chunk-size line consumed including `CRLF` or `LF` |
+| `HWIRE_OK` | Chunk-size line consumed including `CRLF` |
 | `HWIRE_EAGAIN` | More data needed before `maxlen` is reached |
 | `HWIRE_ELEN` | Line incomplete upon reaching `maxlen`, including empty input with `maxlen == 0` |
 | `HWIRE_ERANGE` | Chunk size exceeds `HWIRE_MAX_CHUNKSIZE` |
-| `HWIRE_EILSEQ` | Invalid byte sequence |
-| `HWIRE_EEOL` | Invalid end-of-line terminator |
+| `HWIRE_EILSEQ` | Invalid byte sequence, including whitespace before the line terminator |
+| `HWIRE_EEOL` | Invalid end-of-line terminator, including a bare `LF` |
 | `HWIRE_EEXTNAME` | Invalid extension name |
 | `HWIRE_EEXTVAL` | Invalid extension value or missing line terminator |
 | `HWIRE_ECALLBACK` | Callback returned non-zero |
@@ -832,10 +845,10 @@ Content-Length: 0\r\n
 - `len` — total bytes in `str`.
 - `pos` — in/out: response start offset on entry and end offset on success
   (must not be NULL). It is unchanged on failure, including `HWIRE_EAGAIN`.
-- `maxlen` — maximum total byte length from the initial `*pos` (leading
-  empty lines + status-line + header fields and the terminating empty line,
-  all delimiters included). An incomplete component at
-  the budget boundary returns its length error without examining later bytes.
+- `maxlen` — maximum total byte length from the initial `*pos` (status-line,
+  header fields and the terminating empty line, all delimiters included). An
+  incomplete component at the budget boundary returns its length error
+  without examining later bytes.
 
 **Returns**
 
@@ -844,10 +857,10 @@ Content-Length: 0\r\n
 | `HWIRE_OK` | Full response consumed including the empty line |
 | `HWIRE_EAGAIN` | Input ends before the applicable budget |
 | `HWIRE_ESTATUS` | Invalid HTTP status code |
-| `HWIRE_EVERSION` | Unsupported HTTP version |
+| `HWIRE_EVERSION` | Unsupported HTTP version, or input not starting with the HTTP-version (including leading empty lines) |
 | `HWIRE_EEOL` | Invalid end-of-line |
 | `HWIRE_EILSEQ` | Invalid character in reason phrase |
-| `HWIRE_ELEN` | Leading empty lines or the status-line are incomplete upon exhausting `maxlen` |
+| `HWIRE_ELEN` | The status-line is incomplete upon exhausting `maxlen` |
 | `HWIRE_EHDRNAME` | Invalid header field name |
 | `HWIRE_EHDRVALUE` | Invalid header field value |
 | `HWIRE_EHDRLEN` | The header section is incomplete upon exhausting the remaining `maxlen` budget |

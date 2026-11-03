@@ -472,23 +472,24 @@ int hwire_parse_query(hwire_ctx_t *ctx, const char *str, size_t len,
  *
  * @param str String to parse (must not be NULL)
  * @param len Number of available input bytes from str[0]
- * @param pos Input: start offset, Output: position after CRLF or LF (must not
- * be NULL); unchanged on failure
+ * @param pos Input: start offset, Output: position after CRLF (must not be
+ * NULL); unchanged on failure
  * @param maxlen Maximum line length and number of input bytes examined from
  * the initial *pos; the complete line terminator must fit within this budget
  * @param ctx Parser context (must not be NULL)
- * @return HWIRE_OK on success, CRLF or LF consumed
+ * @return HWIRE_OK on success, CRLF consumed
  * @return HWIRE_EAGAIN if more data is needed before maxlen is reached
  * @return HWIRE_ELEN if the line is incomplete upon reaching maxlen, including
  * zero available bytes with maxlen equal to zero
  * @return HWIRE_ERANGE if chunk size exceeds maxsize
- * @return HWIRE_EILSEQ if byte sequence is illegal
- * @return HWIRE_EEOL if end-of-line terminator is invalid
+ * @return HWIRE_EILSEQ if byte sequence is illegal, including whitespace
+ * directly before the line terminator
+ * @return HWIRE_EEOL if end-of-line terminator is invalid, including a bare LF
  * @return HWIRE_EEXTNAME for invalid extension key
  * @return HWIRE_EEXTVAL for invalid extension value or missing EOL
  * @return HWIRE_ECALLBACK if callback returned non-zero
- * @note Line terminators match CR?LF: both CRLF and bare LF are accepted;
- * bare CR is invalid.
+ * @note The line terminator must be CRLF; bare LF and bare CR are invalid.
+ * BWS is accepted only around ";" and "=" in chunk extensions.
  * @note Item limits are enforced by callbacks using caller-owned state.
  * Nonzero callback returns stop parsing with HWIRE_ECALLBACK.
  */
@@ -573,25 +574,25 @@ int hwire_parse_request(hwire_ctx_t *ctx, const char *str, size_t len,
  * @param len Number of available input bytes from str[0]
  * @param pos Input: start offset, Output: position after the response (must not
  * be NULL); unchanged on failure
- * @param maxlen Maximum total byte length from the initial *pos (leading empty
- * lines + status-line + header fields and the terminating empty line, all
- * delimiters included)
+ * @param maxlen Maximum total byte length from the initial *pos (status-line +
+ * header fields and the terminating empty line, all delimiters included)
  * @param ctx Parser context (response_cb and header_cb must not be NULL)
  * @return HWIRE_OK on success
  * @return HWIRE_EAGAIN if input ends before the applicable budget
  * @return HWIRE_ESTATUS for invalid status code
- * @return HWIRE_EVERSION for invalid HTTP version
+ * @return HWIRE_EVERSION for invalid HTTP version, including input that does
+ * not start with the HTTP-version (e.g. a leading empty line)
  * @return HWIRE_EEOL for invalid end-of-line
  * @return HWIRE_EILSEQ for invalid character in reason phrase
- * @return HWIRE_ELEN if leading empty lines or the status-line are incomplete
- * when maxlen is exhausted
+ * @return HWIRE_ELEN if the status-line is incomplete when maxlen is exhausted
  * @return HWIRE_EHDRNAME for invalid header field name
  * @return HWIRE_EHDRVALUE for invalid header field value
  * @return HWIRE_EHDRLEN if the header section is incomplete when the remaining
  * maxlen budget is exhausted
  * @return HWIRE_ECALLBACK if callback returned non-zero
- * @note Line terminators and leading empty lines match CR?LF: both CRLF and
- * bare LF are accepted; bare CR is invalid.
+ * @note Line terminators match CR?LF: both CRLF and bare LF are accepted; bare
+ * CR is invalid. Leading empty lines are not ignored (RFC 9112 2.2 allows
+ * that only for requests).
  * @note Item limits are enforced by callbacks using caller-owned state.
  * Nonzero callback returns stop parsing with HWIRE_ECALLBACK.
  */
