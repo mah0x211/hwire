@@ -219,6 +219,16 @@ To run the test suite:
 make test
 ```
 
+The Makefile uses Clang by default. Set `CC` to use another compiler, for
+example when Clang is not installed:
+
+```sh
+make test CC=gcc
+```
+
+`coverage`, `tidy`, `sanitizers`, `hardening`, `pattern` and `fuzz` rely on
+Clang and LLVM tools.
+
 ---
 
 ## Quick Start
